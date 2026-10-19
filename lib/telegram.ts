@@ -9,6 +9,14 @@ function token(): string {
   return t;
 }
 
+/**
+ * Solo las pruebas de extremo a extremo (KIRA_E2E=1) pueden apuntar a otro servidor. En producción el token
+ * del bot nunca puede acabar enviándose a una dirección distinta de la de Telegram por un ajuste suelto.
+ */
+function apiBase(): string {
+  return process.env.KIRA_E2E === "1" && process.env.TELEGRAM_API_BASE ? process.env.TELEGRAM_API_BASE : "https://api.telegram.org";
+}
+
 type TgResponse<T> = { ok: boolean; result?: T; description?: string };
 
 export async function tgCall<T = unknown>(
@@ -17,7 +25,7 @@ export async function tgCall<T = unknown>(
 ): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`https://api.telegram.org/bot${token()}/${method}`, {
+    res = await fetch(`${apiBase()}/bot${token()}/${method}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
@@ -43,14 +51,15 @@ export async function sendMessage(
   text: string,
   replyMarkup?: unknown,
   opts?: { noPreview?: boolean },
-) {
-  await tgCall("sendMessage", {
+): Promise<number | null> {
+  const enviado = await tgCall<{ message_id?: number }>("sendMessage", {
     chat_id: chatId,
     text,
     ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     // Sin vista previa: así nada abre el enlace por su cuenta antes que Blake.
     ...(opts?.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
   });
+  return typeof enviado?.message_id === "number" ? enviado.message_id : null;
 }
 
 export async function answerCallback(callbackId: string, text?: string) {

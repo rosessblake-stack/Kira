@@ -30,7 +30,7 @@ function specReferencia(o: Partial<{ tipo_trenzado: string }> = {}): SpecGuardad
     MENSAJE,
   );
   if (!r.ok) throw new Error(r.motivo);
-  return specDesdeClasificacion(r.value);
+  return specDesdeClasificacion(r.value, MENSAJE);
 }
 
 const legacy = (total: number): ResultadoPrecio => ({
@@ -128,7 +128,7 @@ describe("la clienta de referencia: 6 trenzas rojas, 20 oct 12:00", () => {
     expect(p.inicio!.toISOString()).toBe("2026-10-20T10:00:00.000Z");
     expect(p.fin!.toISOString()).toBe("2026-10-20T12:00:00.000Z");
     expect(p.descripcion).toBe("6 trenzas · pegadas · con extensiones rojo");
-    expect(p.borrador).toContain("60,15 €");
+    expect(p.borrador).toContain("Para 6 trenzas pegadas con extensiones (rojo), el precio es de 60,15 € y dura aproximadamente 2 h.");
     expect(p.borrador).toContain("mar 20 oct, 12:00");
     expect(p.borrador).toContain("15 €");
   });

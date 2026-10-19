@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { detalleConversacion } from "../../../../../lib/panel-data";
-import { INTENCIONES, fechaHora } from "../../../../../lib/panel-rules";
+import { CANALES, ESTADOS_RESERVA, INTENCIONES, euros, fechaHora } from "../../../../../lib/panel-rules";
 import { requireAdmin } from "../../../../../lib/panel-session";
 import { Etiqueta, Vacio } from "../../../_components";
 
@@ -22,7 +22,65 @@ export default async function Conversacion({ params }: { params: Promise<{ id: s
         <h2 style={{ margin: 0 }}>{detalle.nombre}</h2>
         <Etiqueta tono={detalle.paso.tono}>{detalle.paso.etiqueta}</Etiqueta>
       </div>
-      <p className="muted">{INTENCIONES[detalle.intent] ?? detalle.intent}</p>
+      <p className="muted">
+        {CANALES[detalle.canal] ?? detalle.canal} · {INTENCIONES[detalle.intent] ?? detalle.intent}
+      </p>
+
+      {detalle.reservas.map((r) => (
+        <section key={r.id} className="tarjeta" aria-label="Propuesta de cita">
+          <div className="fila">
+            <strong>
+              {r.esPrueba ? "🧪 " : ""}Propuesta: {ESTADOS_RESERVA[r.estado] ?? r.estado}
+            </strong>
+            <span className="muted">
+              {r.inicio ? fechaHora(r.inicio) : "sin fecha"} · {euros(r.precioCentimos)} (señal {euros(r.senalCentimos)})
+            </span>
+          </div>
+          <p className="texto">{r.servicio}</p>
+
+          <h3 className="subtitulo">Lo que Kira entendió</h3>
+          <dl className="datos">
+            {r.mapeo.map((f) => (
+              <div key={f.etiqueta}>
+                <dt>{f.etiqueta}</dt>
+                <dd className={f.valor === "no indicado" ? "muted" : undefined}>{f.valor}</dd>
+              </div>
+            ))}
+          </dl>
+
+          {r.precio.length > 0 && (
+            <>
+              <h3 className="subtitulo">Precio</h3>
+              <dl className="datos">
+                {r.precio.map((f) => (
+                  <div key={f.etiqueta}>
+                    <dt>{f.etiqueta}</dt>
+                    <dd>{f.valor}</dd>
+                  </div>
+                ))}
+              </dl>
+            </>
+          )}
+
+          {r.avisos.length > 0 && (
+            <>
+              <h3 className="subtitulo">Avisos</h3>
+              <ul className="avisos">
+                {r.avisos.map((a, i) => (
+                  <li key={i}>{a}</li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {r.borrador && (
+            <>
+              <h3 className="subtitulo">Borrador de respuesta</h3>
+              <p className="texto">{r.borrador}</p>
+            </>
+          )}
+        </section>
+      ))}
 
       <h2>Línea de tiempo</h2>
       {detalle.linea.length === 0 ? (

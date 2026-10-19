@@ -5,6 +5,8 @@ import {
   duracion,
   fechaHora,
   euros,
+  filasDeMapeo,
+  filasDePrecio,
   hace,
   lineaDeTiempo,
   pasoDeConversacion,
@@ -283,5 +285,81 @@ describe("interruptor Pausar Kira", () => {
       expect(s.paused).toBe(true);
       expect(s.unknown).toBe(true);
     }
+  });
+});
+
+describe("filasDeMapeo y filasDePrecio (lo que se muestra de una propuesta)", () => {
+  const spec = {
+    mensaje_cliente: "Hola! 6 trenzas rojas",
+    servicio: { tipo_trenzado: "pegadas", numero_trenzas: 6, tamano: null, estilo_pegadas: null, extensiones: "con", boho: null, largo_cabello: "nuca_hombros", largo_extensiones: "caderas" },
+    color_extensiones: "rojo", fecha: "2026-10-20", hora: "12:00", nombre: null, email: "a@b.com", instagram: null, confianza: "media",
+    horas: null, precio_manual_centimos: null,
+  };
+  const valor = (filas: { etiqueta: string; valor: string }[], et: string) => filas.find((f) => f.etiqueta === et)?.valor;
+
+  it("traduce lo guardado a texto legible, marcando lo que no se indicó", () => {
+    const f = filasDeMapeo(spec);
+    expect(valor(f, "Tipo de trenzado")).toBe("pegadas");
+    expect(valor(f, "Número de trenzas")).toBe("6");
+    expect(valor(f, "Tamaño")).toBe("no indicado");
+    expect(valor(f, "Extensiones")).toBe("con");
+    expect(valor(f, "Color de extensiones")).toBe("rojo");
+    expect(valor(f, "Largo del pelo")).toBe("nuca u hombros");
+    expect(valor(f, "Largo de las trenzas")).toBe("caderas");
+    expect(valor(f, "Fecha y hora pedidas")).toBe("2026-10-20 12:00");
+    expect(valor(f, "Nombre")).toBe("no indicado");
+    expect(valor(f, "Email")).toBe("a@b.com");
+    expect(f.some((x) => x.etiqueta === "Horas fijadas por ti")).toBe(false);
+  });
+
+  it("muestra lo que Blake fijó a mano", () => {
+    const f = filasDeMapeo({ ...spec, horas: 3, precio_manual_centimos: 7000 });
+    expect(valor(f, "Horas fijadas por ti")).toBe("3 h");
+    expect(valor(f, "Precio puesto por ti")).toBe("70 €");
+  });
+
+  it("no se rompe con datos basura o vacíos", () => {
+    for (const raro of [null, undefined, "texto", 5, [], {}, { servicio: "x" }, { servicio: { numero_trenzas: "6" } }]) {
+      const f = filasDeMapeo(raro);
+      expect(f.length).toBeGreaterThan(10);
+      expect(valor(f, "Tipo de trenzado")).toBe("no indicado");
+    }
+  });
+
+  it("recorta mensajes enormes y deja el HTML como texto (React lo escapa al pintar)", () => {
+    const f = filasDeMapeo({ ...spec, mensaje_cliente: "<img src=x onerror=alert(1)>" + "y".repeat(5000) });
+    expect(valor(f, "Mensaje del cliente")!.length).toBeLessThanOrEqual(300);
+    expect(valor(f, "Mensaje del cliente")).toMatch(/^<img src=x/);
+  });
+
+  it("precio calculado por Legacy: origen, perfil sin confirmar, horas y total", () => {
+    const f = filasDePrecio({
+      origen: "legacy", horas: 2, materiales: 5,
+      perfil: { nivel: "elite", zona: "media", estructura: "casa", smi: 1350, confirmado: false },
+      legacy: { totalCentimos: 6015, tarifaHora: 27.57 },
+    });
+    expect(valor(f, "Origen del precio")).toBe("Calculado por Legacy");
+    expect(valor(f, "Horas usadas")).toBe("2 h");
+    expect(valor(f, "Materiales")).toBe("5 €");
+    expect(valor(f, "Perfil usado")).toBe("elite · zona media · casa · SMI 1350 € (sin confirmar)");
+    expect(valor(f, "Total de Legacy")).toBe("60,15 €");
+    expect(valor(f, "Tarifa por hora")).toBe("27.57 €/h");
+  });
+
+  it("otros orígenes: manual, sin calcular y error", () => {
+    expect(valor(filasDePrecio({ origen: "manual" }), "Origen del precio")).toBe("Puesto por ti");
+    expect(valor(filasDePrecio({ origen: "sin_calcular" }), "Origen del precio")).toBe("Sin calcular (faltan datos)");
+    const e = filasDePrecio({ origen: "error", error: "Legacy respondió 401: sin detalle" });
+    expect(valor(e, "Origen del precio")).toBe("Error al consultar Legacy");
+    expect(valor(e, "Error")).toBe("Legacy respondió 401: sin detalle");
+  });
+
+  it("sin datos de precio no inventa filas", () => {
+    for (const raro of [null, {}, "x", { origen: "" }]) expect(filasDePrecio(raro)).toEqual([]);
+  });
+
+  it("las reservas de prueba se avisan como tales en Fallos", () => {
+    const [p] = problemasDeReservas([reserva({ status: "propuesta", created_at: hacia(45), is_test: true })], AHORA);
+    expect(p.detalle).toMatch(/^Reserva de prueba\./);
   });
 });

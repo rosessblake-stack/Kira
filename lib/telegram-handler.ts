@@ -1,3 +1,4 @@
+import type { ProposalPort } from "./proposal-flow";
 import { safeEqual } from "./safe-equal";
 
 /**
@@ -24,7 +25,8 @@ export type SecurityKind =
   | "telegram_no_autorizado"
   | "limite_de_peticiones"
   | "payload_inesperado"
-  | "acceso_panel_denegado";
+  | "acceso_panel_denegado"
+  | "posible_inyeccion";
 
 export interface Deps {
   /** Devuelve true si es nuevo, false si ya se había procesado. */
@@ -52,6 +54,8 @@ export interface Deps {
   newNonce(): string;
   /** Emite un enlace de un solo uso para entrar al panel. Nunca debe registrarse. */
   createLoginLink(): Promise<string>;
+  /** Propuestas de cita: simulación, botones Aprobar/Editar/Rechazar y edición por texto. */
+  proposals: ProposalPort;
 }
 
 export type HandlerResult = { status: number; body: Record<string, unknown> };
@@ -65,6 +69,7 @@ type TgCallback = { id?: string; from?: TgUser; data?: string; message?: TgMessa
 type TgUpdate = { update_id?: number; message?: TgMessage; callback_query?: TgCallback };
 
 const CALLBACK_RE = /^t:([0-9a-f]{32}):(ok|ed|no)$/;
+const PROPOSAL_CB_RE = /^p:([0-9a-f]{32}):(ok|ed|no)$/;
 
 const LABELS: Record<string, string> = {
   ok: "✅ Aprobado",
@@ -165,7 +170,7 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   if (cmd === "/start") {
     await deps.sendMessage(
       chatId,
-      "Kira activa. Te he identificado como administrador.\n\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
+      "Kira activa. Te he identificado como administrador.\n\n/simular <mensaje> → simula el mensaje de un cliente y te manda la propuesta\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
     );
     return;
   }
@@ -210,7 +215,23 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
     return;
   }
 
-  await deps.sendMessage(chatId, "No conozco ese comando. Prueba con /panel o /prueba.");
+  if (cmd === "/simular") {
+    // Todo lo que sigue al comando es el mensaje del "cliente"; no se interpreta como orden.
+    await deps.proposals.simular(chatId, text.replace(/^\S+\s*/, ""));
+    return;
+  }
+
+  if (cmd === "/cancelar") {
+    if (!(await deps.proposals.cancelarEdicion(chatId))) {
+      await deps.sendMessage(chatId, "No hay ninguna edición en curso.");
+    }
+    return;
+  }
+
+  // Texto libre: solo se atiende si hay una edición abierta (tras pulsar Editar en una propuesta).
+  if (text && !text.startsWith("/") && (await deps.proposals.textoLibre(chatId, text))) return;
+
+  await deps.sendMessage(chatId, "No conozco ese comando. Prueba con /simular, /panel o /prueba.");
 }
 
 async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {
@@ -225,6 +246,20 @@ async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {
       detail: { user_id: fromId, via: "boton" },
     });
     await deps.answerCallback(callbackId);
+    return;
+  }
+
+  // Botones de una propuesta de cita (de un solo uso: lo controla el flujo con un nonce atómico).
+  const propuesta = PROPOSAL_CB_RE.exec(cq.data ?? "");
+  if (propuesta) {
+    await deps.proposals.boton({
+      callbackId,
+      chatId: cq.message?.chat?.id ?? fromId,
+      messageId: typeof cq.message?.message_id === "number" ? cq.message.message_id : null,
+      fromId,
+      nonce: propuesta[1],
+      accion: propuesta[2] as "ok" | "ed" | "no",
+    });
     return;
   }
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { actividadReciente, listarConversaciones } from "../../../../lib/panel-data";
-import { INTENCIONES, fechaHora, hace } from "../../../../lib/panel-rules";
+import { CANALES, INTENCIONES, fechaHora, hace } from "../../../../lib/panel-rules";
 import { requireAdmin } from "../../../../lib/panel-session";
 import { Etiqueta, Vacio } from "../../_components";
 
@@ -22,11 +22,14 @@ export default async function Proceso() {
             <li key={c.id}>
               <Link className="tarjeta" href={`/panel/proceso/${c.id}`}>
                 <div className="fila">
-                  <strong>{c.nombre}</strong>
+                  <strong>
+                    {c.canal === "prueba" ? "🧪 " : ""}
+                    {c.nombre}
+                  </strong>
                   <Etiqueta tono={c.paso.tono}>{c.paso.etiqueta}</Etiqueta>
                 </div>
                 <div className="muted">
-                  {INTENCIONES[c.intent] ?? c.intent} · último mensaje {hace(c.ultimoMensaje, ahora)}
+                  {CANALES[c.canal] ?? c.canal} · {INTENCIONES[c.intent] ?? c.intent} · último mensaje {hace(c.ultimoMensaje, ahora)}
                 </div>
               </Link>
             </li>

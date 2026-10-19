@@ -1,0 +1,115 @@
+import { getDb } from "./db";
+import { interpretarPerfil, type PerfilLegacy } from "./pricing";
+import type { NuevaReserva, Reserva } from "./proposal-flow";
+
+/** Persistencia real del flujo de propuestas, sobre Supabase (solo servidor, clave service_role). */
+
+function ok(what: string, error: { message: string } | null) {
+  if (error) throw new Error(`${what}: ${error.message}`);
+}
+
+export async function crearConversacion(canal: "prueba", ref: string, nombre: string): Promise<string> {
+  const { data, error } = await getDb()
+    .from("conversations")
+    .insert({ channel: canal, contact_ref: ref, display_name: nombre })
+    .select("id")
+    .single();
+  ok("No se pudo crear la conversación", error);
+  return (data as { id: string }).id;
+}
+
+export async function guardarMensaje(conversationId: string, direccion: "in" | "out", cuerpo: string, marcado: boolean) {
+  const { error } = await getDb()
+    .from("messages")
+    .insert({ conversation_id: conversationId, direction: direccion, body: cuerpo, flagged: marcado });
+  ok("No se pudo guardar el mensaje", error);
+}
+
+export async function marcarMensajeSospechoso(conversationId: string) {
+  const { error } = await getDb()
+    .from("messages")
+    .update({ flagged: true })
+    .eq("conversation_id", conversationId)
+    .eq("direction", "in");
+  ok("No se pudo marcar el mensaje", error);
+}
+
+export async function actualizarConversacion(
+  id: string,
+  patch: { intent?: string; status?: string; last_client_message_at?: string },
+) {
+  const { error } = await getDb().from("conversations").update(patch).eq("id", id);
+  ok("No se pudo actualizar la conversación", error);
+}
+
+export async function crearReserva(r: NuevaReserva): Promise<Reserva> {
+  const { data, error } = await getDb().from("bookings").insert(r).select("*").single();
+  ok("No se pudo crear la reserva", error);
+  return data as Reserva;
+}
+
+export async function actualizarReserva(id: string, patch: Partial<Omit<Reserva, "id">>): Promise<Reserva> {
+  const { data, error } = await getDb().from("bookings").update(patch).eq("id", id).select("*").single();
+  ok("No se pudo actualizar la reserva", error);
+  return data as Reserva;
+}
+
+export async function leerReserva(id: string): Promise<Reserva> {
+  const { data, error } = await getDb().from("bookings").select("*").eq("id", id).single();
+  ok("No se pudo leer la reserva", error);
+  return data as Reserva;
+}
+
+export async function verReservaPorNonce(nonce: string): Promise<Reserva | null> {
+  const { data, error } = await getDb().from("bookings").select("*").eq("proposal_nonce", nonce).maybeSingle();
+  ok("No se pudo consultar el botón", error);
+  return (data as Reserva | null) ?? null;
+}
+
+/**
+ * Gasta el nonce de forma atómica: un solo UPDATE con las condiciones dentro. Si dos pulsaciones llegan a la vez,
+ * solo una devuelve fila; la otra recibe null.
+ */
+export async function tomarNonce(nonce: string): Promise<Reserva | null> {
+  const { data, error } = await getDb()
+    .from("bookings")
+    .update({ proposal_nonce: null })
+    .eq("proposal_nonce", nonce)
+    .eq("status", "propuesta")
+    .select("*");
+  ok("No se pudo gastar el botón", error);
+  const filas = (data as Reserva[] | null) ?? [];
+  return filas.length === 1 ? filas[0] : null;
+}
+
+export async function reservaEnEdicion(): Promise<Reserva | null> {
+  const { data, error } = await getDb()
+    .from("bookings")
+    .select("*")
+    .eq("status", "propuesta")
+    .not("edit_requested_at", "is", null)
+    .order("edit_requested_at", { ascending: false })
+    .limit(1);
+  ok("No se pudo consultar la edición", error);
+  const filas = (data as Reserva[] | null) ?? [];
+  return filas[0] ?? null;
+}
+
+/** Llamadas a Claude en las últimas 24 h (para el tope diario de gasto). */
+export async function contarLlamadasClaudeHoy(): Promise<number> {
+  const { count, error } = await getDb()
+    .from("event_log")
+    .select("id", { count: "exact", head: true })
+    .eq("source", "claude")
+    .eq("kind", "claude_llamada")
+    .gte("at", new Date(Date.now() - 24 * 3_600_000).toISOString());
+  ok("No se pudo contar las llamadas a Claude", error);
+  return count ?? 0;
+}
+
+/** Perfil de precios de Blake (app_settings.perfil_legacy); si no hay o es raro, el provisional sin confirmar. */
+export async function perfilGuardado(): Promise<PerfilLegacy> {
+  const { data, error } = await getDb().from("app_settings").select("value").eq("key", "perfil_legacy").maybeSingle();
+  if (error) return interpretarPerfil(null);
+  return interpretarPerfil((data as { value: unknown } | null)?.value);
+}

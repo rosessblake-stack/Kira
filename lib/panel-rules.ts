@@ -45,6 +45,11 @@ export const TIPOS_SEGURIDAD: Record<string, string> = {
   acceso_panel_denegado: "Acceso al panel denegado",
 };
 
+export const CANALES: Record<string, string> = {
+  instagram: "Instagram",
+  prueba: "Prueba",
+};
+
 export const TIPOS_TAREA: Record<string, string> = {
   expirar_reserva: "Expirar reserva",
   seguimiento_typeform: "Seguimiento de Typeform",
@@ -115,6 +120,8 @@ export type ReservaRow = {
   approved_at: string | null;
   created_at: string;
   calendar_event_id: string | null;
+  /** Reserva de una conversación simulada con /simular. */
+  is_test?: boolean;
 };
 
 export type TareaRow = {
@@ -145,6 +152,7 @@ export function problemasDeReservas(rows: ReservaRow[], ahora: Date): Problema[]
   const out: Problema[] = [];
   for (const r of rows) {
     const base = { conversationId: r.conversation_id };
+    const prueba = r.is_test ? "Reserva de prueba. " : "";
     if (r.status === "propuesta") {
       const min = minutosDesde(r.created_at, ahora);
       if (min > UMBRALES.propuestaSinAprobarMin) {
@@ -153,7 +161,7 @@ export function problemasDeReservas(rows: ReservaRow[], ahora: Date): Problema[]
           clave: `reserva:${r.id}:propuesta`,
           gravedad: "aviso",
           titulo: "Propuesta sin aprobar",
-          detalle: `La propuesta para ${r.client_name} lleva ${duracion(min)} esperando tu decisión.`,
+          detalle: `${prueba}La propuesta para ${r.client_name} lleva ${duracion(min)} esperando tu decisión.`,
           desde: r.created_at,
         });
       }
@@ -166,7 +174,7 @@ export function problemasDeReservas(rows: ReservaRow[], ahora: Date): Problema[]
           clave: `reserva:${r.id}:aprobada`,
           gravedad: "aviso",
           titulo: "Aprobada sin enlace de pago",
-          detalle: `La reserva de ${r.client_name} se aprobó hace ${duracion(min)} y no ha pasado a pendiente de pago.`,
+          detalle: `${prueba}La reserva de ${r.client_name} se aprobó hace ${duracion(min)} y no ha pasado a pendiente de pago.`,
           desde,
         });
       }
@@ -177,7 +185,7 @@ export function problemasDeReservas(rows: ReservaRow[], ahora: Date): Problema[]
           clave: `reserva:${r.id}:sin_plazo`,
           gravedad: "error",
           titulo: "Pendiente de pago sin plazo",
-          detalle: `La reserva de ${r.client_name} espera un pago pero no tiene plazo: nunca expiraría.`,
+          detalle: `${prueba}La reserva de ${r.client_name} espera un pago pero no tiene plazo: nunca expiraría.`,
           desde: r.created_at,
         });
       } else if (minutosDesde(r.payment_deadline, ahora) > UMBRALES.pagoVencidoMargenMin) {
@@ -186,7 +194,7 @@ export function problemasDeReservas(rows: ReservaRow[], ahora: Date): Problema[]
           clave: `reserva:${r.id}:vencida`,
           gravedad: "error",
           titulo: "Plazo de pago vencido sin cerrar",
-          detalle: `La reserva de ${r.client_name} debía expirar hace ${duracion(
+          detalle: `${prueba}La reserva de ${r.client_name} debía expirar hace ${duracion(
             minutosDesde(r.payment_deadline, ahora),
           )} y sigue pendiente. El evento provisional del calendario podría seguir ocupando el hueco.`,
           desde: r.payment_deadline,
@@ -198,7 +206,7 @@ export function problemasDeReservas(rows: ReservaRow[], ahora: Date): Problema[]
         clave: `reserva:${r.id}:sin_evento`,
         gravedad: "error",
         titulo: "Pagada sin evento en el calendario",
-        detalle: `${r.client_name} ha pagado pero la reserva no tiene evento de calendario asociado.`,
+        detalle: `${prueba}${r.client_name} ha pagado pero la reserva no tiene evento de calendario asociado.`,
         desde: r.approved_at ?? r.created_at,
       });
     }
@@ -373,6 +381,84 @@ export function lineaDeTiempo(
     })),
   ];
   return items.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
+// ---------------------------------------------------------------------------
+// Mapeo: lo que Kira entendió y cómo se calculó el precio (lectura defensiva de lo guardado)
+// ---------------------------------------------------------------------------
+
+export type Fila = { etiqueta: string; valor: string };
+
+const NO_INDICADO = "no indicado";
+const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+const txt = (v: unknown): string | null => (typeof v === "string" && v.trim() ? recortar(v.trim(), 300) : null);
+const numr = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+const LARGOS_PELO: Record<string, string> = {
+  muy_corto: "muy corto", corto: "corto", nuca_hombros: "nuca u hombros", media_espalda: "media espalda", caderas: "caderas", mas_largo: "más largo que las caderas",
+};
+const LARGOS_TRENZAS: Record<string, string> = {
+  nuca: "nuca", hombros: "hombros", media_espalda: "media espalda", caderas: "caderas", mas_largo: "más largo que las caderas",
+};
+
+/** Lo que Kira entendió del mensaje del cliente, fila a fila. Acepta cualquier cosa guardada sin romperse. */
+export function filasDeMapeo(spec: unknown): Fila[] {
+  const s = obj(spec);
+  const v = obj(s.servicio);
+  const dato = (x: unknown, mapa?: Record<string, string>) => {
+    const t = txt(x);
+    return t ? (mapa?.[t] ?? t) : NO_INDICADO;
+  };
+  const ext = txt(v.extensiones);
+  const filas: Fila[] = [
+    { etiqueta: "Mensaje del cliente", valor: txt(s.mensaje_cliente) ?? "—" },
+    { etiqueta: "Tipo de trenzado", valor: dato(v.tipo_trenzado) },
+    { etiqueta: "Número de trenzas", valor: numr(v.numero_trenzas) !== null ? String(numr(v.numero_trenzas)) : NO_INDICADO },
+    { etiqueta: "Tamaño", valor: dato(v.tamano) },
+    { etiqueta: "Estilo (pegadas)", valor: dato(v.estilo_pegadas) },
+    { etiqueta: "Extensiones", valor: ext === "con" ? "con" : ext === "feedin" ? "con (feed-in)" : ext === "sin" ? "sin" : NO_INDICADO },
+    { etiqueta: "Color de extensiones", valor: dato(s.color_extensiones) },
+    { etiqueta: "Boho", valor: v.boho === true ? "sí" : v.boho === false ? "no" : NO_INDICADO },
+    { etiqueta: "Largo del pelo", valor: dato(v.largo_cabello, LARGOS_PELO) },
+    { etiqueta: "Largo de las trenzas", valor: dato(v.largo_extensiones, LARGOS_TRENZAS) },
+    { etiqueta: "Fecha y hora pedidas", valor: txt(s.fecha) ? `${txt(s.fecha)}${txt(s.hora) ? ` ${txt(s.hora)}` : ""}` : NO_INDICADO },
+    { etiqueta: "Nombre", valor: dato(s.nombre) },
+    { etiqueta: "Email", valor: dato(s.email) },
+    { etiqueta: "Instagram", valor: dato(s.instagram) },
+    { etiqueta: "Seguridad del clasificador", valor: dato(s.confianza) },
+  ];
+  if (numr(s.horas) !== null) filas.push({ etiqueta: "Horas fijadas por ti", valor: `${numr(s.horas)} h` });
+  if (numr(s.precio_manual_centimos) !== null) filas.push({ etiqueta: "Precio puesto por ti", valor: euros(numr(s.precio_manual_centimos)) });
+  return filas;
+}
+
+const ORIGENES_PRECIO: Record<string, string> = {
+  legacy: "Calculado por Legacy",
+  manual: "Puesto por ti",
+  sin_calcular: "Sin calcular (faltan datos)",
+  error: "Error al consultar Legacy",
+};
+
+/** Cómo se llegó al precio: origen, perfil usado y datos de Legacy. */
+export function filasDePrecio(pricing: unknown): Fila[] {
+  const p = obj(pricing);
+  const origen = txt(p.origen);
+  if (!origen) return [];
+  const perfil = obj(p.perfil);
+  const legacy = obj(p.legacy);
+  const filas: Fila[] = [{ etiqueta: "Origen del precio", valor: ORIGENES_PRECIO[origen] ?? origen }];
+  if (numr(p.horas) !== null) filas.push({ etiqueta: "Horas usadas", valor: `${numr(p.horas)} h` });
+  if (numr(p.materiales) !== null) filas.push({ etiqueta: "Materiales", valor: `${numr(p.materiales)} €` });
+  if (txt(perfil.nivel)) {
+    filas.push({
+      etiqueta: "Perfil usado",
+      valor: `${txt(perfil.nivel)} · zona ${txt(perfil.zona) ?? "?"} · ${txt(perfil.estructura) ?? "?"} · SMI ${numr(perfil.smi) ?? "?"} €${perfil.confirmado === true ? "" : " (sin confirmar)"}`,
+    });
+  }
+  if (numr(legacy.totalCentimos) !== null) filas.push({ etiqueta: "Total de Legacy", valor: euros(numr(legacy.totalCentimos)) });
+  if (numr(legacy.tarifaHora) !== null) filas.push({ etiqueta: "Tarifa por hora", valor: `${numr(legacy.tarifaHora)} €/h` });
+  if (txt(p.error)) filas.push({ etiqueta: "Error", valor: txt(p.error)! });
+  return filas;
 }
 
 // ---------------------------------------------------------------------------

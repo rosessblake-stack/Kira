@@ -26,7 +26,15 @@ type Source = "manychat" | "stripe" | "telegram" | "typeform" | "claude" | "cale
 /** El registro es de mejor esfuerzo: nunca debe tumbar una petición. */
 export async function logEvent(
   source: Source,
-  e: { kind: string; level?: "info" | "warn" | "error"; summary: string; detail?: Record<string, unknown> },
+  e: {
+    kind: string;
+    level?: "info" | "warn" | "error";
+    summary: string;
+    detail?: Record<string, unknown>;
+    /** Enlazan el evento con su conversación y reserva: alimentan la línea de tiempo del panel. */
+    conversation_id?: string | null;
+    booking_id?: string | null;
+  },
 ): Promise<void> {
   try {
     const { error } = await getDb().from("event_log").insert({
@@ -35,6 +43,8 @@ export async function logEvent(
       level: e.level ?? "info",
       summary: e.summary,
       detail: e.detail ?? {},
+      conversation_id: e.conversation_id ?? null,
+      booking_id: e.booking_id ?? null,
     });
     if (error) console.error("event_log:", error.message);
   } catch (err) {
@@ -45,12 +55,14 @@ export async function logEvent(
 export async function logSecurity(e: {
   kind: SecurityKind;
   source: string;
+  conversation_id?: string | null;
   detail?: Record<string, unknown>;
 }): Promise<void> {
   try {
     const { error } = await getDb().from("security_events").insert({
       kind: e.kind,
       source: e.source,
+      conversation_id: e.conversation_id ?? null,
       detail: e.detail ?? {},
     });
     if (error) console.error("security_events:", error.message);

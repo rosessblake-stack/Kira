@@ -3,11 +3,14 @@ import { getDb } from "./db";
 import {
   UMBRALES,
   contarPorTipo,
+  filasDeMapeo,
+  filasDePrecio,
   lineaDeTiempo,
   pasoDeConversacion,
   problemasDeReservas,
   problemasDeTareas,
   problemasDeWebhook,
+  type Fila,
   type ItemLinea,
   type Paso,
   type Problema,
@@ -43,6 +46,7 @@ function count(what: string, res: { count: number | null; error: { message: stri
 
 export type ConversacionResumen = {
   id: string;
+  canal: string;
   nombre: string;
   intent: string;
   ultimoMensaje: string | null;
@@ -52,6 +56,7 @@ export type ConversacionResumen = {
 
 type ConvRow = {
   id: string;
+  channel: string;
   display_name: string | null;
   contact_ref: string;
   intent: string;
@@ -66,7 +71,7 @@ export async function listarConversaciones(_a: Admin): Promise<ConversacionResum
     "conversaciones",
     await db
       .from("conversations")
-      .select("id,display_name,contact_ref,intent,status,last_client_message_at,updated_at")
+      .select("id,channel,display_name,contact_ref,intent,status,last_client_message_at,updated_at")
       .order("updated_at", { ascending: false })
       .limit(100),
   );
@@ -85,6 +90,7 @@ export async function listarConversaciones(_a: Admin): Promise<ConversacionResum
 
   return convs.map((c) => ({
     id: c.id,
+    canal: c.channel,
     nombre: c.display_name ?? c.contact_ref,
     intent: c.intent,
     ultimoMensaje: c.last_client_message_at,
@@ -93,9 +99,27 @@ export async function listarConversaciones(_a: Admin): Promise<ConversacionResum
   }));
 }
 
+export type ReservaDetalle = {
+  id: string;
+  estado: string;
+  esPrueba: boolean;
+  cliente: string;
+  servicio: string;
+  inicio: string | null;
+  fin: string | null;
+  precioCentimos: number | null;
+  senalCentimos: number | null;
+  mapeo: Fila[];
+  precio: Fila[];
+  avisos: string[];
+  borrador: string | null;
+};
+
 export type DetalleConversacion = {
+  canal: string;
   nombre: string;
   intent: string;
+  reservas: ReservaDetalle[];
   paso: Paso;
   ultimoMensaje: string | null;
   linea: ItemLinea[];
@@ -108,7 +132,7 @@ export async function detalleConversacion(_a: Admin, id: string): Promise<Detall
   const conv = (
     await db
       .from("conversations")
-      .select("id,display_name,contact_ref,intent,status,last_client_message_at,updated_at")
+      .select("id,channel,display_name,contact_ref,intent,status,last_client_message_at,updated_at")
       .eq("id", id)
       .maybeSingle()
   ).data as ConvRow | null;
@@ -129,15 +153,37 @@ export async function detalleConversacion(_a: Admin, id: string): Promise<Detall
       .limit(200),
     db
       .from("bookings")
-      .select("created_at,status,service_description,price_cents,deposit_cents")
+      .select("id,created_at,status,is_test,client_name,service_description,price_cents,deposit_cents,starts_at,ends_at,spec,pricing,warnings,reply_draft")
       .eq("conversation_id", id)
       .order("created_at", { ascending: true }),
   ]);
 
-  const reservasRows = must<{ created_at: string; status: string; service_description: string; price_cents: number | null; deposit_cents: number | null }[]>("reservas", reservas);
+  const reservasRows = must<
+    {
+      id: string; created_at: string; status: string; is_test: boolean; client_name: string; service_description: string;
+      price_cents: number | null; deposit_cents: number | null; starts_at: string | null; ends_at: string | null;
+      spec: unknown; pricing: unknown; warnings: unknown; reply_draft: string | null;
+    }[]
+  >("reservas", reservas);
   const ultima = reservasRows.at(-1);
 
   return {
+    canal: conv.channel,
+    reservas: reservasRows.map((r) => ({
+      id: r.id,
+      estado: r.status,
+      esPrueba: r.is_test,
+      cliente: r.client_name,
+      servicio: r.service_description,
+      inicio: r.starts_at,
+      fin: r.ends_at,
+      precioCentimos: r.price_cents,
+      senalCentimos: r.deposit_cents,
+      mapeo: filasDeMapeo(r.spec),
+      precio: filasDePrecio(r.pricing),
+      avisos: Array.isArray(r.warnings) ? r.warnings.filter((w): w is string => typeof w === "string") : [],
+      borrador: r.reply_draft,
+    })),
     nombre: conv.display_name ?? conv.contact_ref,
     intent: conv.intent,
     paso: pasoDeConversacion(conv, ultima),
@@ -190,12 +236,12 @@ export const cargarFallos = cache(async (_a: Admin): Promise<Fallos> => {
   const [pendientes, pagadasSinEvento, tareasAbiertas, tareasFallidas, registrados] = await Promise.all([
     db
       .from("bookings")
-      .select("id,conversation_id,client_name,status,payment_deadline,approved_at,created_at,calendar_event_id")
+      .select("id,conversation_id,client_name,status,payment_deadline,approved_at,created_at,calendar_event_id,is_test")
       .in("status", ["propuesta", "aprobada", "pendiente_pago"])
       .limit(300),
     db
       .from("bookings")
-      .select("id,conversation_id,client_name,status,payment_deadline,approved_at,created_at,calendar_event_id")
+      .select("id,conversation_id,client_name,status,payment_deadline,approved_at,created_at,calendar_event_id,is_test")
       .eq("status", "pagada")
       .is("calendar_event_id", null)
       .limit(100),

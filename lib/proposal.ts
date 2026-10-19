@@ -27,6 +27,8 @@ export const SENAL_MIN_CENTIMOS = 1000;
 export const SENAL_MAX_CENTIMOS = 2000;
 
 export type SpecGuardada = {
+  /** Mensaje original del cliente (recortado): permite volver a mostrar la propuesta al editarla. */
+  mensaje_cliente: string;
   servicio: ServicioParaPrecio;
   color_extensiones: string | null;
   fecha: string | null;
@@ -45,8 +47,9 @@ export type SpecGuardada = {
   respuesta_manual: string | null;
 };
 
-export function specDesdeClasificacion(c: Clasificacion): SpecGuardada {
+export function specDesdeClasificacion(c: Clasificacion, mensajeCliente: string): SpecGuardada {
   return {
+    mensaje_cliente: mensajeCliente,
     servicio: {
       tipo_trenzado: c.tipo_trenzado,
       numero_trenzas: c.numero_trenzas,
@@ -124,6 +127,19 @@ function describirServicio(s: SpecGuardada): string {
   } else if (v.extensiones === "sin") partes.push("sin extensiones");
   if (v.boho) partes.push("boho");
   return partes.join(" · ");
+}
+
+/** Versión para hablar con el cliente: "6 trenzas pegadas con extensiones (rojo)". */
+function describirServicioNatural(s: SpecGuardada): string {
+  const v = s.servicio;
+  const partes: string[] = [v.numero_trenzas ? `${v.numero_trenzas} trenzas` : "tus trenzas"];
+  if (v.tipo_trenzado) partes.push(v.tipo_trenzado);
+  if (v.tamano) partes.push(`tamaño ${v.tamano}`);
+  if (v.extensiones === "con" || v.extensiones === "feedin") {
+    partes.push(`con extensiones${s.color_extensiones ? ` (${s.color_extensiones})` : ""}`);
+  } else if (v.extensiones === "sin") partes.push("sin extensiones");
+  if (v.boho) partes.push("estilo boho");
+  return partes.join(" ");
 }
 
 export function resumenPerfil(p: PerfilLegacy): string {
@@ -221,7 +237,7 @@ function componerBorrador(
   const saludo = spec.nombre ? `¡Hola, ${spec.nombre}!` : "¡Hola!";
   return [
     `${saludo} Gracias por escribirme 😊`,
-    `Para ${describirServicio(spec).toLowerCase()}, el precio es de ${euros(precio)}${duracion ? ` y dura aproximadamente ${duracionLegible(duracion)}` : ""}.`,
+    `Para ${describirServicioNatural(spec)}, el precio es de ${euros(precio)}${duracion ? ` y dura aproximadamente ${duracionLegible(duracion)}` : ""}.`,
     `Me pides el ${fechaLarga(inicio)}. Lo confirmo y te aviso enseguida.`,
     `Para reservar el hueco se deja una señal de ${euros(spec.senal_centimos)}, que se descuenta del total. En cuanto lo confirme te paso el enlace de pago.`,
   ].join("\n\n");
@@ -313,6 +329,13 @@ export type Cambio =
   | { k: "nombre"; v: string }
   | { k: "email"; v: string }
   | { k: "respuesta"; v: string };
+
+/** Nombre de cada cambio tal como lo escribe Blake (no el identificador interno). */
+const ETIQUETAS_CAMBIO: Record<Cambio["k"], string> = {
+  precio: "precio", senal: "señal", horas: "horas", fecha: "fecha", hora: "hora", tipo: "tipo", tamano: "tamaño",
+  extensiones: "extensiones", largo_ext: "largo", trenzas: "trenzas", nombre: "nombre", email: "email", respuesta: "respuesta",
+};
+export const etiquetaCambio = (k: Cambio["k"]) => ETIQUETAS_CAMBIO[k];
 
 const quitarAcentos = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "");
 

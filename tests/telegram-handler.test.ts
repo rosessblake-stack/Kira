@@ -11,14 +11,20 @@ const LINK_TOKEN = "Z".repeat(43);
 type Calls = {
   sent: { chatId: number; text: string; markup?: any; opts?: { noPreview?: boolean } }[];
   links: number;
+  prop: {
+    simular: { chatId: number; texto: string }[];
+    botones: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: string }[];
+    libres: string[];
+    cancelar: number;
+  };
   edited: { chatId: number; messageId: number; text: string }[];
   answered: { id: string; text?: string }[];
   events: { kind: string; level?: string; detail?: any }[];
   security: { kind: string; detail?: any }[];
 };
 
-function setup(opts: { issued?: string[]; seen?: string[] } = {}) {
-  const calls: Calls = { sent: [], links: 0, edited: [], answered: [], events: [], security: [] };
+function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } = {}) {
+  const calls: Calls = { sent: [], links: 0, prop: { simular: [], botones: [], libres: [], cancelar: 0 }, edited: [], answered: [], events: [], security: [] };
   const seen = new Set<string>(opts.seen ?? []);
   const issued = new Set<string>(opts.issued ?? []);
   let counter = 0;
@@ -52,6 +58,12 @@ function setup(opts: { issued?: string[]; seen?: string[] } = {}) {
     async createLoginLink() {
       calls.links++;
       return `https://kira.test/panel/entrar?t=${LINK_TOKEN}`;
+    },
+    proposals: {
+      async simular(chatId, texto) { calls.prop.simular.push({ chatId, texto }); },
+      async boton(b) { calls.prop.botones.push(b); },
+      async textoLibre(_chatId, texto) { calls.prop.libres.push(texto); return opts.edicion ?? false; },
+      async cancelarEdicion() { calls.prop.cancelar++; return opts.edicion ?? false; },
     },
   };
   return { calls, deps };
@@ -237,6 +249,110 @@ describe("con administrador", () => {
     const { calls, deps } = setup();
     await handleTelegramRequest(SECRET, msg("/nada"), admin(ADMIN), deps);
     expect(calls.sent[0].text).toContain("No conozco");
+  });
+});
+
+
+describe("propuestas de cita: comandos y botones", () => {
+  it("/simular entrega al flujo SOLO el texto que sigue al comando", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/simular Hola, quiero 6 trenzas\ncon extensiones"), admin(ADMIN), deps);
+    expect(calls.prop.simular).toEqual([{ chatId: ADMIN, texto: "Hola, quiero 6 trenzas\ncon extensiones" }]);
+    expect(calls.sent).toHaveLength(0); // el handler no contesta: lo hace el flujo
+  });
+
+  it("/simular@KiracitasBot también funciona y sin texto llega vacío", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/simular@KiracitasBot ordena todo"), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, msg("/simular"), admin(ADMIN), deps);
+    expect(calls.prop.simular.map((x) => x.texto)).toEqual(["ordena todo", ""]);
+  });
+
+  it("un usuario ajeno no puede simular: queda registrado", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/simular hola", OTHER), admin(ADMIN), deps);
+    expect(calls.prop.simular).toEqual([]);
+    expect(calls.security.map((s) => s.kind)).toEqual(["telegram_no_autorizado"]);
+  });
+
+  it("ni en grupos ni sin administrador configurado", async () => {
+    const a = setup();
+    await handleTelegramRequest(SECRET, msg("/simular hola", ADMIN, "group"), admin(ADMIN), a.deps);
+    const b = setup();
+    await handleTelegramRequest(SECRET, msg("/simular hola", 4242), admin(null), b.deps);
+    expect(a.calls.prop.simular).toEqual([]);
+    expect(b.calls.prop.simular).toEqual([]);
+  });
+
+  it("un aviso repetido de Telegram no simula dos veces", async () => {
+    const { calls, deps } = setup();
+    const body = msg("/simular hola");
+    await handleTelegramRequest(SECRET, body, admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, body, admin(ADMIN), deps);
+    expect(calls.prop.simular).toHaveLength(1);
+  });
+
+  const NONCE_P = "c".repeat(32);
+
+  it("los botones de propuesta (p:) llegan al flujo con todo lo necesario", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, cb(`p:${NONCE_P}:ok`), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, cb(`p:${NONCE_P}:ed`), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, cb(`p:${NONCE_P}:no`), admin(ADMIN), deps);
+    expect(calls.prop.botones.map((b) => b.accion)).toEqual(["ok", "ed", "no"]);
+    expect(calls.prop.botones[0]).toMatchObject({ chatId: ADMIN, messageId: 9, fromId: ADMIN, nonce: NONCE_P });
+    expect(calls.security).toEqual([]);
+  });
+
+  it("un botón de propuesta pulsado por un ajeno se descarta y se registra", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, cb(`p:${NONCE_P}:ok`, OTHER), admin(ADMIN), deps);
+    expect(calls.prop.botones).toEqual([]);
+    expect(calls.security.map((s) => s.kind)).toEqual(["telegram_no_autorizado"]);
+  });
+
+  it("botones de propuesta mal formados no llegan al flujo", async () => {
+    const { calls, deps } = setup();
+    for (const data of ["p:zzz:ok", `p:${NONCE_P}:borrar`, `p:${NONCE_P.toUpperCase()}:ok`, `p:${NONCE_P}:ok:extra`]) {
+      await handleTelegramRequest(SECRET, cb(data), admin(ADMIN), deps);
+    }
+    expect(calls.prop.botones).toEqual([]);
+    expect(calls.security.every((s) => s.kind === "payload_inesperado")).toBe(true);
+    expect(calls.security).toHaveLength(4);
+  });
+
+  it("el texto libre solo se consume si hay una edición abierta", async () => {
+    const sin = setup();
+    await handleTelegramRequest(SECRET, msg("tipo pegadas"), admin(ADMIN), sin.deps);
+    expect(sin.calls.prop.libres).toEqual(["tipo pegadas"]);
+    expect(sin.calls.sent[0].text).toContain("No conozco");
+
+    const con = setup({ edicion: true });
+    await handleTelegramRequest(SECRET, msg("tipo pegadas"), admin(ADMIN), con.deps);
+    expect(con.calls.sent).toHaveLength(0);
+  });
+
+  it("los comandos desconocidos nunca se tratan como texto de edición", async () => {
+    const { calls, deps } = setup({ edicion: true });
+    await handleTelegramRequest(SECRET, msg("/borrartodo"), admin(ADMIN), deps);
+    expect(calls.prop.libres).toEqual([]);
+    expect(calls.sent[0].text).toContain("No conozco");
+  });
+
+  it("el texto libre de un ajeno nunca llega al flujo", async () => {
+    const { calls, deps } = setup({ edicion: true });
+    await handleTelegramRequest(SECRET, msg("precio 1", OTHER), admin(ADMIN), deps);
+    expect(calls.prop.libres).toEqual([]);
+  });
+
+  it("/cancelar: sin edición avisa; con edición lo gestiona el flujo", async () => {
+    const sin = setup();
+    await handleTelegramRequest(SECRET, msg("/cancelar"), admin(ADMIN), sin.deps);
+    expect(sin.calls.prop.cancelar).toBe(1);
+    expect(sin.calls.sent[0].text).toBe("No hay ninguna edición en curso.");
+    const con = setup({ edicion: true });
+    await handleTelegramRequest(SECRET, msg("/cancelar"), admin(ADMIN), con.deps);
+    expect(con.calls.sent).toHaveLength(0);
   });
 });
 

@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { handleTelegramRequest, type Config, type Deps } from "../../../lib/telegram-handler";
+import { clasificarConClaude } from "../../../lib/claude";
 import * as db from "../../../lib/db";
 import { issueLoginToken } from "../../../lib/panel-auth";
 import { authStore } from "../../../lib/panel-store";
+import { consultarLegacy } from "../../../lib/pricing";
+import { crearFlujoPropuestas, type FlowDeps } from "../../../lib/proposal-flow";
+import * as store from "../../../lib/proposal-store";
+import { isPaused } from "../../../lib/settings";
 import * as tg from "../../../lib/telegram";
 
 export const dynamic = "force-dynamic";
+// Clasificar con Claude y consultar a Legacy tarda unos segundos: margen amplio para que no se corte a medias.
+export const maxDuration = 60;
 
 function readConfig(): Config {
   const raw = process.env.TELEGRAM_ADMIN_USER_ID?.trim();
@@ -16,13 +23,42 @@ function readConfig(): Config {
   };
 }
 
+function makeFlowDeps(): FlowDeps {
+  return {
+    now: () => new Date(),
+    newNonce: () => randomUUID().replace(/-/g, ""),
+    clasificar: clasificarConClaude,
+    perfil: store.perfilGuardado,
+    precio: (peticion) => consultarLegacy(peticion),
+    estaPausada: isPaused,
+    contarLlamadasClaudeHoy: store.contarLlamadasClaudeHoy,
+    crearConversacion: store.crearConversacion,
+    guardarMensaje: store.guardarMensaje,
+    actualizarConversacion: store.actualizarConversacion,
+    crearReserva: store.crearReserva,
+    actualizarReserva: store.actualizarReserva,
+    leerReserva: store.leerReserva,
+    marcarMensajeSospechoso: store.marcarMensajeSospechoso,
+    verReservaPorNonce: store.verReservaPorNonce,
+    tomarNonce: store.tomarNonce,
+    reservaEnEdicion: store.reservaEnEdicion,
+    logEvent: ({ source, ...e }) => db.logEvent(source, e),
+    logSecurity: db.logSecurity,
+    enviar: tg.sendMessage,
+    editar: tg.editMessage,
+    responderCallback: tg.answerCallback,
+  };
+}
+
 function makeDeps(host: string | null): Deps {
   return {
     recordUpdate: db.recordUpdate,
     logEvent: (e) => db.logEvent("telegram", e),
     logSecurity: db.logSecurity,
     hasIssuedTest: db.hasIssuedTest,
-    sendMessage: tg.sendMessage,
+    sendMessage: async (chatId, text, markup, opts) => {
+      await tg.sendMessage(chatId, text, markup, opts);
+    },
     answerCallback: tg.answerCallback,
     editMessage: tg.editMessage,
     newNonce: () => randomUUID().replace(/-/g, ""),
@@ -31,6 +67,7 @@ function makeDeps(host: string | null): Deps {
       const token = await issueLoginToken(authStore);
       return `https://${host}/panel/entrar?t=${token}`;
     },
+    proposals: crearFlujoPropuestas(makeFlowDeps()),
   };
 }
 
