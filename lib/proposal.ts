@@ -7,6 +7,7 @@ import {
   limpiarTexto,
   type Clasificacion,
 } from "./intents";
+import { ETIQUETA_FOTO, limpiarDescripcion, type ResumenFoto } from "./fotos";
 import { euros } from "./panel-rules";
 import {
   datosFaltantes,
@@ -156,7 +157,7 @@ export function resumenPerfil(p: PerfilLegacy): string {
 export function componerPropuesta(
   spec: SpecGuardada,
   precio: ResultadoPrecio,
-  ctx: { ahora: Date; perfil: PerfilLegacy; calendarioConectado: boolean },
+  ctx: { ahora: Date; perfil: PerfilLegacy; calendarioConectado: boolean; fotos?: ResumenFoto[] },
 ): Propuesta {
   const horasUsadas = spec.horas ?? horasPorDefecto(spec.servicio);
   const materialesUsados = materialesPorDefecto(spec.servicio);
@@ -199,6 +200,11 @@ export function componerPropuesta(
   const s = spec.servicio;
   if (s.tipo_trenzado === "pegadas" && (s.extensiones === "con" || s.extensiones === "feedin") && !s.largo_extensiones) {
     avisos.push("No dice hasta dónde quiere las extensiones (afecta al precio de las pegadas).");
+  }
+  // Blake pide en Instagram una foto del pelo y otra de las trenzas que quiere. Es un aviso, no un bloqueo: decide él.
+  if (ctx.fotos) {
+    if (!ctx.fotos.some((f) => f.tipo === "pelo")) avisos.push("Falta la foto del pelo de la clienta.");
+    if (!ctx.fotos.some((f) => f.tipo === "referencia")) avisos.push("Falta la foto de las trenzas de referencia.");
   }
   if (!spec.email) avisos.push("No tengo su email: hará falta para la reserva y el recibo.");
   if (!spec.nombre) avisos.push("No dice su nombre.");
@@ -262,7 +268,7 @@ const recorte = (t: string, n: number) => (t.length <= n ? t : `${t.slice(0, n -
 export function textoPropuesta(
   p: Propuesta,
   spec: SpecGuardada,
-  ctx: { mensajeCliente: string; esPrueba: boolean; perfil: PerfilLegacy },
+  ctx: { mensajeCliente: string; esPrueba: boolean; perfil: PerfilLegacy; fotos?: ResumenFoto[] },
 ): string {
   const l: string[] = [];
   l.push(`${ctx.esPrueba ? "🧪 PRUEBA · " : ""}PROPUESTA DE CITA`);
@@ -278,6 +284,16 @@ export function textoPropuesta(
     l.push(`• Fecha pedida: ${fechaLarga(p.inicio)}${p.fin ? ` → ${partesMadrid(p.fin).hora}` : ""}${p.duracionMinutos ? ` (${duracionLegible(p.duracionMinutos)})` : ""}`);
   } else {
     l.push("• Fecha pedida: sin concretar");
+  }
+  if (ctx.fotos) {
+    l.push("");
+    l.push("📷 Fotos");
+    for (const tipo of ["pelo", "referencia"] as const) {
+      const f = ctx.fotos.find((x) => x.tipo === tipo);
+      l.push(`• ${ETIQUETA_FOTO[tipo]}: ${!f ? "sin foto" : f.descripcion ? `«${recorte(f.descripcion, 200)}»` : "foto sin describir"}`);
+    }
+    const otras = ctx.fotos.filter((x) => x.tipo === "otra").length;
+    if (otras) l.push(`• Otras fotos: ${otras}`);
   }
   l.push("");
   if (p.precioCentimos !== null) {
@@ -334,6 +350,8 @@ export const AYUDA_EDICION = [
   "nombre Ana",
   "email ana@correo.com",
   "respuesta Hola Ana, ...",
+  "pelo rizado, fino, a los hombros   (lo que ves en su foto del pelo)",
+  "referencia boxeadoras hasta la cadera   (lo que ves en su foto de trenzas)",
   "",
   "«precio auto» devuelve el precio a Legacy. /cancelar lo deja como está.",
 ].join("\n");
@@ -351,12 +369,16 @@ export type Cambio =
   | { k: "trenzas"; n: number }
   | { k: "nombre"; v: string }
   | { k: "email"; v: string }
-  | { k: "respuesta"; v: string };
+  | { k: "respuesta"; v: string }
+  /** Lo que Blake ve en una foto: no cambia la reserva, se guarda junto a la foto. */
+  | { k: "foto_pelo"; v: string }
+  | { k: "foto_referencia"; v: string };
 
 /** Nombre de cada cambio tal como lo escribe Blake (no el identificador interno). */
 const ETIQUETAS_CAMBIO: Record<Cambio["k"], string> = {
   precio: "precio", senal: "señal", horas: "horas", fecha: "fecha", hora: "hora", tipo: "tipo", tamano: "tamaño",
   extensiones: "extensiones", largo_ext: "largo", trenzas: "trenzas", nombre: "nombre", email: "email", respuesta: "respuesta",
+  foto_pelo: "descripción del pelo", foto_referencia: "descripción de la referencia",
 };
 export const etiquetaCambio = (k: Cambio["k"]) => ETIQUETAS_CAMBIO[k];
 
@@ -414,7 +436,7 @@ export function parsearEdicion(texto: string, ahora: Date): { cambios: Cambio[];
   for (const linea of lineas) {
     const m = /^(\S+)\s*(.*)$/.exec(linea);
     if (!m) continue;
-    const clave = quitarAcentos(m[1].toLowerCase());
+    const clave = quitarAcentos(m[1].toLowerCase()).replace(/:$/, "");
     const valor = m[2].trim();
     const err = (msg: string) => errores.push(`«${recorte(linea, 60)}»: ${msg}`);
 
@@ -498,8 +520,15 @@ export function parsearEdicion(texto: string, ahora: Date): { cambios: Cambio[];
         else cambios.push({ k: "respuesta", v: recorte(v, 900) });
         break;
       }
+      case "pelo":
+      case "referencia": {
+        const v = limpiarDescripcion(valor);
+        if (!v) err(`escribe lo que ves en la foto, por ejemplo «${clave} ${clave === "pelo" ? "rizado, fino, a los hombros" : "boxeadoras hasta la cadera"}».`);
+        else cambios.push({ k: clave === "pelo" ? "foto_pelo" : "foto_referencia", v });
+        break;
+      }
       default:
-        err("no sé qué cambiar con eso. Claves: precio, señal, horas, fecha, hora, tipo, tamaño, extensiones, largo, trenzas, nombre, email, respuesta.");
+        err("no sé qué cambiar con eso. Claves: precio, señal, horas, fecha, hora, tipo, tamaño, extensiones, largo, trenzas, nombre, email, respuesta, pelo, referencia.");
     }
   }
   return { cambios, errores };
@@ -532,6 +561,10 @@ export function aplicarCambios(spec: SpecGuardada, cambios: Cambio[]): Resultado
       case "nombre": s.nombre = c.v; break;
       case "email": s.email = c.v; break;
       case "respuesta": s.respuesta_manual = c.v; break;
+      // Las descripciones de fotos no tocan la reserva: el flujo las guarda junto a cada foto.
+      case "foto_pelo":
+      case "foto_referencia":
+        break;
     }
   }
   // Si Blake fijó el precio a mano, los cambios de servicio no lo pisan.

@@ -73,6 +73,93 @@ export async function editMessage(chatId: number, messageId: number, text: strin
   await tgCall("editMessageText", { chat_id: chatId, message_id: messageId, text });
 }
 
+// ---------------------------------------------------------------------------
+// Archivos: descargar lo que Blake envía y enviarle fotos guardadas
+// ---------------------------------------------------------------------------
+
+/** El archivo supera el tope: se avisa a Blake sin descargarlo entero. */
+export class ArchivoDemasiadoGrande extends Error {
+  constructor() {
+    super("El archivo es demasiado grande");
+  }
+}
+
+/**
+ * Descarga un archivo de Telegram por su file_id. Se corta en cuanto pasa del tope (no se fía del tamaño declarado)
+ * y los errores nunca llevan la dirección, que contiene el token del bot.
+ */
+export async function descargarArchivo(fileId: string, maxBytes: number): Promise<Uint8Array> {
+  const info = await tgCall<{ file_path?: string; file_size?: number }>("getFile", { file_id: fileId });
+  if (!info?.file_path || !/^[\w./-]{1,200}$/.test(info.file_path) || info.file_path.includes("..")) {
+    throw new Error("Telegram no devolvió una ruta de archivo válida");
+  }
+  if (typeof info.file_size === "number" && info.file_size > maxBytes) throw new ArchivoDemasiadoGrande();
+
+  let res: Response;
+  try {
+    res = await fetch(`${apiBase()}/file/bot${token()}/${info.file_path}`, { cache: "no-store" });
+  } catch {
+    throw new Error("Telegram (descarga): sin conexión");
+  }
+  if (!res.ok || !res.body) throw new Error(`Telegram (descarga): respuesta ${res.status}`);
+
+  const partes: Uint8Array[] = [];
+  let total = 0;
+  const lector = res.body.getReader();
+  for (;;) {
+    const { done, value } = await lector.read();
+    if (done) break;
+    total += value.length;
+    if (total > maxBytes) {
+      await lector.cancel();
+      throw new ArchivoDemasiadoGrande();
+    }
+    partes.push(value);
+  }
+  return Buffer.concat(partes);
+}
+
+export type FotoParaEnviar = { bytes: Uint8Array; mime: string; ext: string; pie: string };
+
+async function tgMultipart(method: string, campos: Record<string, string>, archivos: { campo: string; foto: FotoParaEnviar }[]) {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(campos)) form.append(k, v);
+  for (const { campo, foto } of archivos) {
+    form.append(campo, new Blob([foto.bytes as BlobPart], { type: foto.mime }), `${campo}.${foto.ext}`);
+  }
+  let res: Response;
+  try {
+    res = await fetch(`${apiBase()}/bot${token()}/${method}`, { method: "POST", body: form, cache: "no-store" });
+  } catch {
+    throw new Error(`Telegram ${method}: sin conexión`);
+  }
+  let json: TgResponse<unknown>;
+  try {
+    json = (await res.json()) as TgResponse<unknown>;
+  } catch {
+    throw new Error(`Telegram ${method}: respuesta no válida (${res.status})`);
+  }
+  if (!json.ok) throw new Error(`Telegram ${method}: ${json.description ?? "error"} (${res.status})`);
+}
+
+const PIE_MAX = 1000; // Telegram admite 1024 caracteres en el pie de una foto
+
+/** Una foto, o un álbum si son varias (Telegram admite de 2 a 10 por álbum). Los pies son texto plano. */
+export async function sendPhotos(chatId: number, fotos: FotoParaEnviar[]): Promise<void> {
+  if (fotos.length === 0) return;
+  if (fotos.length === 1) {
+    await tgMultipart("sendPhoto", { chat_id: String(chatId), caption: fotos[0].pie.slice(0, PIE_MAX) }, [{ campo: "photo", foto: fotos[0] }]);
+    return;
+  }
+  const lote = fotos.slice(0, 10);
+  const media = lote.map((f, i) => ({ type: "photo", media: `attach://f${i}`, caption: f.pie.slice(0, PIE_MAX) }));
+  await tgMultipart(
+    "sendMediaGroup",
+    { chat_id: String(chatId), media: JSON.stringify(media) },
+    lote.map((foto, i) => ({ campo: `f${i}`, foto })),
+  );
+}
+
 export type BotInfo = { username?: string };
 export type WebhookInfo = {
   url?: string;

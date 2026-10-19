@@ -477,6 +477,14 @@ const fmtFechaHora = new Intl.DateTimeFormat("es-ES", {
   hourCycle: "h23",
 });
 
+const fmtSoloFecha = new Intl.DateTimeFormat("es-ES", { timeZone: ZONA, day: "numeric", month: "long", year: "numeric" });
+
+export function soloFecha(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? "—" : fmtSoloFecha.format(new Date(t));
+}
+
 export function fechaHora(iso: string | null | undefined): string {
   if (!iso) return "—";
   const t = Date.parse(iso);

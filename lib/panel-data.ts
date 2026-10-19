@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { getDb } from "./db";
+import { ETIQUETA_FOTO, type TipoFoto } from "./fotos";
 import {
   UMBRALES,
   contarPorTipo,
@@ -115,8 +116,20 @@ export type ReservaDetalle = {
   borrador: string | null;
 };
 
+export type FotoPanel = {
+  id: string;
+  tipo: TipoFoto;
+  etiqueta: string;
+  descripcion: string | null;
+  creada: string;
+  caduca: string;
+  /** El archivo ya se borró por caducidad; la descripción se conserva. */
+  borrada: boolean;
+};
+
 export type DetalleConversacion = {
   canal: string;
+  fotos: FotoPanel[];
   nombre: string;
   intent: string;
   reservas: ReservaDetalle[];
@@ -138,7 +151,7 @@ export async function detalleConversacion(_a: Admin, id: string): Promise<Detall
   ).data as ConvRow | null;
   if (!conv) return null;
 
-  const [mensajes, eventos, reservas] = await Promise.all([
+  const [mensajes, eventos, reservas, fotos] = await Promise.all([
     db
       .from("messages")
       .select("created_at,direction,body,flagged")
@@ -156,6 +169,11 @@ export async function detalleConversacion(_a: Admin, id: string): Promise<Detall
       .select("id,created_at,status,is_test,client_name,service_description,price_cents,deposit_cents,starts_at,ends_at,spec,pricing,warnings,reply_draft")
       .eq("conversation_id", id)
       .order("created_at", { ascending: true }),
+    db
+      .from("attachments")
+      .select("id,kind,description,created_at,expires_at,purged_at")
+      .eq("conversation_id", id)
+      .order("created_at", { ascending: true }),
   ]);
 
   const reservasRows = must<
@@ -167,8 +185,19 @@ export async function detalleConversacion(_a: Admin, id: string): Promise<Detall
   >("reservas", reservas);
   const ultima = reservasRows.at(-1);
 
+  const fotosRows = must<{ id: string; kind: TipoFoto; description: string | null; created_at: string; expires_at: string; purged_at: string | null }[]>("fotos", fotos);
+
   return {
     canal: conv.channel,
+    fotos: fotosRows.map((f) => ({
+      id: f.id,
+      tipo: f.kind,
+      etiqueta: ETIQUETA_FOTO[f.kind] ?? "Foto",
+      descripcion: f.description,
+      creada: f.created_at,
+      caduca: f.expires_at,
+      borrada: Boolean(f.purged_at),
+    })),
     reservas: reservasRows.map((r) => ({
       id: r.id,
       estado: r.status,

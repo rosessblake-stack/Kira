@@ -1,5 +1,6 @@
 import { euros } from "./panel-rules";
 import { fechaLarga } from "./agenda";
+import type { ResumenFoto } from "./fotos";
 import {
   INTENCION_EN_BD,
   MAX_CARACTERES_CLIENTE,
@@ -28,6 +29,7 @@ import {
   parsearEdicion,
   specDesdeClasificacion,
   textoPropuesta,
+  type Cambio,
   type Propuesta,
   type ResultadoPrecio,
   type SpecGuardada,
@@ -106,6 +108,13 @@ export interface FlowDeps {
   tomarNonce(nonce: string): Promise<Reserva | null>;
   reservaEnEdicion(): Promise<Reserva | null>;
 
+  /** Fotos que siguen guardadas de una conversación (resumen para la propuesta). */
+  fotosDe(conversationId: string): Promise<ResumenFoto[]>;
+  /** Guarda lo que Blake ve en la última foto de ese tipo. false si todavía no hay foto de ese tipo. */
+  describirFoto(conversationId: string, tipo: "pelo" | "referencia", texto: string): Promise<boolean>;
+  /** Envía a Blake las fotos guardadas de la conversación, antes de la propuesta (no hace nada si no hay). */
+  enviarFotos(chatId: number, conversationId: string): Promise<void>;
+
   logEvent(e: { source: Fuente; kind: string; level?: "info" | "warn" | "error"; summary: string; detail?: Record<string, unknown>; conversation_id?: string | null; booking_id?: string | null }): Promise<void>;
   logSecurity(e: { kind: "posible_inyeccion" | "limite_de_peticiones"; source: string; conversation_id?: string | null; detail?: Record<string, unknown> }): Promise<void>;
 
@@ -115,7 +124,11 @@ export interface FlowDeps {
 }
 
 export interface ProposalPort {
-  simular(chatId: number, texto: string): Promise<void>;
+  /**
+   * Crea la conversación de prueba y prepara la propuesta. `alCrear` se ejecuta nada más crearse la conversación
+   * (así una foto enviada junto al mensaje queda guardada antes de la propuesta). Devuelve el id de la conversación.
+   */
+  simular(chatId: number, texto: string, alCrear?: (conversationId: string) => Promise<void>): Promise<string | null>;
   boton(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "ok" | "ed" | "no" }): Promise<void>;
   /** Texto libre del administrador: si hay una edición abierta lo consume y devuelve true. */
   textoLibre(chatId: number, texto: string): Promise<boolean>;
@@ -237,11 +250,23 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     );
   }
 
+  /** Si las fotos no se pueden leer, la propuesta sale igual (sin sección de fotos) y el fallo queda registrado. */
+  async function fotosParaPropuesta(convId: string | null): Promise<ResumenFoto[] | undefined> {
+    if (!convId) return undefined;
+    try {
+      return await deps.fotosDe(convId);
+    } catch (e) {
+      await deps.logEvent({ source: "system", kind: "fotos_lectura_fallo", level: "warn", summary: msg(e), conversation_id: convId });
+      return undefined;
+    }
+  }
+
   async function enviarPropuesta(chatId: number, r: Reserva, prefijo = ""): Promise<void> {
     const spec = r.spec;
     const guardado = resultadoGuardado(r);
     const perfil = r.pricing.perfil ?? (await deps.perfil());
-    const prop = componerPropuesta(spec, guardado, { ahora: deps.now(), perfil, calendarioConectado: false });
+    const fotos = await fotosParaPropuesta(r.conversation_id);
+    const prop = componerPropuesta(spec, guardado, { ahora: deps.now(), perfil, calendarioConectado: false, fotos });
     const nonce = deps.newNonce();
     // Primero el nonce vigente en la base de datos y luego el mensaje: el botón siempre encuentra su registro.
     const actualizada = await deps.actualizarReserva(r.id, {
@@ -258,7 +283,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       proposal_nonce: nonce,
       edit_requested_at: null,
     });
-    const texto = `${prefijo}${textoPropuesta(prop, spec, { mensajeCliente: spec.mensaje_cliente, esPrueba: actualizada.is_test, perfil })}`;
+    const texto = `${prefijo}${textoPropuesta(prop, spec, { mensajeCliente: spec.mensaje_cliente, esPrueba: actualizada.is_test, perfil, fotos })}`;
     const id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada)));
     if (id !== null) await deps.actualizarReserva(r.id, { telegram_message_id: id });
   }
@@ -267,7 +292,20 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
   // /simular
   // -------------------------------------------------------------------------
 
-  async function simular(chatId: number, textoBruto: string): Promise<void> {
+  async function simular(chatId: number, textoBruto: string, alCrear?: (conversationId: string) => Promise<void>): Promise<string | null> {
+    let convId: string | null = null;
+    await procesarSimulacion(chatId, textoBruto, alCrear, (id) => {
+      convId = id;
+    });
+    return convId;
+  }
+
+  async function procesarSimulacion(
+    chatId: number,
+    textoBruto: string,
+    alCrear: ((conversationId: string) => Promise<void>) | undefined,
+    conversacionCreada: (id: string) => void,
+  ): Promise<void> {
     const ahora = deps.now();
     const texto = textoBruto.trim().slice(0, MAX_CARACTERES_CLIENTE);
     if (!texto) {
@@ -276,9 +314,18 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     }
 
     const convId = await deps.crearConversacion("prueba", `prueba-${ahora.getTime().toString(36)}`, "Prueba");
+    conversacionCreada(convId);
     await deps.guardarMensaje(convId, "in", texto, false);
     await deps.actualizarConversacion(convId, { last_client_message_at: ahora.toISOString() });
     await deps.logEvent({ source: "system", kind: "mensaje_simulado", summary: "Mensaje de cliente simulado recibido", detail: { caracteres: texto.length }, conversation_id: convId });
+    if (alCrear) {
+      try {
+        await alCrear(convId);
+      } catch (e) {
+        // Un fallo con la foto no debe impedir la propuesta: queda registrado y Blake lo ve en Fallos.
+        await deps.logEvent({ source: "system", kind: "adjunto_fallo", level: "error", summary: msg(e), conversation_id: convId });
+      }
+    }
 
     // 1. Pausa: solo avisa.
     if (await deps.estaPausada()) {
@@ -367,11 +414,20 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const spec = specDesdeClasificacion(c, texto, basica ? "basica" : "claude");
     const perfil = await deps.perfil();
     const { resultado, guardado } = await calcularPrecio(spec, perfil, { conversation_id: convId });
-    const prop = componerPropuesta(spec, resultado, { ahora: deps.now(), perfil, calendarioConectado: false });
+    const fotos = await fotosParaPropuesta(convId);
+    const prop = componerPropuesta(spec, resultado, { ahora: deps.now(), perfil, calendarioConectado: false, fotos });
     const nonce = deps.newNonce();
     const reserva = await deps.crearReserva(filaDeReserva(prop, spec, guardado, nonce, convId));
     await deps.actualizarConversacion(convId, { status: "esperando_aprobacion" });
-    const textoTg = textoPropuesta(prop, spec, { mensajeCliente: texto, esPrueba: true, perfil });
+    const textoTg = textoPropuesta(prop, spec, { mensajeCliente: texto, esPrueba: true, perfil, fotos });
+    // Las fotos llegan primero: así Blake las tiene delante al leer la propuesta (nada si el cliente no mandó ninguna).
+    if (fotos?.length) {
+      try {
+        await deps.enviarFotos(chatId, convId);
+      } catch (e) {
+        await deps.logEvent({ source: "telegram", kind: "foto_envio_fallo", level: "error", summary: msg(e), conversation_id: convId });
+      }
+    }
     const id = await deps.enviar(chatId, textoTg, teclado(nonce, aprobable(reserva)));
     if (id !== null) await deps.actualizarReserva(reserva.id, { telegram_message_id: id });
     await deps.logEvent({
@@ -459,7 +515,20 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       return true;
     }
 
-    const { cambios, errores } = parsearEdicion(texto, deps.now());
+    const { cambios: pedidos, errores } = parsearEdicion(texto, deps.now());
+    const esDeFoto = (c: Cambio) => c.k === "foto_pelo" || c.k === "foto_referencia";
+    const cambios: Cambio[] = pedidos.filter((c) => !esDeFoto(c));
+    // Lo que Blake ve en las fotos se guarda junto a cada foto; no cambia la reserva.
+    for (const c of pedidos.filter(esDeFoto)) {
+      const tipo = c.k === "foto_pelo" ? "pelo" : "referencia";
+      if (c.k !== "foto_pelo" && c.k !== "foto_referencia") continue;
+      if (r.conversation_id && (await deps.describirFoto(r.conversation_id, tipo, c.v))) {
+        cambios.push(c);
+        await deps.logEvent({ source: "telegram", kind: "foto_descrita", summary: `Blake describió la foto (${tipo})`, detail: { tipo, caracteres: c.v.length }, ...ids });
+      } else {
+        errores.push(`«${tipo}»: todavía no hay foto de ${tipo === "pelo" ? "su pelo" : "referencia"} guardada en esta conversación.`);
+      }
+    }
     if (!cambios.length) {
       await deps.enviar(chatId, `No he podido aplicar nada:\n• ${errores.join("\n• ") || "no he entendido el mensaje"}\n\nInténtalo de nuevo o escribe /cancelar.`);
       return true;

@@ -23,6 +23,15 @@ const nextConfig = {
           { key: "Content-Security-Policy", value: "frame-ancestors 'none'; base-uri 'self'; form-action 'self'" },
         ],
       },
+      {
+        // Fotos de las clientas: archivos de fuera. Nunca se tratan como página (sandbox, sin cargar nada). Va después de
+        // la regla anterior a propósito: si dos reglas fijan la misma cabecera, gana la última.
+        source: "/panel/foto/:id",
+        headers: [
+          { key: "Cache-Control", value: "private, no-store" },
+          { key: "Content-Security-Policy", value: "default-src 'none'; sandbox" },
+        ],
+      },
     ];
   },
 };

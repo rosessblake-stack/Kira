@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { handleTelegramRequest, type Config, type Deps } from "../../../lib/telegram-handler";
 import { clasificarConClaude } from "../../../lib/claude";
+import * as fotoStore from "../../../lib/foto-store";
+import { crearFlujoFotos, resumenDeFotos, type PhotoDeps, type PhotoPort } from "../../../lib/photo-flow";
 import { leerBasico } from "../../../lib/lectura-basica";
 import * as db from "../../../lib/db";
 import { issueLoginToken } from "../../../lib/panel-auth";
@@ -24,7 +26,33 @@ function readConfig(): Config {
   };
 }
 
-function makeFlowDeps(): FlowDeps {
+function makePhotoDeps(): PhotoDeps {
+  return {
+    now: () => new Date(),
+    newId: () => randomUUID(),
+    conversacionReciente: fotoStore.conversacionDePruebaReciente,
+    primerMensaje: fotoStore.primerMensajeDe,
+    fotosDe: fotoStore.listarFotos,
+    async descargar(fileId, maxBytes) {
+      try {
+        return { ok: true, bytes: await tg.descargarArchivo(fileId, maxBytes) };
+      } catch (e) {
+        if (e instanceof tg.ArchivoDemasiadoGrande) return { ok: false, motivo: "grande" };
+        return { ok: false, motivo: "error", detalle: e instanceof Error ? e.message : "error desconocido" };
+      }
+    },
+    guardar: fotoStore.guardarFoto,
+    actualizarFicha: fotoStore.actualizarFicha,
+    leerBytes: fotoStore.descargarBytes,
+    purgarCaducadas: fotoStore.purgarCaducadas,
+    enviar: tg.sendMessage,
+    enviarFotos: tg.sendPhotos,
+    logEvent: ({ source, ...e }) => db.logEvent(source, e),
+    logSecurity: db.logSecurity,
+  };
+}
+
+function makeFlowDeps(photos: PhotoPort): FlowDeps {
   return {
     now: () => new Date(),
     newNonce: () => randomUUID().replace(/-/g, ""),
@@ -45,6 +73,9 @@ function makeFlowDeps(): FlowDeps {
     verReservaPorNonce: store.verReservaPorNonce,
     tomarNonce: store.tomarNonce,
     reservaEnEdicion: store.reservaEnEdicion,
+    fotosDe: async (conversationId) => resumenDeFotos(await fotoStore.listarFotos(conversationId)),
+    describirFoto: (conversationId, tipo, texto) => fotoStore.describirUltima(conversationId, tipo, texto, new Date()),
+    enviarFotos: (chatId, conversationId) => photos.reenviar(chatId, conversationId, { silencioso: true }),
     logEvent: ({ source, ...e }) => db.logEvent(source, e),
     logSecurity: db.logSecurity,
     enviar: tg.sendMessage,
@@ -54,6 +85,7 @@ function makeFlowDeps(): FlowDeps {
 }
 
 function makeDeps(host: string | null): Deps {
+  const photos = crearFlujoFotos(makePhotoDeps());
   return {
     recordUpdate: db.recordUpdate,
     logEvent: (e) => db.logEvent("telegram", e),
@@ -70,7 +102,8 @@ function makeDeps(host: string | null): Deps {
       const token = await issueLoginToken(authStore);
       return `https://${host}/panel/entrar?t=${token}`;
     },
-    proposals: crearFlujoPropuestas(makeFlowDeps()),
+    proposals: crearFlujoPropuestas(makeFlowDeps(photos)),
+    photos,
   };
 }
 

@@ -335,3 +335,87 @@ describe("aplicarCambios", () => {
     expect(JSON.stringify(original)).toBe(copia);
   });
 });
+
+describe("fotos en la propuesta", () => {
+  const spec = () => specReferencia({ tipo_trenzado: "pegadas" });
+  const completa = (fotos?: { tipo: "pelo" | "referencia" | "otra"; descripcion: string | null }[]) =>
+    componerPropuesta(spec(), legacy(60.15), { ...ctx, fotos });
+  const texto = (fotos?: { tipo: "pelo" | "referencia" | "otra"; descripcion: string | null }[]) =>
+    textoPropuesta(completa(fotos), spec(), { mensajeCliente: MENSAJE, esPrueba: true, perfil: PERFIL_POR_DEFECTO, fotos });
+
+  it("sin fotos: avisa de las dos que faltan, pero no bloquea la aprobación (decide Blake)", () => {
+    const p = completa([]);
+    expect(p.avisos).toContain("Falta la foto del pelo de la clienta.");
+    expect(p.avisos).toContain("Falta la foto de las trenzas de referencia.");
+    expect(p.faltan).toEqual([]);
+    const t = texto([]);
+    expect(t).toContain("📷 Fotos");
+    expect(t).toContain("• Pelo de la clienta: sin foto");
+    expect(t).toContain("• Trenzas de referencia: sin foto");
+  });
+
+  it("con las dos fotos descritas: sin avisos de fotos y con lo que dijo Blake", () => {
+    const fotos = [
+      { tipo: "pelo" as const, descripcion: "rizado, fino, a los hombros" },
+      { tipo: "referencia" as const, descripcion: "boxeadoras hasta la cadera" },
+    ];
+    expect(completa(fotos).avisos.filter((a) => a.includes("foto"))).toEqual([]);
+    const t = texto(fotos);
+    expect(t).toContain("• Pelo de la clienta: «rizado, fino, a los hombros»");
+    expect(t).toContain("• Trenzas de referencia: «boxeadoras hasta la cadera»");
+  });
+
+  it("foto sin describir y fotos «otra»", () => {
+    const t = texto([{ tipo: "pelo", descripcion: null }, { tipo: "referencia", descripcion: null }, { tipo: "otra", descripcion: null }, { tipo: "otra", descripcion: "x" }]);
+    expect(t).toContain("• Pelo de la clienta: foto sin describir");
+    expect(t).toContain("• Otras fotos: 2");
+  });
+
+  it("si no se pasa información de fotos (no se pudo leer), ni sección ni avisos de fotos", () => {
+    const p = completa(undefined);
+    expect(p.avisos.some((a) => a.includes("foto"))).toBe(false);
+    expect(texto(undefined)).not.toContain("📷 Fotos");
+  });
+
+  it("la descripción de Blake se pinta como texto (no se interpreta) y se recorta", () => {
+    const t = texto([{ tipo: "pelo", descripcion: `<b>${"x".repeat(500)}</b>` }]);
+    expect(t).toContain("<b>");
+    expect(t.length).toBeLessThanOrEqual(3900);
+  });
+});
+
+describe("parsearEdicion: descripciones de fotos", () => {
+  const p = (t: string) => parsearEdicion(t, AHORA);
+
+  it("«pelo …» y «referencia …» (con o sin dos puntos) describen la foto", () => {
+    const { cambios, errores } = p("pelo rizado, fino, a los hombros\nreferencia: boxeadoras hasta la cadera");
+    expect(errores).toEqual([]);
+    expect(cambios).toEqual([
+      { k: "foto_pelo", v: "rizado, fino, a los hombros" },
+      { k: "foto_referencia", v: "boxeadoras hasta la cadera" },
+    ]);
+  });
+
+  it("sin texto da un error con ejemplo", () => {
+    const { cambios, errores } = p("pelo\nreferencia:");
+    expect(cambios).toEqual([]);
+    expect(errores).toHaveLength(2);
+    expect(errores[0]).toContain("escribe lo que ves en la foto");
+  });
+
+  it("limpia caracteres de control y respeta el tope", () => {
+    const { cambios } = p(`pelo ${"a".repeat(5000)}`);
+    expect((cambios[0] as { v: string }).v.length).toBe(1000);
+  });
+
+  it("la clave con dos puntos funciona también para las demás («precio: 70»)", () => {
+    expect(p("precio: 70").cambios).toEqual([{ k: "precio", centimos: 7000 }]);
+  });
+
+  it("no tocan la reserva: aplicarCambios devuelve el mismo servicio y no pide recalcular", () => {
+    const s = specReferencia({ tipo_trenzado: "pegadas" });
+    const r = aplicarCambios(s, [{ k: "foto_pelo", v: "rizado" }, { k: "foto_referencia", v: "boxeadoras" }]);
+    expect(r.spec).toEqual(s);
+    expect(r.recalcular).toBe(false);
+  });
+});

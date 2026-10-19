@@ -12,11 +12,12 @@ type Calls = {
   sent: { chatId: number; text: string; markup?: any; opts?: { noPreview?: boolean } }[];
   links: number;
   prop: {
-    simular: { chatId: number; texto: string }[];
+    simular: { chatId: number; texto: string; conAdjunto: boolean }[];
     botones: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: string }[];
     libres: string[];
     cancelar: number;
   };
+  fotos: { recibir: { chatId: number; fileId: string; tamano: number | null; conversationId: string | null; pie: string }[]; reenviar: { chatId: number; conversationId: string | null }[] };
   edited: { chatId: number; messageId: number; text: string }[];
   answered: { id: string; text?: string }[];
   events: { kind: string; level?: string; detail?: any }[];
@@ -24,7 +25,7 @@ type Calls = {
 };
 
 function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } = {}) {
-  const calls: Calls = { sent: [], links: 0, prop: { simular: [], botones: [], libres: [], cancelar: 0 }, edited: [], answered: [], events: [], security: [] };
+  const calls: Calls = { sent: [], links: 0, prop: { simular: [], botones: [], libres: [], cancelar: 0 }, fotos: { recibir: [], reenviar: [] }, edited: [], answered: [], events: [], security: [] };
   const seen = new Set<string>(opts.seen ?? []);
   const issued = new Set<string>(opts.issued ?? []);
   let counter = 0;
@@ -60,10 +61,19 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       return `https://kira.test/panel/entrar?t=${LINK_TOKEN}`;
     },
     proposals: {
-      async simular(chatId, texto) { calls.prop.simular.push({ chatId, texto }); },
+      async simular(chatId, texto, alCrear) {
+        calls.prop.simular.push({ chatId, texto, conAdjunto: Boolean(alCrear) });
+        // Como el flujo real: crea la conversación y ejecuta el adjunto enseguida.
+        if (alCrear) await alCrear("conv-nueva");
+        return "conv-nueva";
+      },
       async boton(b) { calls.prop.botones.push(b); },
       async textoLibre(_chatId, texto) { calls.prop.libres.push(texto); return opts.edicion ?? false; },
       async cancelarEdicion() { calls.prop.cancelar++; return opts.edicion ?? false; },
+    },
+    photos: {
+      async recibir(chatId, media, conversationId, pie) { calls.fotos.recibir.push({ chatId, fileId: media.fileId, tamano: media.tamano, conversationId, pie }); },
+      async reenviar(chatId, conversationId) { calls.fotos.reenviar.push({ chatId, conversationId }); },
     },
   };
   return { calls, deps };
@@ -257,7 +267,7 @@ describe("propuestas de cita: comandos y botones", () => {
   it("/simular entrega al flujo SOLO el texto que sigue al comando", async () => {
     const { calls, deps } = setup();
     await handleTelegramRequest(SECRET, msg("/simular Hola, quiero 6 trenzas\ncon extensiones"), admin(ADMIN), deps);
-    expect(calls.prop.simular).toEqual([{ chatId: ADMIN, texto: "Hola, quiero 6 trenzas\ncon extensiones" }]);
+    expect(calls.prop.simular).toEqual([{ chatId: ADMIN, texto: "Hola, quiero 6 trenzas\ncon extensiones", conAdjunto: false }]);
     expect(calls.sent).toHaveLength(0); // el handler no contesta: lo hace el flujo
   });
 
@@ -403,5 +413,110 @@ describe("botones", () => {
     }
     expect(calls.edited).toHaveLength(0);
     expect(calls.security.every((s) => s.detail.reason === "callback_invalido")).toBe(true);
+  });
+});
+
+describe("fotos que envía Blake", () => {
+  const foto = (extra: Record<string, unknown> = {}, from = ADMIN, type = "private") =>
+    JSON.stringify({
+      update_id: uid++,
+      message: {
+        message_id: 7,
+        from: { id: from },
+        chat: { id: from, type },
+        photo: [
+          { file_id: "chica", file_size: 900, width: 90, height: 90 },
+          { file_id: "mediana", file_size: 30_000, width: 320, height: 320 },
+          { file_id: "grande", file_size: 200_000, width: 1280, height: 960 },
+        ],
+        ...extra,
+      },
+    });
+
+  it("una foto sin pie se entrega con la versión más grande y sin conversación (la prueba más reciente)", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, foto(), admin(ADMIN), deps);
+    expect(calls.fotos.recibir).toEqual([{ chatId: ADMIN, fileId: "grande", tamano: 200_000, conversationId: null, pie: "" }]);
+    expect(calls.prop.simular).toHaveLength(0);
+  });
+
+  it("si la versión más grande supera el tope, se usa la mayor que quepa", async () => {
+    const { calls, deps } = setup();
+    const raw = JSON.stringify({
+      update_id: uid++,
+      message: { message_id: 7, from: { id: ADMIN }, chat: { id: ADMIN, type: "private" }, photo: [
+        { file_id: "ok", file_size: 3_000_000, width: 2000, height: 2000 },
+        { file_id: "enorme", file_size: 9_000_000, width: 4000, height: 4000 },
+      ] },
+    });
+    await handleTelegramRequest(SECRET, raw, admin(ADMIN), deps);
+    expect(calls.fotos.recibir[0].fileId).toBe("ok");
+  });
+
+  it("el pie de la foto (pelo: …) viaja tal cual al flujo de fotos", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, foto({ caption: "pelo: rizado, fino, a los hombros" }), admin(ADMIN), deps);
+    expect(calls.fotos.recibir[0]).toMatchObject({ conversationId: null, pie: "pelo: rizado, fino, a los hombros" });
+  });
+
+  it("pie «/simular …»: crea la prueba y la foto se adjunta a ESA conversación, antes de la propuesta", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, foto({ caption: "/simular Hola, quiero 6 trenzas" }), admin(ADMIN), deps);
+    expect(calls.prop.simular).toEqual([{ chatId: ADMIN, texto: "Hola, quiero 6 trenzas", conAdjunto: true }]);
+    expect(calls.fotos.recibir).toEqual([{ chatId: ADMIN, fileId: "grande", tamano: 200_000, conversationId: "conv-nueva", pie: "" }]);
+  });
+
+  it("archivo de imagen enviado como documento: se guarda igual", async () => {
+    const { calls, deps } = setup();
+    const raw = JSON.stringify({ update_id: uid++, message: { message_id: 7, from: { id: ADMIN }, chat: { id: ADMIN, type: "private" }, document: { file_id: "doc1", file_size: 1234, mime_type: "image/png" } } });
+    await handleTelegramRequest(SECRET, raw, admin(ADMIN), deps);
+    expect(calls.fotos.recibir).toEqual([{ chatId: ADMIN, fileId: "doc1", tamano: 1234, conversationId: null, pie: "" }]);
+  });
+
+  it("documento que no es JPG/PNG/WebP (pdf, gif, html): no se guarda y se avisa", async () => {
+    for (const mime of ["application/pdf", "image/gif", "text/html", "image/svg+xml", ""]) {
+      const { calls, deps } = setup();
+      const raw = JSON.stringify({ update_id: uid++, message: { message_id: 7, from: { id: ADMIN }, chat: { id: ADMIN, type: "private" }, document: { file_id: "d", file_size: 10, mime_type: mime } } });
+      await handleTelegramRequest(SECRET, raw, admin(ADMIN), deps);
+      expect(calls.fotos.recibir).toHaveLength(0);
+      expect(calls.sent[0].text).toContain("Solo guardo fotos");
+    }
+  });
+
+  it("foto de alguien que no es el administrador: nada se guarda y queda en seguridad", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, foto({}, OTHER), admin(ADMIN), deps);
+    expect(calls.fotos.recibir).toHaveLength(0);
+    expect(calls.sent).toHaveLength(0);
+    expect(calls.security[0]).toMatchObject({ kind: "telegram_no_autorizado" });
+  });
+
+  it("foto en un grupo (no es chat privado): se ignora", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, foto({}, ADMIN, "supergroup"), admin(ADMIN), deps);
+    expect(calls.fotos.recibir).toHaveLength(0);
+    expect(calls.sent).toHaveLength(0);
+  });
+
+  it("file_id raro (vacío, demasiado largo o no texto): se descarta", async () => {
+    for (const fid of ["", "x".repeat(301), 42]) {
+      const { calls, deps } = setup();
+      const raw = JSON.stringify({ update_id: uid++, message: { message_id: 7, from: { id: ADMIN }, chat: { id: ADMIN, type: "private" }, photo: [{ file_id: fid, file_size: 10, width: 5, height: 5 }] } });
+      await handleTelegramRequest(SECRET, raw, admin(ADMIN), deps);
+      expect(calls.fotos.recibir).toHaveLength(0);
+    }
+  });
+
+  it("/fotos pide reenviar las de la última prueba", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/fotos"), admin(ADMIN), deps);
+    expect(calls.fotos.reenviar).toEqual([{ chatId: ADMIN, conversationId: null }]);
+  });
+
+  it("en modo configuración (sin administrador) una foto no hace nada", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, foto(), admin(null), deps);
+    expect(calls.fotos.recibir).toHaveLength(0);
+    expect(calls.sent).toHaveLength(0);
   });
 });

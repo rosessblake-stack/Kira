@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RespuestaClaude } from "../lib/claude";
 import { SinClaveError } from "../lib/claude";
+import type { ResumenFoto } from "../lib/fotos";
 import { LIMITES } from "../lib/intents";
 import { leerBasico } from "../lib/lectura-basica";
 import { PERFIL_POR_DEFECTO, LegacyError, type PeticionLegacy, type PrecioLegacy } from "../lib/pricing";
@@ -29,6 +30,10 @@ type Opciones = {
   llamadasHoy?: number;
   fallaEditar?: boolean;
   conLecturaBasica?: boolean;
+  /** Fotos ya guardadas en la conversación n.º 1 antes de empezar. */
+  fotosIniciales?: ResumenFoto[];
+  fallaLecturaFotos?: boolean;
+  fallaEnvioFotos?: boolean;
 };
 
 function mundo(op: Opciones = {}) {
@@ -46,7 +51,10 @@ function mundo(op: Opciones = {}) {
     respuestas: [] as { id: string; texto?: string }[],
     llamadasClaude: 0,
     llamadasLegacy: [] as PeticionLegacy[],
+    fotos: new Map<string, ResumenFoto[]>(),
+    albumes: [] as { chat: number; conv: string; antesDeLosMensajes: number }[],
   };
+  if (op.fotosIniciales) w.fotos.set("conv-1", structuredClone(op.fotosIniciales));
   const deps: FlowDeps = {
     now: () => reloj,
     newNonce: () => (++n).toString(16).padStart(32, "0"),
@@ -95,6 +103,20 @@ function mundo(op: Opciones = {}) {
     async reservaEnEdicion() {
       const r = [...w.reservas.values()].filter((x) => x.status === "propuesta" && x.edit_requested_at).sort((a, b) => b.edit_requested_at!.localeCompare(a.edit_requested_at!))[0];
       return r ? structuredClone(r) : null;
+    },
+    async fotosDe(conv) {
+      if (op.fallaLecturaFotos) throw new Error("fallo leyendo attachments");
+      return structuredClone(w.fotos.get(conv) ?? []);
+    },
+    async describirFoto(conv, tipo, texto) {
+      const f = [...(w.fotos.get(conv) ?? [])].reverse().find((x) => x.tipo === tipo);
+      if (!f) return false;
+      f.descripcion = texto;
+      return true;
+    },
+    async enviarFotos(chat, conv) {
+      if (op.fallaEnvioFotos) throw new Error("Telegram sendMediaGroup: error");
+      w.albumes.push({ chat, conv, antesDeLosMensajes: w.enviados.length });
     },
     async logEvent(e) { w.eventos.push(e); },
     async logSecurity(e) { w.seguridad.push(e); },
@@ -573,5 +595,139 @@ describe("/simular sin texto", () => {
     expect(m.ultimo().texto).toContain("/simular");
     expect(m.w.convs.size).toBe(0);
     expect(m.w.llamadasClaude).toBe(0);
+  });
+});
+
+describe("fotos de la clienta en el flujo", () => {
+  const dosFotos = [
+    { tipo: "pelo" as const, descripcion: null },
+    { tipo: "referencia" as const, descripcion: null },
+  ];
+
+  it("/simular devuelve la conversación creada y ejecuta el adjunto ANTES de la propuesta", async () => {
+    const m = mundo();
+    const orden: string[] = [];
+    const conv = await m.flujo.simular(CHAT, MENSAJE, async (id) => {
+      orden.push(`adjunto:${id}:mensajes=${m.w.msgs.length}:propuestas=${m.w.reservas.size}`);
+      m.w.fotos.set(id, structuredClone(dosFotos));
+    });
+    expect(conv).toBe("conv-1");
+    // La conversación y el mensaje del cliente ya existen, la propuesta todavía no.
+    expect(orden).toEqual(["adjunto:conv-1:mensajes=1:propuestas=0"]);
+    expect(m.w.reservas.size).toBe(1);
+  });
+
+  it("con fotos guardadas, las manda a Blake justo antes de la propuesta y esta las lista", async () => {
+    const m = mundo();
+    await m.flujo.simular(CHAT, MENSAJE, async (id) => { m.w.fotos.set(id, structuredClone(dosFotos)); });
+    expect(m.w.albumes).toEqual([{ chat: CHAT, conv: "conv-1", antesDeLosMensajes: 0 }]); // aún no había salido ningún mensaje
+    expect(m.ultimo().texto).toContain("📷 Fotos");
+    expect(m.ultimo().texto).toContain("• Pelo de la clienta: foto sin describir");
+    expect(m.reserva().warnings.some((a) => a.includes("foto"))).toBe(false);
+  });
+
+  it("sin fotos no se manda ningún álbum y la propuesta avisa de que faltan", async () => {
+    const m = mundo();
+    expect(await m.flujo.simular(CHAT, MENSAJE)).toBe("conv-1");
+    expect(m.w.albumes).toHaveLength(0);
+    expect(m.ultimo().texto).toContain("• Pelo de la clienta: sin foto");
+    expect(m.reserva().warnings).toEqual(expect.arrayContaining(["Falta la foto del pelo de la clienta.", "Falta la foto de las trenzas de referencia."]));
+  });
+
+  it("si falla el adjunto, la propuesta sale igual y el fallo queda registrado", async () => {
+    const m = mundo();
+    await m.flujo.simular(CHAT, MENSAJE, async () => { throw new Error("bucket no encontrado"); });
+    expect(m.w.reservas.size).toBe(1);
+    expect(m.w.eventos.find((e) => e.kind === "adjunto_fallo")).toMatchObject({ level: "error", summary: "bucket no encontrado", conversation_id: "conv-1" });
+  });
+
+  it("si no se pueden leer las fotos, la propuesta sale sin la sección de fotos y se registra", async () => {
+    const m = mundo({ fallaLecturaFotos: true });
+    await m.flujo.simular(CHAT, MENSAJE);
+    expect(m.w.reservas.size).toBe(1);
+    expect(m.ultimo().texto).not.toContain("📷 Fotos");
+    expect(m.w.eventos.find((e) => e.kind === "fotos_lectura_fallo")).toMatchObject({ level: "warn" });
+  });
+
+  it("si falla el envío del álbum, la propuesta sale igual", async () => {
+    const m = mundo({ fallaEnvioFotos: true });
+    await m.flujo.simular(CHAT, MENSAJE, async (id) => { m.w.fotos.set(id, structuredClone(dosFotos)); });
+    expect(m.w.reservas.size).toBe(1);
+    expect(m.ultimo().texto).toContain("PROPUESTA DE CITA");
+    expect(m.w.eventos.find((e) => e.kind === "foto_envio_fallo")).toMatchObject({ level: "error" });
+  });
+
+  it("una conversación que se deriva (no hay propuesta) conserva igualmente la foto adjunta", async () => {
+    const m = mundo({ claude: async () => ({ tipo: "ok", raw: salidaClaude({ intencion: "derivar_a_blake" }), entrada: 1, salida: 1 }) });
+    const conv = await m.flujo.simular(CHAT, MENSAJE, async (id) => { m.w.fotos.set(id, structuredClone(dosFotos)); });
+    expect(m.w.fotos.get(conv!)).toHaveLength(2);
+    expect(m.w.reservas.size).toBe(0);
+  });
+
+  describe("describir las fotos al editar", () => {
+    async function conEdicion(op: Opciones = {}) {
+      const m = mundo(op);
+      await m.flujo.simular(CHAT, MENSAJE, async (id) => { m.w.fotos.set(id, structuredClone(dosFotos)); });
+      await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+      return m;
+    }
+
+    it("«pelo …» y «referencia …» se guardan junto a la foto, salen en la propuesta y no tocan precio ni reserva", async () => {
+      const m = await conEdicion();
+      const antes = JSON.stringify(m.reserva().spec);
+      await m.flujo.textoLibre(CHAT, "pelo rizado, fino, a los hombros\nreferencia: boxeadoras hasta la cadera");
+      expect(m.w.fotos.get("conv-1")).toEqual([
+        { tipo: "pelo", descripcion: "rizado, fino, a los hombros" },
+        { tipo: "referencia", descripcion: "boxeadoras hasta la cadera" },
+      ]);
+      expect(JSON.stringify(m.reserva().spec)).toBe(antes);
+      expect(m.w.llamadasLegacy).toHaveLength(0);
+      expect(m.ultimo().texto).toContain("Cambios aplicados: descripción del pelo, descripción de la referencia.");
+      expect(m.ultimo().texto).toContain("• Pelo de la clienta: «rizado, fino, a los hombros»");
+      expect(m.ultimo().texto).toContain("• Trenzas de referencia: «boxeadoras hasta la cadera»");
+      expect(m.tipos()).toEqual(expect.arrayContaining(["foto_descrita"]));
+    });
+
+    it("junto a otros cambios, se aplican todos", async () => {
+      const m = await conEdicion();
+      await m.flujo.textoLibre(CHAT, "tipo pegadas\npelo liso");
+      expect(m.reserva().price_cents).toBe(6015);
+      expect(m.w.fotos.get("conv-1")![0].descripcion).toBe("liso");
+      expect(m.ultimo().texto).toContain("Cambios aplicados: tipo, descripción del pelo.");
+    });
+
+    it("si no hay foto de ese tipo, lo dice y no inventa nada (sigue la edición abierta)", async () => {
+      const m = mundo();
+      await m.flujo.simular(CHAT, MENSAJE); // sin fotos
+      await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+      await m.flujo.textoLibre(CHAT, "pelo rizado");
+      expect(m.ultimo().texto).toContain("No he podido aplicar nada");
+      expect(m.ultimo().texto).toContain("todavía no hay foto de su pelo guardada");
+      expect(m.w.fotos.has("conv-1")).toBe(false);
+      expect(m.reserva().edit_requested_at).not.toBeNull();
+    });
+
+    it("lo que no se pudo describir se avisa aunque otros cambios sí se apliquen", async () => {
+      const m = mundo();
+      await m.flujo.simular(CHAT, MENSAJE, async (id) => { m.w.fotos.set(id, [{ tipo: "pelo", descripcion: null }]); });
+      await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+      await m.flujo.textoLibre(CHAT, "pelo rizado\nreferencia boxeadoras\nnombre Ana");
+      const t = m.ultimo().texto;
+      expect(t).toContain("Cambios aplicados: nombre, descripción del pelo.");
+      expect(t).toContain("«referencia»: todavía no hay foto de referencia guardada");
+      expect(m.reserva().client_name).toBe("Ana");
+    });
+
+    it("al editar otra vez, las fotos que se guardaron después aparecen en la propuesta refrescada", async () => {
+      const m = mundo();
+      await m.flujo.simular(CHAT, MENSAJE); // sin fotos
+      expect(m.ultimo().texto).toContain("Pelo de la clienta: sin foto");
+      m.w.fotos.set("conv-1", [{ tipo: "pelo", descripcion: "rizado" }]); // llegó una foto con su pie
+      await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+      await m.flujo.textoLibre(CHAT, "señal 20");
+      expect(m.ultimo().texto).toContain("• Pelo de la clienta: «rizado»");
+      expect(m.reserva().warnings).not.toContain("Falta la foto del pelo de la clienta.");
+      expect(m.reserva().warnings).toContain("Falta la foto de las trenzas de referencia.");
+    });
   });
 });

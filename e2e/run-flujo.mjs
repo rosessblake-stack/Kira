@@ -13,7 +13,7 @@ import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import { pathToFileURL } from "node:url";
-import { start, tables } from "./fake-postgrest.mjs";
+import { start, tables, storage } from "./fake-postgrest.mjs";
 
 delete process.env.SUPABASE_URL; // el handler de Legacy no debe escribir en ninguna base de datos
 delete process.env.SUPABASE_ANON_KEY;
@@ -40,7 +40,8 @@ const check = (name, ok, extra = "") => {
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 const euros = (c) => `${(c / 100).toLocaleString("es-ES", { minimumFractionDigits: c % 100 ? 2 : 0 })} €`;
 const puertoLibre = (port) => new Promise((ok) => { const s = net.connect(port, "127.0.0.1"); s.on("connect", () => { s.destroy(); ok(false); }); s.on("error", () => ok(true)); });
-const leerCuerpo = async (req) => { const c = []; for await (const x of req) c.push(x); const t = Buffer.concat(c).toString(); return t ? JSON.parse(t) : undefined; };
+const leerCrudo = async (req) => { const c = []; for await (const x of req) c.push(x); return Buffer.concat(c); };
+const leerCuerpo = async (req) => { const t = (await leerCrudo(req)).toString(); return t ? JSON.parse(t) : undefined; };
 const json = (res, status, body) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
 
 if (!fs.existsSync(`${LEGACY_REPO}/api/calculate.js`)) {
@@ -95,14 +96,43 @@ const servidorClaude = http.createServer(async (req, res) => {
 });
 
 // ===================================================================================== Telegram simulado
-const tg = { enviados: [], editados: [], respuestas: [], n: 500 };
+// Además de mensajes y botones: descarga de archivos (getFile + /file/bot...) y subida de fotos (multipart).
+const tg = { enviados: [], editados: [], respuestas: [], n: 500, seq: 0, archivos: new Map(), getFile: 0, descargas: 0, subidas: [] };
+const registrarArchivo = (fileId, bytes) => tg.archivos.set(fileId, { bytes: Buffer.from(bytes), ruta: `photos/${fileId}.bin` });
 const servidorTelegram = http.createServer(async (req, res) => {
-  const body = (await leerCuerpo(req)) ?? {};
+  if (req.method === "GET" && req.url.startsWith("/file/bot")) {
+    tg.descargas++;
+    const ruta = req.url.split("/").slice(3).join("/");
+    const f = [...tg.archivos.values()].find((a) => a.ruta === ruta);
+    if (!f) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { "content-type": "application/octet-stream" });
+    return res.end(f.bytes);
+  }
+  const crudo = await leerCrudo(req);
   const metodo = req.url.split("/").pop();
+  const tipo = String(req.headers["content-type"] ?? "");
+  if (tipo.startsWith("multipart/form-data")) {
+    const form = await new Response(crudo, { headers: { "content-type": tipo } }).formData();
+    const campos = {};
+    const archivos = [];
+    for (const [k, v] of form.entries()) {
+      if (typeof v === "string") campos[k] = v;
+      else archivos.push({ campo: k, tipo: v.type, nombre: v.name, bytes: Buffer.from(await v.arrayBuffer()) });
+    }
+    tg.subidas.push({ seq: ++tg.seq, metodo, campos, archivos });
+    return json(res, 200, { ok: true, result: metodo === "sendMediaGroup" ? [] : { message_id: ++tg.n } });
+  }
+  const body = crudo.length ? JSON.parse(crudo.toString()) : {};
   if (metodo === "sendMessage") {
     const message_id = ++tg.n;
-    tg.enviados.push({ ...body, message_id });
+    tg.enviados.push({ ...body, message_id, seq: ++tg.seq });
     return json(res, 200, { ok: true, result: { message_id } });
+  }
+  if (metodo === "getFile") {
+    tg.getFile++;
+    const f = tg.archivos.get(body.file_id);
+    if (!f) return json(res, 400, { ok: false, error_code: 400, description: "Bad Request: invalid file_id" });
+    return json(res, 200, { ok: true, result: { file_id: body.file_id, file_path: f.ruta, file_size: f.bytes.length } });
   }
   if (metodo === "editMessageText") { tg.editados.push(body); return json(res, 200, { ok: true, result: true }); }
   if (metodo === "answerCallbackQuery") { tg.respuestas.push(body); return json(res, 200, { ok: true, result: true }); }
@@ -185,6 +215,16 @@ const eventos = (kind) => tables.event_log.filter((e) => e.kind === kind);
 const reservas = () => tables.bookings;
 
 let browser;
+const lanzarNavegador = async () => (browser ??= await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? "/opt/pw-browsers/chromium" }));
+/** Imagen REAL (JPEG o PNG) generada por el navegador: así los bytes y la vista en el panel son los de una foto de verdad. */
+async function imagenDePrueba(titulo, color, tipo) {
+  const nav = await lanzarNavegador();
+  const p = await nav.newPage({ viewport: { width: 320, height: 240 } });
+  await p.setContent(`<body style="margin:0;display:grid;place-items:center;height:240px;background:linear-gradient(135deg,${color},#fff);font:bold 26px sans-serif">${titulo}</body>`);
+  const bytes = await p.screenshot({ type: tipo });
+  await p.close();
+  return bytes;
+}
 const transcripcion = [];
 const anota = (quien, texto) => transcripcion.push(`── ${quien} ──\n${texto}\n`);
 
@@ -366,9 +406,128 @@ try {
   await escribe("/simular");
   check("F5. /simular sin texto explica cómo usarlo", ultimo().text.includes("Escribe el mensaje del cliente") && tables.conversations.length === convAntes + 1);
 
+  // ============================================================================ I. FOTOS DEL PELO Y DE LAS TRENZAS
+  console.log("\n=== I. Fotos de la clienta (pelo y trenzas de referencia) ===");
+  const jpgPelo = await imagenDePrueba("PELO (prueba)", "#8b5a2b", "jpeg");
+  const jpgRef = await imagenDePrueba("REFERENCIA (prueba)", "#c0392b", "jpeg");
+  const pngOtra = await imagenDePrueba("OTRA (prueba)", "#2980b9", "png");
+  registrarArchivo("pelo1", jpgPelo);
+  registrarArchivo("ref1", jpgRef);
+  registrarArchivo("otra1", pngOtra);
+  registrarArchivo("falso1", Buffer.from("<html><script>alert(1)</script></html>"));
+  const idsFoto = (c) => tables.attachments.filter((a) => a.conversation_id === c.id);
+  const enAlmacen = () => [...storage.keys()].filter((k) => k.startsWith("kira-fotos/"));
+  const foto = (fileId, extra = {}, from = ADMIN, tamano) =>
+    enviarUpdate({
+      update_id: uid++,
+      message: {
+        message_id: 40 + uid, from: { id: from }, chat: { id: from, type: "private" },
+        photo: [
+          { file_id: `${fileId}-chica`, file_size: 400, width: 90, height: 68 },
+          { file_id: fileId, file_size: tamano ?? tg.archivos.get(fileId)?.bytes.length ?? 1000, width: 320, height: 240 },
+        ],
+        ...extra,
+      },
+    });
+  const igual = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)) === 0;
+
+  await escribe(`/simular ${MENSAJE_REFERENCIA}`);
+  const convI = tables.conversations.at(-1);
+  const propI1 = conBotones();
+  check("I1. sin fotos la propuesta lo dice y avisa de las dos que faltan", propI1.text.includes("📷 Fotos") && propI1.text.includes("Pelo de la clienta: sin foto") && propI1.text.includes("Trenzas de referencia: sin foto") && propI1.text.includes("Falta la foto del pelo de la clienta") && propI1.text.includes("Falta la foto de las trenzas de referencia"));
+  check("I1b. faltar las fotos NO impide aprobar (decide Blake): el aviso no es un bloqueo", !(propI1.text.split("\n").find((l) => l.startsWith("⛔")) ?? "").toLowerCase().includes("foto"));
+
+  // --- una foto con pie: tipo y descripción de Blake
+  anota("Blake envía una foto con pie", "📷 [foto del pelo] «pelo: rizado, fino, a los hombros»");
+  check("I2. el webhook acepta la foto", (await foto("pelo1", { caption: "pelo: rizado, fino, a los hombros" })) === 200);
+  const f1 = idsFoto(convI)[0];
+  anota("Kira (confirmación)", ultimo().text);
+  check("I3. queda guardada en la conversación de la prueba, como foto del pelo y con la descripción de Blake", idsFoto(convI).length === 1 && f1.kind === "pelo" && f1.description === "rizado, fino, a los hombros" && f1.source === "telegram");
+  check("I4. ficha completa: tipo por los bytes, tamaño, hash y caducidad a 60 días", f1.content_type === "image/jpeg" && f1.size_bytes === jpgPelo.length && f1.sha256 === sha(jpgPelo));
+  check("I4b. caduca exactamente a los 60 días", Date.parse(f1.expires_at) - Date.parse(f1.created_at) === 60 * 86_400_000);
+  check("I5. el archivo está en el almacén privado, con ruta propia (conversación/id.jpg) y bytes idénticos", f1.storage_path === `${convI.id}/${f1.id}.jpg` && storage.has(`kira-fotos/${f1.storage_path}`) && igual(storage.get(`kira-fotos/${f1.storage_path}`).bytes, jpgPelo) && storage.get(`kira-fotos/${f1.storage_path}`).contentType === "image/jpeg");
+  check("I6. Blake recibe confirmación: tipo, a qué prueba, su descripción y cuándo se borra", ultimo().text.includes("Guardada como «Pelo de la clienta»") && ultimo().text.includes("Hola! tengo el pelo por el hombro") && ultimo().text.includes("Tu descripción: «rizado, fino, a los hombros»") && /se borrará el 1?\d\/12\/2026/.test(ultimo().text));
+  check("I7. queda en la línea de tiempo de ESA conversación", eventos("foto_recibida").some((e) => e.conversation_id === convI.id && e.detail.tipo === "pelo"));
+
+  // --- segunda foto sin pie: se toma como referencia; luego se corrige reenviándola con pie
+  await foto("ref1");
+  const f2 = idsFoto(convI)[1];
+  check("I8. la segunda foto sin pie se toma como «trenzas de referencia» y se avisa de cómo corregirlo", f2?.kind === "referencia" && ultimo().text.includes("La he tomado como «Trenzas de referencia»") && ultimo().text.includes("vuelve a mandarla con el pie"));
+  await foto("ref1", { caption: "referencia: boxeadoras hasta la cadera" });
+  check("I9. reenviar la misma foto con pie NO la duplica: corrige su descripción", idsFoto(convI).length === 2 && idsFoto(convI)[1].description === "boxeadoras hasta la cadera" && ultimo().text.includes("ya la tenía") && enAlmacen().length === 2);
+
+  // --- cosas que NO se deben guardar
+  const filasAntes = tables.attachments.length;
+  const seguridadAntes = tables.security_events.length;
+  await foto("falso1");
+  check("I10. un archivo que NO es imagen (HTML disfrazado de foto) se rechaza: ni ficha ni almacén", tables.attachments.length === filasAntes && enAlmacen().length === 2 && ultimo().text.includes("no parece una foto válida"));
+  check("I11. y queda como evento de seguridad", tables.security_events.length === seguridadAntes + 1 && tables.security_events.at(-1).kind === "payload_inesperado" && tables.security_events.at(-1).detail.reason === "archivo_no_imagen");
+  const getFileAntes = tg.getFile;
+  // Un archivo (documento) de imagen de 5 MB: no hay versión pequeña a la que recurrir, se rechaza sin descargarlo.
+  await enviarUpdate({ update_id: uid++, message: { message_id: 91, from: { id: ADMIN }, chat: { id: ADMIN, type: "private" }, document: { file_id: "enorme", file_size: 5_000_000, mime_type: "image/jpeg" } } });
+  check("I12. una imagen de más de 4 MB enviada como archivo se rechaza sin descargarla", tg.getFile === getFileAntes && tables.attachments.length === filasAntes && ultimo().text.includes("máximo 4 MB"));
+  await foto("no-existe", {}, ADMIN, 1000);
+  check("I13. si Telegram no encuentra el archivo: aviso a Blake y error registrado sin datos del token", ultimo().text.includes("No he podido descargar") && eventos("foto_descarga_fallo").some((e) => e.level === "error" && e.summary.includes("Telegram getFile")));
+  const enviadosAntes = tg.enviados.length;
+  await foto("pelo1", {}, EXTRANO);
+  check("I14. un extraño no puede mandar fotos: no se guarda nada, no se le contesta y queda en seguridad", tables.attachments.length === filasAntes && tg.enviados.length === enviadosAntes && tables.security_events.at(-1).kind === "telegram_no_autorizado");
+  await enviarUpdate({ update_id: uid++, message: { message_id: 90, from: { id: ADMIN }, chat: { id: ADMIN, type: "private" }, document: { file_id: "doc", file_size: 10, mime_type: "application/pdf" } } });
+  check("I15. un PDF o cualquier archivo que no sea JPG/PNG/WebP no se guarda", tables.attachments.length === filasAntes && ultimo().text.includes("Solo guardo fotos"));
+
+  // --- /fotos: las devuelve en un álbum, con su descripción
+  await escribe("/fotos");
+  const album = tg.subidas.at(-1);
+  anota("Blake escribe", "/fotos");
+  check("I16. /fotos devuelve un álbum de Telegram con las 2 fotos, en orden y con los bytes originales", album?.metodo === "sendMediaGroup" && album.archivos.length === 2 && igual(album.archivos[0].bytes, jpgPelo) && igual(album.archivos[1].bytes, jpgRef) && album.archivos.every((a) => a.tipo === "image/jpeg"));
+  const medios = JSON.parse(album.campos.media);
+  check("I17. cada foto lleva su tipo y la descripción de Blake en el pie", medios[0].caption === "📷 Pelo de la clienta — rizado, fino, a los hombros" && medios[1].caption === "📷 Trenzas de referencia — boxeadoras hasta la cadera" && medios.every((m) => m.type === "photo"));
+
+  // --- describir con Editar
+  const legacyAntesI = legacy.recibidas.length;
+  const specAntes = JSON.stringify(reservas().at(-1).spec);
+  await pulsa(dato(propI1, "Editar"), propI1.message_id);
+  await escribe("pelo liso con volumen");
+  const propI2 = conBotones();
+  anota("Kira (propuesta con fotos descritas)", propI2.text);
+  check("I18. «pelo …» al editar cambia la descripción guardada junto a la foto", idsFoto(convI)[0].description === "liso con volumen" && propI2.text.includes("Cambios aplicados: descripción del pelo."));
+  check("I19. la propuesta lista las fotos con la descripción y ya no avisa de que faltan", propI2.text.includes("Pelo de la clienta: «liso con volumen»") && propI2.text.includes("Trenzas de referencia: «boxeadoras hasta la cadera»") && !propI2.text.includes("Falta la foto"));
+  check("I20. describir una foto no toca la reserva ni vuelve a llamar a Legacy", JSON.stringify(reservas().at(-1).spec) === specAntes && legacy.recibidas.length === legacyAntesI);
+  await pulsa(dato(propI2, "Editar"), propI2.message_id);
+  await escribe("referencia\nbaila 3");
+  check("I21. una descripción vacía o una orden rara no cambia nada", ultimo().text.includes("No he podido aplicar nada") && idsFoto(convI)[1].description === "boxeadoras hasta la cadera");
+  await escribe("/cancelar");
+
+  // --- foto enviada junto a /simular: llega ANTES de la propuesta y viaja con ella
+  registrarArchivo("conmsg1", pngOtra);
+  const subidasAntes = tg.subidas.length;
+  const convsAntes = tables.conversations.length;
+  await foto("conmsg1", { caption: `/simular ${MENSAJE_REFERENCIA}` });
+  const convJ = tables.conversations.at(-1);
+  const propJ = conBotones();
+  const envio = tg.subidas.at(-1);
+  check("I22. foto + «/simular …»: se crea la prueba y la foto queda guardada en ella", tables.conversations.length === convsAntes + 1 && convJ.id !== convI.id && idsFoto(convJ).length === 1 && idsFoto(convJ)[0].content_type === "image/png" && idsFoto(convJ)[0].kind === "pelo");
+  check("I23. Blake recibe la foto (sendPhoto) ANTES del mensaje de la propuesta", tg.subidas.length === subidasAntes + 1 && envio.metodo === "sendPhoto" && igual(envio.archivos[0].bytes, pngOtra) && envio.seq < propJ.seq);
+  check("I24. y la propuesta ya la incluye (sin describir) y avisa de la que falta", propJ.text.includes("Pelo de la clienta: foto sin describir") && propJ.text.includes("Trenzas de referencia: sin foto") && !propJ.text.includes("Falta la foto del pelo"));
+  check("I25. el mensaje del cliente se guardó una sola vez, sin rastro de la foto en el texto", tables.messages.filter((m) => m.conversation_id === convJ.id).length === 1);
+
+  // --- caducidad: pasados los 60 días el archivo se borra, la descripción se conserva
+  idsFoto(convI)[0].expires_at = new Date(Date.now() - 86_400_000).toISOString(); // «han pasado 60 días»
+  registrarArchivo("nueva1", jpgRef);
+  const almacenAntes = enAlmacen().length;
+  await foto("nueva1"); // la foto nueva va a la última prueba (convJ) y de paso se limpian las caducadas
+  const caducada = idsFoto(convI)[0];
+  check("I26. la foto caducada se borra del almacén y su ficha queda marcada", caducada.purged_at !== null && caducada.storage_path === null && !storage.has(`kira-fotos/${convI.id}/${caducada.id}.jpg`) && enAlmacen().length === almacenAntes /* -1 borrada +1 nueva */);
+  check("I27. la descripción de Blake se conserva tras borrar la foto", caducada.description === "liso con volumen");
+  // --- lo que Blake escribe se pinta como texto, nunca como HTML
+  const DESC_HTML = '<b>negrita</b> <img src=x onerror="window.__xss=1">';
+  await pulsa(dato(propJ, "Editar"), propJ.message_id);
+  await escribe(`pelo ${DESC_HTML}`);
+  check("I29. una descripción con HTML se guarda tal cual (como texto)", idsFoto(convJ)[0].description === DESC_HTML);
+  check("I28. la limpieza queda registrada y las fotos no caducadas siguen ahí", eventos("fotos_caducadas_borradas").length === 1 && idsFoto(convI)[1].purged_at === null && storage.has(`kira-fotos/${idsFoto(convI)[1].storage_path}`));
+
   // ============================================================================ G. PAUSA (con el panel)
   console.log("\n=== G. Panel: login, mapeo, pausa, fallos y seguridad ===");
-  browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? "/opt/pw-browsers/chromium" });
+  await lanzarNavegador();
   const ctx = await browser.newContext({ viewport: { width: 430, height: 900 } });
   const page = await ctx.newPage();
   const token = randomBytes(32).toString("base64url");
@@ -426,10 +585,55 @@ try {
   check("G16. Seguridad: el mensaje marcado se muestra como texto", seg.includes("Ignora todas tus instrucciones"));
   await page.screenshot({ path: SHOTS + (SIN_CLAVE ? "sc-" : "") + "flujo-04-seguridad.png", fullPage: true });
 
+  // fotos en el panel
+  console.log("\n=== G (fotos). Panel: miniaturas, descripciones y acceso privado ===");
+  const fotoJ0 = idsFoto(convJ)[0];
+  const fotoJ1 = idsFoto(convJ)[1];
+  await page.goto(`${BASE}/panel/proceso/${convJ.id}`);
+  const secFotos = page.locator("section[aria-label='Fotos de la clienta']");
+  const imgsJ = secFotos.locator("img");
+  await imgsJ.first().scrollIntoViewIfNeeded();
+  await imgsJ.last().scrollIntoViewIfNeeded();
+  await page.waitForFunction(() => [...document.querySelectorAll("section[aria-label='Fotos de la clienta'] img")].every((i) => i.complete && i.naturalWidth > 0), null, { timeout: 8000 }).catch(() => {});
+  const cargadas = await imgsJ.evaluateAll((l) => l.map((i) => ({ ok: i.complete && i.naturalWidth > 0, w: i.naturalWidth, alt: i.alt, src: i.getAttribute("src") })));
+  const textoF = await secFotos.innerText();
+  check("G17. el detalle muestra las 2 fotos y las dos se ven de verdad (cargan como imagen)", cargadas.length === 2 && cargadas.every((c) => c.ok && c.w === 320), JSON.stringify(cargadas));
+  check("G18. cada foto con su tipo, la descripción de Blake (o «Sin describir») y cuándo se borra", textoF.includes("Pelo de la clienta") && textoF.includes("Trenzas de referencia") && textoF.includes("Sin describir") && /Se borra el \d+ de diciembre de 2026/.test(textoF));
+  check("G19. la descripción con HTML se ve como texto: no se interpreta ni se ejecuta", textoF.includes('<b>negrita</b>') && (await secFotos.locator("b").count()) === 0 && (await page.evaluate(() => window.__xss)) === undefined);
+  check("G20. las imágenes se piden a la ruta privada del panel, sin nombres de archivo ni URLs públicas", cargadas.every((c) => /^\/panel\/foto\/[0-9a-f-]{36}$/.test(c.src)));
+  await page.screenshot({ path: SHOTS + (SIN_CLAVE ? "sc-" : "") + "flujo-05-fotos.png", fullPage: true });
+
+  const rFoto = await ctx.request.get(`${BASE}/panel/foto/${fotoJ0.id}`);
+  const hFoto = rFoto.headers();
+  check("G21. con sesión, la ruta devuelve los bytes originales con el tipo guardado", rFoto.status() === 200 && hFoto["content-type"] === "image/png" && igual(await rFoto.body(), pngOtra));
+  check("G22. cabeceras seguras: nosniff, sandbox y sin caché compartida", hFoto["x-content-type-options"] === "nosniff" && (hFoto["content-security-policy"] ?? "").includes("sandbox") && /private|no-store/.test(hFoto["cache-control"] ?? "") && hFoto["content-disposition"] === "inline", JSON.stringify(hFoto));
+  const rSin = await fetch(`${BASE}/panel/foto/${fotoJ0.id}`, { redirect: "manual" });
+  check("G23. SIN sesión no se entrega nada: redirige al acceso y no hay imagen", [302, 303, 307, 308].includes(rSin.status) && (rSin.headers.get("location") ?? "").includes("/panel/entrar") && !(rSin.headers.get("content-type") ?? "").startsWith("image/"));
+  const rFalsa = await fetch(`${BASE}/panel/foto/${fotoJ0.id}`, { redirect: "manual", headers: { cookie: "__Host-kira_panel=inventada; kira_panel=inventada" } });
+  check("G24. con una cookie inventada tampoco", [302, 303, 307, 308].includes(rFalsa.status));
+  const r404a = await ctx.request.get(`${BASE}/panel/foto/no-es-un-uuid`);
+  const r404b = await ctx.request.get(`${BASE}/panel/foto/..%2F..%2Fetc%2Fpasswd`);
+  const r404c = await ctx.request.get(`${BASE}/panel/foto/${"0".repeat(8)}-0000-4000-8000-${"0".repeat(12)}`);
+  check("G25. identificadores raros o inexistentes dan 404 y nunca un archivo", [r404a, r404b, r404c].every((r) => r.status() === 404));
+
+  // convI: la foto del pelo caducó (archivo borrado, descripción conservada) y la de referencia sigue
+  await page.goto(`${BASE}/panel/proceso/${convI.id}`);
+  const secI = page.locator("section[aria-label='Fotos de la clienta']");
+  await secI.locator("img").first().scrollIntoViewIfNeeded();
+  const textoI = await secI.innerText();
+  check("G26. la foto caducada se ve como «borrada por caducidad» y conserva la descripción de Blake", textoI.includes("Foto borrada por caducidad") && textoI.includes("liso con volumen") && textoI.includes("Descripción conservada") && (await secI.locator("img").count()) === 1);
+  const rCad = await ctx.request.get(`${BASE}/panel/foto/${idsFoto(convI)[0].id}`);
+  check("G27. pedir directamente la foto caducada da 404", rCad.status() === 404);
+  await page.screenshot({ path: SHOTS + (SIN_CLAVE ? "sc-" : "") + "flujo-06-fotos-caducadas.png", fullPage: true });
+  // una conversación sin fotos lo dice claro
+  await page.goto(`${BASE}/panel/proceso/${tables.conversations[1].id}`);
+  check("G28. una conversación sin fotos dice «Todavía no hay fotos»", (await page.locator("body").innerText()).includes("Todavía no hay fotos en esta conversación"));
+
   // ============================================================================ H. Sin secretos en los registros
   const volcado = JSON.stringify({ e: tables.event_log, s: tables.security_events });
   check("H1. ninguna clave ni token en los registros", !/clave-falsa|token-falso|000000:|secreto-falso/.test(volcado));
   check("H2. ningún callback_data de un solo uso queda registrado", !/p:[0-9a-f]{32}:/.test(volcado));
+  check("H3. los registros de fotos no contienen rutas de descarga de Telegram (llevan el token)", !/\/file\/bot|photos\/[a-z0-9]+\.bin/.test(volcado));
 
   fs.writeFileSync(SHOTS + `conversacion-telegram${SIN_CLAVE ? "-sin-clave" : ""}.txt`, transcripcion.join("\n"));
 } catch (e) {

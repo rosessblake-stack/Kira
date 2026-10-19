@@ -1,3 +1,5 @@
+import { MAX_BYTES_FOTO } from "./fotos";
+import type { MediaTelegram, PhotoPort } from "./photo-flow";
 import type { ProposalPort } from "./proposal-flow";
 import { safeEqual } from "./safe-equal";
 
@@ -56,6 +58,8 @@ export interface Deps {
   createLoginLink(): Promise<string>;
   /** Propuestas de cita: simulación, botones Aprobar/Editar/Rechazar y edición por texto. */
   proposals: ProposalPort;
+  /** Fotos que Blake envía (pelo, trenzas de referencia): se guardan en privado y se adjuntan a la prueba. */
+  photos: PhotoPort;
 }
 
 export type HandlerResult = { status: number; body: Record<string, unknown> };
@@ -64,7 +68,17 @@ const OK: HandlerResult = { status: 200, body: { ok: true } };
 
 type TgUser = { id?: number };
 type TgChat = { id?: number; type?: string };
-type TgMessage = { message_id?: number; from?: TgUser; chat?: TgChat; text?: string };
+type TgPhotoSize = { file_id?: string; file_size?: number; width?: number; height?: number };
+type TgDocument = { file_id?: string; file_size?: number; mime_type?: string };
+type TgMessage = {
+  message_id?: number;
+  from?: TgUser;
+  chat?: TgChat;
+  text?: string;
+  caption?: string;
+  photo?: TgPhotoSize[];
+  document?: TgDocument;
+};
 type TgCallback = { id?: string; from?: TgUser; data?: string; message?: TgMessage };
 type TgUpdate = { update_id?: number; message?: TgMessage; callback_query?: TgCallback };
 
@@ -132,6 +146,22 @@ export async function handleTelegramRequest(
   return OK;
 }
 
+/** Foto normal (la versión más grande que quepa en el tope) o archivo de imagen. Otros archivos no se guardan. */
+function extraerMedia(msg: TgMessage): { media: MediaTelegram | null; hayArchivo: boolean } {
+  if (Array.isArray(msg.photo) && msg.photo.length > 0) {
+    const validas = msg.photo.filter((p) => typeof p?.file_id === "string" && p.file_id.length > 0 && p.file_id.length <= 300);
+    const porTamano = [...validas].sort((a, b) => (b.width ?? 0) * (b.height ?? 0) - (a.width ?? 0) * (a.height ?? 0));
+    const elegida = porTamano.find((p) => p.file_size === undefined || p.file_size <= MAX_BYTES_FOTO) ?? porTamano[0];
+    return { media: elegida ? { fileId: elegida.file_id as string, tamano: typeof elegida.file_size === "number" ? elegida.file_size : null } : null, hayArchivo: true };
+  }
+  const d = msg.document;
+  if (d) {
+    const esImagen = typeof d.file_id === "string" && d.file_id.length > 0 && d.file_id.length <= 300 && /^image\/(jpeg|png|webp)$/i.test(d.mime_type ?? "");
+    return { media: esImagen ? { fileId: d.file_id as string, tamano: typeof d.file_size === "number" ? d.file_size : null } : null, hayArchivo: true };
+  }
+  return { media: null, hayArchivo: false };
+}
+
 async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   const fromId = msg.from?.id;
   const chatId = msg.chat?.id;
@@ -167,11 +197,34 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
     return;
   }
 
+  // Fotos: una foto (o archivo de imagen) se guarda en la prueba más reciente. Con el pie «/simular <mensaje>» crea la prueba
+  // y la foto viaja con ella. Con otro pie («pelo: rizado, fino…») fija el tipo y la descripción.
+  const { media, hayArchivo } = extraerMedia(msg);
+  if (hayArchivo) {
+    if (!media) {
+      await deps.sendMessage(chatId, "Solo guardo fotos (JPG, PNG o WebP). Ese archivo no lo puedo usar.");
+      return;
+    }
+    const pie = (msg.caption ?? "").trim();
+    const sim = /^\/simular(?:@\w+)?(?:\s+([\s\S]*))?$/i.exec(pie);
+    if (sim) {
+      await deps.proposals.simular(chatId, (sim[1] ?? "").trim(), (conversationId) => deps.photos.recibir(chatId, media, conversationId, ""));
+    } else {
+      await deps.photos.recibir(chatId, media, null, pie);
+    }
+    return;
+  }
+
   if (cmd === "/start") {
     await deps.sendMessage(
       chatId,
-      "Kira activa. Te he identificado como administrador.\n\n/simular <mensaje> → simula el mensaje de un cliente y te manda la propuesta\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
+      "Kira activa. Te he identificado como administrador.\n\n/simular <mensaje> → simula el mensaje de un cliente y te manda la propuesta\nFotos → mándame la foto del pelo y la de las trenzas; si quieres, con un pie («pelo: rizado, fino…» o «referencia: boxeadoras largas»)\n/fotos → te devuelvo las fotos de la última prueba\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
     );
+    return;
+  }
+
+  if (cmd === "/fotos") {
+    await deps.photos.reenviar(chatId, null);
     return;
   }
 
@@ -231,7 +284,7 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   // Texto libre: solo se atiende si hay una edición abierta (tras pulsar Editar en una propuesta).
   if (text && !text.startsWith("/") && (await deps.proposals.textoLibre(chatId, text))) return;
 
-  await deps.sendMessage(chatId, "No conozco ese comando. Prueba con /simular, /panel o /prueba.");
+  await deps.sendMessage(chatId, "No conozco ese comando. Prueba con /simular, /fotos, /panel o /prueba.");
 }
 
 async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {

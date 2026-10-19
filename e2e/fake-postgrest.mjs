@@ -16,7 +16,10 @@ export const tables = {
   bookings: [],
   scheduled_jobs: [],
   processed_webhooks: [],
+  attachments: [],
 };
+/** Almacén de archivos falso (Supabase Storage): "bucket/ruta" -> { bytes, contentType }. */
+export const storage = new Map();
 let seq = 1;
 const intId = new Set(["event_log", "security_events"]);
 
@@ -49,6 +52,9 @@ function defaults(table, row) {
       calendar_event_id: r.calendar_event_id ?? null,
       stripe_session_id: r.stripe_session_id ?? null,
     });
+  }
+  if (table === "attachments") {
+    Object.assign(r, { created_at: r.created_at ?? nowIso(), description: r.description ?? null, described_at: r.described_at ?? null, purged_at: r.purged_at ?? null });
   }
   if (table === "conversations") {
     Object.assign(r, {
@@ -123,11 +129,41 @@ function conFilas(res, status, rows, comoObjeto) {
   return send(res, status, rows[0]);
 }
 
+/** Subconjunto de la API de Storage que usa supabase-js: subir, descargar y borrar. Nada se sirve sin la clave. */
+function almacen(req, res, url, crudo) {
+  if (!req.headers.authorization?.startsWith("Bearer ")) return send(res, 401, { statusCode: "401", error: "Unauthorized", message: "sin clave" });
+  const m = /^\/storage\/v1\/object\/([\w-]+)(?:\/(.*))?$/.exec(url.pathname);
+  const bucket = m[1];
+  const ruta = m[2] ? decodeURIComponent(m[2]) : "";
+  if (bucket !== "kira-fotos") return send(res, 404, { statusCode: "404", error: "Bucket not found", message: "Bucket not found" });
+  const clave = `${bucket}/${ruta}`;
+  if (req.method === "POST") {
+    if (storage.has(clave) && req.headers["x-upsert"] !== "true") return send(res, 409, { statusCode: "409", error: "Duplicate", message: "The resource already exists" });
+    storage.set(clave, { bytes: crudo, contentType: String(req.headers["content-type"] ?? "") });
+    return send(res, 200, { Id: randomUUID(), Key: clave });
+  }
+  if (req.method === "GET") {
+    const f = storage.get(clave);
+    if (!f) return send(res, 400, { statusCode: "404", error: "not_found", message: "Object not found" });
+    res.writeHead(200, { "content-type": f.contentType });
+    return res.end(f.bytes);
+  }
+  if (req.method === "DELETE" && !ruta) {
+    const prefixes = JSON.parse(crudo.toString()).prefixes ?? [];
+    const borrados = [];
+    for (const p of prefixes) if (storage.delete(`${bucket}/${p}`)) borrados.push({ name: p });
+    return send(res, 200, borrados);
+  }
+  return send(res, 405, { message: "método no soportado" });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
   const chunks = [];
   for await (const c of req) chunks.push(c);
-  const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined;
+  const crudo = Buffer.concat(chunks);
+  if (url.pathname.startsWith("/storage/v1/object/")) return almacen(req, res, url, crudo);
+  const body = crudo.length ? JSON.parse(crudo.toString()) : undefined;
 
   if (url.pathname.startsWith("/__dump/")) return send(res, 200, tables[url.pathname.slice(8)]);
 

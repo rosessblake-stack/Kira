@@ -49,8 +49,15 @@ Reembolsos y quejas, colaboraciones/marcas/prensa, VIPs y clientes conocidos, me
 - Las citas, los pagos y los borrados nunca pasan a automático sin tu decisión explícita.
 - Interruptor general en el panel: "Pausar Kira" (deja de contestar y solo avisa).
 
-## 6. Qué verás en el panel
+## 6. Fotos de las clientas
 
-- **Proceso:** cada conversación y en qué paso está (clasificada, esperando aprobación, pendiente de pago, pagada, expirada).
+- Kira pide (en Instagram, con ManyChat) una foto del pelo y otra de las trenzas de referencia. **Hoy Claude no las ve**: las guarda el servidor, te llegan a Telegram y las describes tú con tus palabras (`pelo …`, `referencia …`). Que Claude las describa con visión es una decisión tuya, para más adelante.
+- Faltar una foto es un **aviso** en la propuesta, no un bloqueo: decides tú.
+- Las fotos se guardan en privado y **se borran a los 60 días**; tu descripción se conserva. Nunca se muestran a nadie más ni se mandan a un servicio externo.
+- Claude no «aprende» solo de tus descripciones: se guardan como ejemplos etiquetados y, cuando quieras, se usan para enseñarle o evaluarlo (ver `docs/MANYCHAT.md` §4).
+
+## 7. Qué verás en el panel
+
+- **Proceso:** cada conversación y en qué paso está (clasificada, esperando aprobación, pendiente de pago, pagada, expirada), con sus fotos y tu descripción de cada una.
 - **Fallos:** errores del sistema, webhooks que no llegaron, pagos o eventos sin cerrar.
 - **Seguridad:** intentos de manipulación, firmas inválidas, usuarios no autorizados, límites superados.

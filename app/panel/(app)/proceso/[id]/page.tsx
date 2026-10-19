@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { detalleConversacion } from "../../../../../lib/panel-data";
-import { CANALES, ESTADOS_RESERVA, INTENCIONES, euros, fechaHora } from "../../../../../lib/panel-rules";
+import { CANALES, ESTADOS_RESERVA, INTENCIONES, euros, fechaHora, soloFecha } from "../../../../../lib/panel-rules";
 import { requireAdmin } from "../../../../../lib/panel-session";
 import { Etiqueta, Vacio } from "../../../_components";
 
@@ -25,6 +25,32 @@ export default async function Conversacion({ params }: { params: Promise<{ id: s
       <p className="muted">
         {CANALES[detalle.canal] ?? detalle.canal} · {INTENCIONES[detalle.intent] ?? detalle.intent}
       </p>
+
+      <section className="tarjeta" aria-label="Fotos de la clienta">
+        <h3 className="subtitulo" style={{ marginTop: 0 }}>Fotos</h3>
+        {detalle.fotos.length === 0 ? (
+          <p className="muted" style={{ margin: 0 }}>Todavía no hay fotos en esta conversación.</p>
+        ) : (
+          <ul className="fotos">
+            {detalle.fotos.map((f) => (
+              <li key={f.id} className="foto">
+                {f.borrada ? (
+                  <div className="foto-hueco muted">Foto borrada por caducidad</div>
+                ) : (
+                  <a href={`/panel/foto/${f.id}`} target="_blank" rel="noopener noreferrer">
+                    {/* Detrás del acceso del panel: no puede pasar por el optimizador de imágenes de Next. */}
+                    <img src={`/panel/foto/${f.id}`} alt={f.etiqueta} loading="lazy" />
+                  </a>
+                )}
+                <strong>{f.etiqueta}</strong>
+                {/* Lo que escribe Blake se pinta como texto plano, igual que todo lo demás. */}
+                <p className={f.descripcion ? "texto" : "texto muted"}>{f.descripcion ?? "Sin describir"}</p>
+                <span className="muted">{f.borrada ? "Descripción conservada" : `Se borra el ${soloFecha(f.caduca)}`}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       {detalle.reservas.map((r) => (
         <section key={r.id} className="tarjeta" aria-label="Propuesta de cita">

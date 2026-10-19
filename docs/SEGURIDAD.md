@@ -21,6 +21,7 @@ Estas reglas son parte del diseño, no un añadido final. Cada flujo nuevo las h
 - **Pausa:** el interruptor «Pausar Kira» falla hacia el silencio: si no se puede leer el ajuste, Kira se considera pausada.
 - **Simulación (`/simular`):** solo el administrador; crea conversaciones del canal `prueba`, nunca envía nada a un cliente y sus reservas (`is_test`) no bloquean huecos reales.
 - **Legacy:** Kira nunca envía a Legacy datos de una clienta (email interno de marcador y sin Instagram). Si Legacy falla o faltan datos, no se calcula precio.
+- **Fotos de las clientas** (pelo y trenzas de referencia): son archivos de fuera, así que no se confía en nada de ellos. Solo JPG, PNG o WebP de hasta 4 MB, y el tipo lo deciden los **primeros bytes** del archivo (no lo que diga Telegram ni el nombre); si no cuadra, se rechaza y queda en seguridad (`payload_inesperado`). Se guardan en un almacén **privado** (bucket `kira-fotos`, sin URL pública) con ruta propia (`conversación/id.extensión`), junto a su hash SHA-256; el panel las sirve por `/panel/foto/<id>` **solo con sesión de administrador** (sin ella redirige al acceso), con `nosniff`, `sandbox` y sin caché. **Se borran a los 60 días** (la descripción de Blake se conserva); mientras no haya tarea programada, cada foto nueva borra las caducadas. La foto **no se envía a Claude** y nada que contenga se interpreta: la describe Blake y su texto se muestra como texto plano. Los errores de descarga nunca llevan la dirección (contiene el token del bot). Un EXIF con ubicación no es un riesgo hoy porque Telegram e Instagram reprocesan las imágenes; si algún día entra otra fuente, hay que quitarlo al guardar.
 - **Base de datos:** RLS activada y sin políticas. Solo el servidor, con la clave `service_role`, puede leer o escribir.
 - **Límite de peticiones:** tope por contacto y por hora (10) y tope diario de llamadas a Claude (300) para frenar abusos y evitar gasto descontrolado de API. Al superarlo: silencio, evento `limite_de_peticiones` y aviso a Blake. El tope diario ya está activo; el de ritmo por contacto está implementado y probado y se conectará con ManyChat.
 
@@ -43,5 +44,5 @@ Estas reglas son parte del diseño, no un añadido final. Cada flujo nuevo las h
 ## 7. Qué vigila el panel
 - **Proceso:** línea de tiempo por conversación (mensaje, clasificación, propuesta, aprobación, pago, cita).
 - **Fallos:** errores y avisos, tareas fallidas o atascadas, reservas expiradas, aprobaciones pendientes demasiado tiempo.
-- **Seguridad:** firmas inválidas, intentos no autorizados, límites alcanzados, posibles inyecciones.
+- **Seguridad:** firmas inválidas, intentos no autorizados, límites alcanzados, posibles inyecciones, archivos que se hacían pasar por fotos.
 - El panel registra y avisa de lo sospechoso; no sustituye una revisión de seguridad del código, que se hace antes de pasar a automático.
