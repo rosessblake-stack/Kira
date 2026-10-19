@@ -1,5 +1,5 @@
 import { euros } from "./panel-rules";
-import { fechaLarga } from "./agenda";
+import { esDiaLibre, fechaLarga, listaDiasLibres, nombreDia, partesMadrid } from "./agenda";
 import type { ResumenFoto } from "./fotos";
 import {
   INTENCION_EN_BD,
@@ -332,6 +332,12 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       await deps.logEvent({ source: "system", kind: "mensaje_con_kira_pausada", level: "warn", summary: "Kira está en pausa: no se prepara respuesta", conversation_id: convId });
       await deps.enviar(chatId, `⏸ KIRA EN PAUSA\n\nHa llegado un mensaje (prueba) pero Kira está pausada: no se prepara respuesta.\n\n💬 «${limpiarTexto(texto, 400)}»\n\nReanuda Kira desde el panel.`);
       return;
+    }
+
+    // Día libre: con una clienta real Kira no contestaría (docs/POLITICA.md). Esto es una prueba de Blake, así que sigue, pero se lo dice.
+    if (esDiaLibre(ahora)) {
+      await deps.logEvent({ source: "system", kind: "mensaje_en_dia_libre", summary: `Mensaje simulado en día libre (${nombreDia(partesMadrid(ahora).diaSemana)})`, conversation_id: convId });
+      await deps.enviar(chatId, `ℹ️ Hoy es ${nombreDia(partesMadrid(ahora).diaSemana)}, día libre (no trabajas: ${listaDiasLibres()}). Con una clienta real Kira no contestaría. Como esto es una prueba, sigo.`);
     }
 
     // 2. Señales de manipulación: sin gastar una llamada a Claude y sin contestar.

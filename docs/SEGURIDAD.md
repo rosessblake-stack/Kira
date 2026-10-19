@@ -5,7 +5,7 @@ Estas reglas son parte del diseño, no un añadido final. Cada flujo nuevo las h
 ## 1. Claude propone, nunca decide
 - **Precio y horas:** salen de Legacy y de tu aprobación en Telegram. Claude nunca inventa ni cambia un precio.
 - **Enlace de pago:** solo se genera después de que tú apruebes.
-- **Confirmación de una cita:** solo se produce cuando llega un aviso de pago **firmado por Stripe**. Ningún mensaje de un cliente, por convincente que sea ("ya he pagado", "me dijo Blake que cuesta 5 €"), confirma nada.
+- **Confirmación de una cita:** solo se produce cuando llega un aviso de pago **firmado por Stripe** o cuando **Blake lo confirma con su botón en Telegram** (pago por Bizum, que no se puede comprobar desde el servidor). Ningún mensaje de un cliente, por convincente que sea ("ya he pagado", **"confirmado"**, "me dijo Blake que cuesta 5 €"), confirma nada: una clienta que escribe «confirmado» solo hace que Kira avise a Blake para que mire su Bizum.
 - **Qué puede hacer Claude:** clasificar el mensaje, redactar propuestas y respuestas, y rellenar datos estructurados. Todo lo que devuelve se valida con un esquema antes de usarse.
 
 ## 2. El texto de los clientes es dato, no instrucciones

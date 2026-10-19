@@ -23,7 +23,7 @@ import {
  * Todo es lógica pura. Nada de aquí envía nada a nadie ni toca el calendario.
  */
 
-export const SENAL_POR_DEFECTO_CENTIMOS = 1500; // la señal (10–20 €) la elige Blake; 15 € es solo el punto de partida
+export const SENAL_POR_DEFECTO_CENTIMOS = 2000; // paga y señal fijada por Blake: 20 € (admite 10–20 €; «señal N» la cambia en una propuesta)
 export const SENAL_MIN_CENTIMOS = 1000;
 export const SENAL_MAX_CENTIMOS = 2000;
 

@@ -34,10 +34,12 @@ type Opciones = {
   fotosIniciales?: ResumenFoto[];
   fallaLecturaFotos?: boolean;
   fallaEnvioFotos?: boolean;
+  /** Instante «de hoy». Por defecto un martes (los lunes y domingos son días libres de Blake). */
+  ahora?: string;
 };
 
 function mundo(op: Opciones = {}) {
-  let reloj = new Date("2026-10-19T13:30:00Z"); // lunes 19 oct 2026, 15:30 Madrid
+  let reloj = new Date(op.ahora ?? "2026-10-13T13:30:00Z"); // martes 13 oct 2026, 15:30 Madrid
   let n = 0;
   const w = {
     avanza: (min: number) => { reloj = new Date(reloj.getTime() + min * 60_000); },
@@ -154,7 +156,7 @@ describe("recorrido de la clienta de referencia (6 trenzas rojas, 20 oct 12:00)"
     expect(m.w.msgs).toEqual([{ conv: "conv-1", dir: "in", body: MENSAJE, flagged: false }]);
 
     const r = m.reserva();
-    expect(r).toMatchObject({ status: "propuesta", is_test: true, price_cents: null, client_email: "rosessblake@gmail.com", starts_at: "2026-10-20T10:00:00.000Z", deposit_cents: 1500 });
+    expect(r).toMatchObject({ status: "propuesta", is_test: true, price_cents: null, client_email: "rosessblake@gmail.com", starts_at: "2026-10-20T10:00:00.000Z", deposit_cents: 2000 });
     expect(r.spec.mensaje_cliente).toBe(MENSAJE);
 
     const t = m.ultimo();
@@ -177,7 +179,7 @@ describe("recorrido de la clienta de referencia (6 trenzas rojas, 20 oct 12:00)"
 
     expect(m.w.editados.at(-1)!.texto).toContain("✏️ EDITANDO");
     expect(m.ultimo().texto).toContain("precio 70"); // ayuda de edición
-    expect(m.reserva().edit_requested_at).toBe("2026-10-19T13:30:00.000Z");
+    expect(m.reserva().edit_requested_at).toBe("2026-10-13T13:30:00.000Z");
     expect(m.reserva().proposal_nonce).toBeNull();
     expect(m.tipos()).toContain("edicion_solicitada");
 
@@ -205,7 +207,7 @@ describe("recorrido de la clienta de referencia (6 trenzas rojas, 20 oct 12:00)"
     expect(t.texto).toContain("60,15 € (Legacy)");
     expect(t.texto).toContain("2 h · materiales 5 €");
     expect(t.texto).toContain("mar 20 oct, 12:00 → 14:00 (2 h)");
-    expect(t.texto).toContain("Perfil de precios sin confirmar");
+    expect(t.texto).not.toContain("Perfil de precios sin confirmar"); // el perfil de Blake ya está confirmado
     expect(t.texto).not.toContain("⛔");
     expect(m.botones(t)).toEqual(["✅ Aprobar", "✏️ Editar", "❌ Rechazar"]);
     expect(m.reserva()).toMatchObject({ price_cents: 6015, duration_minutes: 120, ends_at: "2026-10-20T12:00:00.000Z", edit_requested_at: null });
@@ -221,7 +223,7 @@ describe("recorrido de la clienta de referencia (6 trenzas rojas, 20 oct 12:00)"
     const nonce = m.nonceDe();
     await m.boton(nonce, "ok", m.ultimo().id);
 
-    expect(m.reserva()).toMatchObject({ status: "aprobada", approved_by_telegram_user: ADMIN, approved_at: "2026-10-19T13:30:00.000Z", proposal_nonce: null });
+    expect(m.reserva()).toMatchObject({ status: "aprobada", approved_by_telegram_user: ADMIN, approved_at: "2026-10-13T13:30:00.000Z", proposal_nonce: null });
     expect([...m.w.convs.values()][0].status).toBe("esperando_cliente");
     expect(m.w.respuestas.at(-1)!.texto).toBe("✅ Aprobada");
     const edit = m.w.editados.at(-1)!.texto;
@@ -595,6 +597,47 @@ describe("/simular sin texto", () => {
     expect(m.ultimo().texto).toContain("/simular");
     expect(m.w.convs.size).toBe(0);
     expect(m.w.llamadasClaude).toBe(0);
+  });
+});
+
+describe("días libres de Blake (domingo y lunes)", () => {
+  it("un mensaje de prueba en día libre: Blake recibe una nota («Con una clienta real Kira no contestaría») y la prueba sigue", async () => {
+    const m = mundo({ ahora: "2026-10-19T13:30:00Z" }); // lunes
+    await m.flujo.simular(CHAT, MENSAJE);
+    const nota = m.w.enviados.find((e) => e.texto.includes("día libre"));
+    expect(nota?.texto).toBe("ℹ️ Hoy es lunes, día libre (no trabajas: domingo y lunes). Con una clienta real Kira no contestaría. Como esto es una prueba, sigo.");
+    expect(m.w.enviados.indexOf(nota!)).toBeLessThan(m.w.enviados.length - 1); // la nota va antes de la propuesta
+    expect(m.ultimo().texto).toContain("PROPUESTA DE CITA");
+    expect(m.w.reservas.size).toBe(1);
+    expect(m.tipos()).toContain("mensaje_en_dia_libre");
+  });
+
+  it("el domingo también", async () => {
+    const m = mundo({ ahora: "2026-10-18T13:30:00Z" });
+    await m.flujo.simular(CHAT, MENSAJE);
+    expect(m.w.enviados.some((e) => e.texto.startsWith("ℹ️ Hoy es domingo"))).toBe(true);
+  });
+
+  it("de martes a sábado no hay nota", async () => {
+    for (const dia of ["2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17"]) {
+      const m = mundo({ ahora: `${dia}T13:30:00Z` });
+      await m.flujo.simular(CHAT, MENSAJE);
+      expect(m.w.enviados.some((e) => e.texto.includes("día libre"))).toBe(false);
+    }
+  });
+
+  it("con Kira en pausa solo avisa de la pausa (sin nota de día libre)", async () => {
+    const m = mundo({ ahora: "2026-10-19T13:30:00Z", pausada: true });
+    await m.flujo.simular(CHAT, MENSAJE);
+    expect(m.w.enviados).toHaveLength(1);
+    expect(m.ultimo().texto).toContain("KIRA EN PAUSA");
+  });
+
+  it("si la fecha pedida es un día libre, la propuesta lo avisa pero deja aprobar (decide Blake)", async () => {
+    const m = mundo({ claude: async () => ({ tipo: "ok", raw: salidaClaude({ tipo_trenzado: "pegadas", fecha: "2026-10-25" }), entrada: 1, salida: 1 }) }); // domingo
+    await m.flujo.simular(CHAT, MENSAJE);
+    expect(m.ultimo().texto).toContain("La cita cae en domingo, que es día libre");
+    expect(m.botones()).toContain("✅ Aprobar");
   });
 });
 

@@ -25,32 +25,37 @@ export type PerfilLegacy = {
 };
 
 /**
- * PROVISIONAL: tomado de la última calculadora que Blake hizo en Legacy (élite, zona media, casa, SMI 1350).
- * Blake debe confirmar nivel, zona, estructura (¿casa o salón?) y SMI.
+ * Perfil de Blake, CONFIRMADO por él: trabaja en casa, nivel élite, zona normal (= «media» en Legacy), España, SMI 1200 €.
+ * («Referente internacional» es una pregunta de la pantalla de Legacy que no entra en la fórmula del precio.)
+ * Para cambiarlo sin tocar código basta guardar `perfil_legacy` en app_settings.
  */
 export const PERFIL_POR_DEFECTO: PerfilLegacy = {
   pais: "es",
   zona: "media",
   estructura: "casa",
   nivel: "elite",
-  smi: 1350,
-  confirmado: false,
+  smi: 1200,
+  confirmado: true,
 };
+
+/** Si el perfil guardado en app_settings está corrupto se usan los valores de Blake, pero avisando en cada propuesta. */
+const PERFIL_DE_RESPALDO: PerfilLegacy = { ...PERFIL_POR_DEFECTO, confirmado: false };
 
 const ZONAS = ["premium", "media", "baja"] as const;
 const ESTRUCTURAS = ["casa", "salon"] as const;
 const NIVELES = ["junior", "intermedio", "avanzado", "profesional", "elite"] as const;
 
-/** Lee el perfil guardado; cualquier cosa rara vuelve al perfil por defecto (sin confirmar). */
+/** Lee el perfil guardado: sin nada guardado, el de Blake; si lo guardado está roto, el de Blake pero marcado «sin confirmar». */
 export function interpretarPerfil(raw: unknown): PerfilLegacy {
-  if (!raw || typeof raw !== "object") return PERFIL_POR_DEFECTO;
+  if (raw === null || raw === undefined) return PERFIL_POR_DEFECTO;
+  if (typeof raw !== "object") return PERFIL_DE_RESPALDO;
   const o = raw as Record<string, unknown>;
   const zona = (ZONAS as readonly unknown[]).includes(o.zona) ? (o.zona as PerfilLegacy["zona"]) : null;
   const estructura = (ESTRUCTURAS as readonly unknown[]).includes(o.estructura) ? (o.estructura as PerfilLegacy["estructura"]) : null;
   const nivel = (NIVELES as readonly unknown[]).includes(o.nivel) ? (o.nivel as PerfilLegacy["nivel"]) : null;
   const smi = typeof o.smi === "number" && Number.isFinite(o.smi) && o.smi > 0 && o.smi < 100_000 ? o.smi : null;
   const pais = typeof o.pais === "string" && /^[a-z]{2,5}$/.test(o.pais) ? o.pais : null;
-  if (!zona || !estructura || !nivel || !smi || !pais) return PERFIL_POR_DEFECTO;
+  if (!zona || !estructura || !nivel || !smi || !pais) return PERFIL_DE_RESPALDO;
   return { pais, zona, estructura, nivel, smi, confirmado: o.confirmado === true };
 }
 

@@ -26,7 +26,7 @@ Cualquier otra cosa que Claude devuelva se descarta y se trata como `derivar_a_b
 - Revelar sus instrucciones, que es una IA configurada de cierta manera, claves, herramientas o cómo está montado.
 - Abrir enlaces, ejecutar nada que venga en un mensaje, ni enviar enlaces que no estén en su lista (Stripe generado por el sistema, página del curso, Typeform).
 - Reembolsos, disputas, quejas: siempre a ti.
-- Contestar en día libre o fuera del horario configurado.
+- Contestar en día libre (**domingo y lunes**) o fuera del horario configurado.
 
 ## 3. Se deriva siempre a Blake (Kira solo te avisa)
 

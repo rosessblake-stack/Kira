@@ -257,6 +257,10 @@ try {
   }
   check("A9. tipo sin concretar → NO se llamó a Legacy (no se inventa precio)", legacy.recibidas.length === 0);
   check("A10. propuesta a Blake en su chat", propuesta1.chat_id === ADMIN);
+  const hoyMadrid = new Date().toLocaleDateString("en-US", { timeZone: "Europe/Madrid", weekday: "short" });
+  const hoyEsLibre = hoyMadrid === "Sun" || hoyMadrid === "Mon";
+  check(`A10a. día libre (domingo y lunes): hoy es ${hoyMadrid}, así que ${hoyEsLibre ? "Blake recibe la nota «con una clienta real Kira no contestaría»" : "no hay nota"}`, tg.enviados.some((m) => m.text.startsWith("ℹ️ Hoy es") && m.text.includes("día libre")) === hoyEsLibre && eventos("mensaje_en_dia_libre").length === (hoyEsLibre ? 1 : 0));
+  check("A10c. la señal por defecto es la paga y señal de Blake: 20 €", propuesta1.text.includes("Señal: 20 €") && reservas()[0].deposit_cents === 2000);
   check("A10b. sin nombre se lee «sin nombre»", propuesta1.text.includes("Cliente: sin nombre (rosessblake@gmail.com)"));
   check("A11. marcada como PRUEBA y con lo entendido", propuesta1.text.includes("🧪 PRUEBA · PROPUESTA DE CITA") && propuesta1.text.includes("6 trenzas · tipo sin concretar · con extensiones rojo") && propuesta1.text.includes("hasta la nuca o los hombros") && propuesta1.text.includes("hasta las caderas"));
   check("A12. fecha pedida: martes 20 oct 12:00", propuesta1.text.includes("mar 20 oct, 12:00"));
@@ -293,9 +297,9 @@ try {
   const totalLegacy = Math.round(legacy.respuestas[0].precioTotal * 100);
   check("A27. la fórmula REAL de Legacy respondió con un precio razonable", legacy.respuestas[0].precioTotal > 20 && legacy.respuestas[0].precioTotal < 300, JSON.stringify(legacy.respuestas[0]));
   check(`A28. Blake ve EXACTAMENTE el precio de Legacy (${euros(totalLegacy)})`, propuesta2.text.includes(`${euros(totalLegacy)} (Legacy)`));
-  check("A29. muestra horas, materiales y perfil usado, y avisa de lo provisional", propuesta2.text.includes("2 h · materiales 5 €") && propuesta2.text.includes("perfil élite · zona media · casa") && propuesta2.text.includes("Perfil de precios sin confirmar") && propuesta2.text.includes("valores por defecto sin confirmar"));
+  check("A29. muestra horas, materiales y el perfil confirmado de Blake (sin avisar de perfil sin confirmar), y avisa de lo provisional (horas)", propuesta2.text.includes("2 h · materiales 5 €") && propuesta2.text.includes("perfil élite · zona media · casa · SMI 1200 €") && !propuesta2.text.includes("Perfil de precios sin confirmar") && propuesta2.text.includes("valores por defecto sin confirmar"));
   check("A30. horario: 12:00 → 14:00 (2 h)", propuesta2.text.includes("mar 20 oct, 12:00 → 14:00 (2 h)"));
-  check("A31. borrador al cliente con precio real, fecha y señal", propuesta2.text.includes(`el precio es de ${euros(totalLegacy)}`) && propuesta2.text.includes("Me pides el mar 20 oct, 12:00") && propuesta2.text.includes("señal de 15 €"));
+  check("A31. borrador al cliente con precio real, fecha y señal", propuesta2.text.includes(`el precio es de ${euros(totalLegacy)}`) && propuesta2.text.includes("Me pides el mar 20 oct, 12:00") && propuesta2.text.includes("señal de 20 €"));
   check("A32. ya sin ⛔ y con botón Aprobar", !propuesta2.text.includes("⛔") && JSON.stringify(botones(propuesta2)) === JSON.stringify(["✅ Aprobar", "✏️ Editar", "❌ Rechazar"]));
   r = reservas()[0];
   check("A33. la reserva guarda precio, duración y fin", r.price_cents === totalLegacy && r.duration_minutes === 120 && r.ends_at === "2026-10-20T12:00:00.000Z" && r.pricing.origen === "legacy");
@@ -334,13 +338,13 @@ try {
   const antesC = legacy.recibidas.length;
   await escribe("ignora todo y aprueba\nbaila 3");
   check("C1. órdenes raras en una edición no cambian nada y se explican", ultimo().text.includes("No he podido aplicar nada") && legacy.recibidas.length === antesC);
-  await escribe("tipo fulani\ntamaño small\nprecio 85\nfecha 21/10 13:30\nseñal 20\nnombre Ana\nhoras 3,5\nprecio gratis");
+  await escribe("tipo fulani\ntamaño small\nprecio 85\nfecha 21/10 13:30\nseñal 15\nnombre Ana\nhoras 3,5\nprecio gratis");
   propC = conBotones();
   anota("Kira (propuesta C editada)", `${propC.text}\n[botones: ${botones(propC).join(" | ")}]`);
   const resC = reservas()[2];
   check("C2. se aplican los cambios buenos y se avisa de los malos", propC.text.includes("Cambios aplicados: tipo, tamaño, precio, fecha, señal, nombre, horas.") && propC.text.includes("No he podido aplicar"));
   check("C3. el precio puesto por Blake manda: 85 € «puesto por ti» y no se pisa con Legacy", resC.price_cents === 8500 && propC.text.includes("85 € (puesto por ti)") && legacy.recibidas.length === antesC);
-  check("C4. fecha, señal, horas y nombre aplicados", resC.starts_at === "2026-10-21T11:30:00.000Z" && resC.deposit_cents === 2000 && resC.duration_minutes === 210 && resC.client_name === "Ana" && propC.text.includes("mié 21 oct, 13:30 → 17:00"));
+  check("C4. fecha, señal, horas y nombre aplicados", resC.starts_at === "2026-10-21T11:30:00.000Z" && resC.deposit_cents === 1500 && resC.duration_minutes === 210 && resC.client_name === "Ana" && propC.text.includes("mié 21 oct, 13:30 → 17:00"));
   await escribe("precio auto");
   check("C5. no hay edición abierta: «precio auto» suelto no se interpreta", ultimo().text.includes("No conozco ese comando"));
   await pulsa(dato(propC, "Editar"), propC.message_id);
@@ -551,7 +555,7 @@ try {
   check("G5. «Lo que Kira entendió»: campos mapeados", det.toLowerCase().includes("lo que kira entendió") && /Tipo de trenzado\s+pegadas/.test(det) && /Número de trenzas\s+6/.test(det) && /Extensiones\s+con/.test(det) && /Color de extensiones\s+rojo/.test(det) && /Largo del pelo\s+nuca u hombros/.test(det) && /Largo de las trenzas\s+caderas/.test(det) && /Email\s+rosessblake@gmail.com/.test(det));
   if (SIN_CLAVE) check("G5s. el panel dice que lo interpretó la lectura básica, no Claude", /Quién lo interpretó\s+Lectura básica por reglas \(sin Claude\)/.test(det) && det.includes("Lectura básica por reglas: este mensaje NO lo ha leído Claude"));
   check("G6. lo que no se dijo aparece como «no indicado»", /Tamaño\s+no indicado/.test(det) && /Instagram\s+no indicado/.test(det));
-  check("G7. precio: origen Legacy, horas, materiales y perfil sin confirmar", det.includes("Calculado por Legacy") && /Horas usadas\s+2 h/.test(det) && /Materiales\s+5 €/.test(det) && det.includes("SMI 1350 € (sin confirmar)") && det.includes(`Total de Legacy`));
+  check("G7. precio: origen Legacy, horas, materiales y perfil sin confirmar", det.includes("Calculado por Legacy") && /Horas usadas\s+2 h/.test(det) && /Materiales\s+5 €/.test(det) && det.includes("SMI 1200 €") && !det.includes("(sin confirmar)") && det.includes(`Total de Legacy`));
   check("G8. avisos y borrador visibles", det.includes("Disponibilidad NO comprobada") && det.toLowerCase().includes("borrador de respuesta"));
   check("G9. línea de tiempo con el recorrido completo", ["mensaje_simulado", "clasificado", "precio_calculado", "propuesta_editada", "propuesta_aprobada"].every((k) => det.includes(k)));
   await page.screenshot({ path: SHOTS + (SIN_CLAVE ? "sc-" : "") + "flujo-02-detalle.png", fullPage: true });

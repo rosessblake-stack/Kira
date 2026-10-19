@@ -110,15 +110,23 @@ describe("interpretarPerfil", () => {
     });
   });
 
-  it("cualquier dato raro vuelve al perfil por defecto, sin confirmar", () => {
-    for (const raw of [null, undefined, "x", {}, { pais: "es", zona: "luna", estructura: "casa", nivel: "elite", smi: 1 }, { pais: "es", zona: "media", estructura: "casa", nivel: "elite", smi: -5 }, { pais: "España", zona: "media", estructura: "casa", nivel: "elite", smi: 1000 }]) {
-      expect(interpretarPerfil(raw)).toBe(PERFIL_POR_DEFECTO);
+  it("el perfil por defecto es el de Blake, confirmado: casa, élite, zona media, España, SMI 1200", () => {
+    expect(PERFIL_POR_DEFECTO).toEqual({ pais: "es", zona: "media", estructura: "casa", nivel: "elite", smi: 1200, confirmado: true });
+  });
+
+  it("sin nada guardado se usa el perfil de Blake tal cual", () => {
+    expect(interpretarPerfil(null)).toBe(PERFIL_POR_DEFECTO);
+    expect(interpretarPerfil(undefined)).toBe(PERFIL_POR_DEFECTO);
+  });
+
+  it("si lo guardado está roto, se usan los valores de Blake pero marcados «sin confirmar»", () => {
+    for (const raw of ["x", 5, {}, { pais: "es", zona: "luna", estructura: "casa", nivel: "elite", smi: 1 }, { pais: "es", zona: "media", estructura: "casa", nivel: "elite", smi: -5 }, { pais: "España", zona: "media", estructura: "casa", nivel: "elite", smi: 1000 }]) {
+      expect(interpretarPerfil(raw)).toEqual({ ...PERFIL_POR_DEFECTO, confirmado: false });
     }
-    expect(PERFIL_POR_DEFECTO.confirmado).toBe(false);
   });
 
   it("'confirmado' solo vale si es exactamente true", () => {
-    expect(interpretarPerfil({ pais: "es", zona: "media", estructura: "casa", nivel: "elite", smi: 1350, confirmado: "true" }).confirmado).toBe(false);
+    expect(interpretarPerfil({ pais: "es", zona: "media", estructura: "casa", nivel: "elite", smi: 1200, confirmado: "true" }).confirmado).toBe(false);
   });
 });
 

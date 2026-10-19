@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { avisosDeHorario, duracionLegible, fechaLarga, madridAUtc, partesMadrid } from "../lib/agenda";
+import { DIAS_LIBRES, avisosDeHorario, duracionLegible, esDiaLibre, fechaLarga, listaDiasLibres, madridAUtc, nombreDia, partesMadrid } from "../lib/agenda";
 import { validarClasificacion } from "../lib/intents";
 import { PERFIL_POR_DEFECTO, type PrecioLegacy } from "../lib/pricing";
 import {
@@ -104,6 +104,25 @@ describe("agenda: avisos de horario (blandos)", () => {
   it("sin fecha no hay avisos de horario", () => {
     expect(avisosDeHorario(null, null, AHORA)).toEqual([]);
   });
+
+  it("domingo y lunes son días libres: la cita en esos días avisa (blando) y el resto no", () => {
+    expect(en("2026-10-25", "12:00", 120)[0]).toBe("La cita cae en domingo, que es día libre (no trabajas: domingo y lunes).");
+    expect(en("2026-10-26", "12:00", 120)[0]).toMatch(/cae en lunes, que es día libre/);
+    for (const f of ["2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-24"]) expect(en(f, "12:00", 120)).toEqual([]); // mar a sáb
+  });
+
+  it("el día libre se mira en hora de Madrid, no en UTC", () => {
+    // lunes 26 oct 00:30 en Madrid = domingo 25 oct 23:30 en UTC: sigue siendo lunes para Blake
+    expect(esDiaLibre(madridAUtc("2026-10-26", "00:30"))).toBe(true);
+    // martes 27 oct 00:30 en Madrid (lunes 26 por la noche en UTC) ya es martes
+    expect(esDiaLibre(madridAUtc("2026-10-27", "00:30"))).toBe(false);
+  });
+
+  it("los días libres son los que dijo Blake", () => {
+    expect([...DIAS_LIBRES]).toEqual([0, 1]);
+    expect(listaDiasLibres()).toBe("domingo y lunes");
+    expect([0, 1, 2, 3, 4, 5, 6].map(nombreDia)).toEqual(["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"]);
+  });
 });
 
 describe("la clienta de referencia: 6 trenzas rojas, 20 oct 12:00", () => {
@@ -131,11 +150,11 @@ describe("la clienta de referencia: 6 trenzas rojas, 20 oct 12:00", () => {
     expect(p.descripcion).toBe("6 trenzas · pegadas · con extensiones rojo");
     expect(p.borrador).toContain("Para 6 trenzas pegadas con extensiones (rojo), el precio es de 60,15 € y dura aproximadamente 2 h.");
     expect(p.borrador).toContain("mar 20 oct, 12:00");
-    expect(p.borrador).toContain("15 €");
+    expect(p.borrador).toContain("señal de 20 €"); // la paga y señal de Blake
   });
 
-  it("avisa de todo lo provisional: calendario, perfil y horas por defecto", () => {
-    const p = componerPropuesta(specReferencia({ tipo_trenzado: "pegadas" }), legacy(60.15), ctx);
+  it("avisa de todo lo provisional: calendario, perfil (si no está confirmado) y horas por defecto", () => {
+    const p = componerPropuesta(specReferencia({ tipo_trenzado: "pegadas" }), legacy(60.15), { ...ctx, perfil: { ...PERFIL_POR_DEFECTO, confirmado: false } });
     const a = p.avisos.join("\n");
     expect(a).toMatch(/Disponibilidad NO comprobada/);
     expect(a).toMatch(/Perfil de precios sin confirmar/);
@@ -144,11 +163,17 @@ describe("la clienta de referencia: 6 trenzas rojas, 20 oct 12:00", () => {
     expect(a).not.toMatch(/No tengo su email/);
   });
 
+  it("con el perfil confirmado de Blake no avisa de perfil sin confirmar; las horas por defecto siguen avisando", () => {
+    const a = componerPropuesta(specReferencia({ tipo_trenzado: "pegadas" }), legacy(60.15), ctx).avisos.join("\n");
+    expect(a).not.toMatch(/Perfil de precios sin confirmar/);
+    expect(a).toMatch(/valores por defecto sin confirmar/);
+  });
+
   it("el texto de Telegram lleva lo esencial y marca la prueba", () => {
     const spec = specReferencia({ tipo_trenzado: "pegadas" });
     const p = componerPropuesta(spec, legacy(60.15), ctx);
     const t = textoPropuesta(p, spec, { mensajeCliente: MENSAJE, esPrueba: true, perfil: PERFIL_POR_DEFECTO });
-    for (const trozo of ["🧪 PRUEBA", "PROPUESTA DE CITA", "rosessblake@gmail.com", "6 trenzas · pegadas · con extensiones rojo", "hasta la nuca o los hombros", "hasta las caderas", "mar 20 oct, 12:00 → 14:00 (2 h)", "60,15 € (Legacy)", "Señal: 15 €", "Disponibilidad NO comprobada", "Borrador de respuesta"]) {
+    for (const trozo of ["🧪 PRUEBA", "PROPUESTA DE CITA", "rosessblake@gmail.com", "6 trenzas · pegadas · con extensiones rojo", "hasta la nuca o los hombros", "hasta las caderas", "mar 20 oct, 12:00 → 14:00 (2 h)", "60,15 € (Legacy)", "Señal: 20 €", "Disponibilidad NO comprobada", "Borrador de respuesta"]) {
       expect(t, trozo).toContain(trozo);
     }
     expect(t).not.toContain("⛔");

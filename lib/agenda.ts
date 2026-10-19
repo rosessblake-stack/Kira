@@ -73,6 +73,14 @@ export function duracionLegible(minutos: number): string {
   return m % 60 ? `${h} h ${m % 60} min` : `${h} h`;
 }
 
+/** Días que Blake no trabaja (0 = domingo … 6 = sábado). Decisión de Blake: domingo y lunes. */
+export const DIAS_LIBRES: readonly number[] = [0, 1];
+const NOMBRE_DIA = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+export const nombreDia = (diaSemana: number) => NOMBRE_DIA[diaSemana] ?? "?";
+export const listaDiasLibres = () => DIAS_LIBRES.map(nombreDia).join(" y ");
+/** ¿Ese instante cae en un día libre de Blake (hora de Madrid)? */
+export const esDiaLibre = (instante: Date) => DIAS_LIBRES.includes(partesMadrid(instante).diaSemana);
+
 export const HORARIO = { aperturaMin: 11 * 60, cierreMin: 22 * 60, inicioTempranoMin: 8 * 60, servicioLargoMin: 6 * 60 } as const;
 
 /**
@@ -87,6 +95,9 @@ export function avisosDeHorario(inicio: Date | null, fin: Date | null, ahora: Da
 
   const ini = partesMadrid(inicio);
   const fin_ = partesMadrid(fin);
+  if (DIAS_LIBRES.includes(ini.diaSemana)) {
+    out.push(`La cita cae en ${nombreDia(ini.diaSemana)}, que es día libre (no trabajas: ${listaDiasLibres()}).`);
+  }
   const duracion = (fin.getTime() - inicio.getTime()) / 60_000;
   const mismoDia = ini.fecha === fin_.fecha;
 
