@@ -12,7 +12,8 @@
     "start": "next start",
     "test": "vitest run",
     "e2e": "node e2e/run-panel.mjs",
-    "e2e:flujo": "node e2e/run-flujo.mjs"
+    "e2e:flujo": "node e2e/run-flujo.mjs",
+    "e2e:sin-clave": "SIN_CLAVE=1 node e2e/run-flujo.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

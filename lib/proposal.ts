@@ -39,6 +39,8 @@ export type SpecGuardada = {
   notas: string | null;
   confianza: "alta" | "media" | "baja";
   avisos_validacion: string[];
+  /** Quién interpretó el mensaje: Claude, o la lectura básica por reglas (solo pruebas, sin clave). */
+  clasificador?: "claude" | "basica";
   /** Horas fijadas por Blake; null = las de por defecto. */
   horas: number | null;
   /** Precio puesto a mano por Blake; null = lo calcula Legacy. */
@@ -47,9 +49,14 @@ export type SpecGuardada = {
   respuesta_manual: string | null;
 };
 
-export function specDesdeClasificacion(c: Clasificacion, mensajeCliente: string): SpecGuardada {
+export function specDesdeClasificacion(
+  c: Clasificacion,
+  mensajeCliente: string,
+  clasificador: "claude" | "basica" = "claude",
+): SpecGuardada {
   return {
     mensaje_cliente: mensajeCliente,
+    clasificador,
     servicio: {
       tipo_trenzado: c.tipo_trenzado,
       numero_trenzas: c.numero_trenzas,
@@ -174,6 +181,9 @@ export function componerPropuesta(
   if (!duracionMinutos && precio.origen !== "sin_calcular") faltan.push("duración (horas)");
 
   const avisos: string[] = [];
+  if (spec.clasificador === "basica") {
+    avisos.push("Lectura básica por reglas: este mensaje NO lo ha leído Claude (modo de prueba, aún sin clave). Revisa lo que he entendido.");
+  }
   if (confianzaBaja(spec)) avisos.push("Kira no está segura de lo que pide (confianza baja): revisa el mensaje original.");
   if (!ctx.calendarioConectado) {
     avisos.push("Disponibilidad NO comprobada: el calendario todavía no está conectado. Mira tu agenda antes de aprobar.");

@@ -427,6 +427,8 @@ export function filasDeMapeo(spec: unknown): Fila[] {
     { etiqueta: "Instagram", valor: dato(s.instagram) },
     { etiqueta: "Seguridad del clasificador", valor: dato(s.confianza) },
   ];
+  if (s.clasificador === "claude") filas.push({ etiqueta: "Quién lo interpretó", valor: "Claude" });
+  if (s.clasificador === "basica") filas.push({ etiqueta: "Quién lo interpretó", valor: "Lectura básica por reglas (sin Claude)" });
   if (numr(s.horas) !== null) filas.push({ etiqueta: "Horas fijadas por ti", valor: `${numr(s.horas)} h` });
   if (numr(s.precio_manual_centimos) !== null) filas.push({ etiqueta: "Precio puesto por ti", valor: euros(numr(s.precio_manual_centimos)) });
   return filas;

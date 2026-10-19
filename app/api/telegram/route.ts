@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { handleTelegramRequest, type Config, type Deps } from "../../../lib/telegram-handler";
 import { clasificarConClaude } from "../../../lib/claude";
+import { leerBasico } from "../../../lib/lectura-basica";
 import * as db from "../../../lib/db";
 import { issueLoginToken } from "../../../lib/panel-auth";
 import { authStore } from "../../../lib/panel-store";
@@ -28,6 +29,8 @@ function makeFlowDeps(): FlowDeps {
     now: () => new Date(),
     newNonce: () => randomUUID().replace(/-/g, ""),
     clasificar: clasificarConClaude,
+    // Solo /simular usa este flujo: sin clave de Claude se puede probar todo con la lectura básica.
+    lecturaBasica: (texto, ahora) => ({ tipo: "ok", raw: leerBasico(texto, ahora), entrada: 0, salida: 0 }),
     perfil: store.perfilGuardado,
     precio: (peticion) => consultarLegacy(peticion),
     estaPausada: isPaused,

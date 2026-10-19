@@ -83,6 +83,11 @@ export interface FlowDeps {
   now(): Date;
   newNonce(): string;
   clasificar(texto: string, ahora: Date): Promise<RespuestaClaude>;
+  /**
+   * Lectura por reglas, SIN Claude. Solo para las conversaciones de prueba (/simular) y solo cuando falta la clave:
+   * deja ver todo el recorrido antes de tenerla. Un canal real nunca debe usarla.
+   */
+  lecturaBasica?(texto: string, ahora: Date): RespuestaClaude;
   perfil(): Promise<PerfilLegacy>;
   precio(peticion: PeticionLegacy): Promise<PrecioLegacy>;
   estaPausada(): Promise<boolean>;
@@ -296,21 +301,33 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
 
     // 4. Claude clasifica.
     let respuesta: RespuestaClaude;
+    let basica = false;
     try {
       respuesta = await deps.clasificar(texto, ahora);
     } catch (e) {
       const sinClave = e instanceof SinClaveError;
-      await deps.logEvent({ source: "claude", kind: sinClave ? "sin_clave_anthropic" : "claude_error", level: "error", summary: describirErrorClaude(e), conversation_id: convId });
-      await avisarADerivar(chatId, convId, sinClave ? "Falta la clave de Claude (ANTHROPIC_API_KEY) en Vercel: no puedo clasificar." : "No he podido clasificar el mensaje (Claude no respondió).", texto);
-      return;
+      if (sinClave && deps.lecturaBasica) {
+        // Sin clave: se lee con reglas simples (solo pruebas) para poder ver todo el recorrido. Cualquier otro
+        // fallo de Claude NO cae aquí: ahí lo correcto es derivar a Blake.
+        basica = true;
+        respuesta = deps.lecturaBasica(texto, ahora);
+        await deps.logEvent({ source: "system", kind: "lectura_basica", level: "warn", summary: "Sin clave de Claude: mensaje leído con la lectura básica por reglas (solo pruebas)", conversation_id: convId });
+      } else {
+        await deps.logEvent({ source: "claude", kind: sinClave ? "sin_clave_anthropic" : "claude_error", level: "error", summary: describirErrorClaude(e), conversation_id: convId });
+        await avisarADerivar(chatId, convId, sinClave ? "Falta la clave de Claude (ANTHROPIC_API_KEY) en Vercel: no puedo clasificar." : "No he podido clasificar el mensaje (Claude no respondió).", texto);
+        return;
+      }
     }
-    await deps.logEvent({
-      source: "claude",
-      kind: "claude_llamada",
-      summary: `Claude respondió (${respuesta.tipo})`,
-      detail: respuesta.tipo === "ok" ? { entrada: respuesta.entrada, salida: respuesta.salida } : { resultado: respuesta.tipo },
-      conversation_id: convId,
-    });
+    // La lectura básica no cuenta para el tope diario de llamadas a Claude porque no es una llamada.
+    if (!basica) {
+      await deps.logEvent({
+        source: "claude",
+        kind: "claude_llamada",
+        summary: `Claude respondió (${respuesta.tipo})`,
+        detail: respuesta.tipo === "ok" ? { entrada: respuesta.entrada, salida: respuesta.salida } : { resultado: respuesta.tipo },
+        conversation_id: convId,
+      });
+    }
     if (respuesta.tipo !== "ok") {
       if (respuesta.tipo === "rechazo") {
         await deps.logSecurity({ kind: "posible_inyeccion", source: "claude", conversation_id: convId, detail: { origen: "rechazo_del_modelo" } });
@@ -328,7 +345,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     }
     const c = validada.value;
     await deps.actualizarConversacion(convId, { intent: INTENCION_EN_BD[c.intencion] });
-    await deps.logEvent({ source: "claude", kind: "clasificado", summary: `Intención: ${c.intencion} (confianza ${c.confianza})`, detail: { intencion: c.intencion, confianza: c.confianza }, conversation_id: convId });
+    await deps.logEvent({ source: "claude", kind: "clasificado", summary: `Intención: ${c.intencion} (confianza ${c.confianza})${basica ? " · lectura básica" : ""}`, detail: { intencion: c.intencion, confianza: c.confianza, lector: basica ? "basica" : "claude" }, conversation_id: convId });
 
     if (c.manipulacion) return marcarManipulacion(chatId, convId, texto, "modelo", ["marcado_por_el_modelo"]);
 
@@ -343,11 +360,11 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       );
       return;
     }
-    await proponerCita(chatId, convId, c, texto);
+    await proponerCita(chatId, convId, c, texto, basica);
   }
 
-  async function proponerCita(chatId: number, convId: string, c: Clasificacion, texto: string) {
-    const spec = specDesdeClasificacion(c, texto);
+  async function proponerCita(chatId: number, convId: string, c: Clasificacion, texto: string, basica: boolean) {
+    const spec = specDesdeClasificacion(c, texto, basica ? "basica" : "claude");
     const perfil = await deps.perfil();
     const { resultado, guardado } = await calcularPrecio(spec, perfil, { conversation_id: convId });
     const prop = componerPropuesta(spec, resultado, { ahora: deps.now(), perfil, calendarioConectado: false });

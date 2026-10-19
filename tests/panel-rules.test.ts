@@ -312,6 +312,12 @@ describe("filasDeMapeo y filasDePrecio (lo que se muestra de una propuesta)", ()
     expect(f.some((x) => x.etiqueta === "Horas fijadas por ti")).toBe(false);
   });
 
+  it("indica quién interpretó el mensaje: Claude o la lectura básica", () => {
+    expect(valor(filasDeMapeo({ ...spec, clasificador: "claude" }), "Quién lo interpretó")).toBe("Claude");
+    expect(valor(filasDeMapeo({ ...spec, clasificador: "basica" }), "Quién lo interpretó")).toBe("Lectura básica por reglas (sin Claude)");
+    expect(valor(filasDeMapeo(spec), "Quién lo interpretó")).toBeUndefined(); // datos antiguos sin ese campo
+  });
+
   it("muestra lo que Blake fijó a mano", () => {
     const f = filasDeMapeo({ ...spec, horas: 3, precio_manual_centimos: 7000 });
     expect(valor(f, "Horas fijadas por ti")).toBe("3 h");
