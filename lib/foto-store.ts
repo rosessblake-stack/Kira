@@ -84,9 +84,11 @@ export async function describirUltima(conversationId: string, tipo: TipoFoto, te
 }
 
 /** Corrige el tipo y/o la descripción de una foto ya guardada. */
-export async function actualizarFicha(id: string, cambios: { tipo?: TipoFoto; descripcion?: string | null }, ahora: Date): Promise<void> {
+export async function actualizarFicha(id: string, cambios: { tipo?: TipoFoto; descripcion?: string | null; caducaEn?: string | null }, ahora: Date): Promise<void> {
   const patch: Record<string, unknown> = {};
   if (cambios.tipo) patch.kind = cambios.tipo;
+  // La base de datos exige que (tipo = referencia) coincida con (sin fecha de caducidad): tipo y fecha viajan en el mismo cambio.
+  if (cambios.caducaEn !== undefined) patch.expires_at = cambios.caducaEn;
   if (cambios.descripcion !== undefined) {
     patch.description = cambios.descripcion;
     patch.described_at = cambios.descripcion ? ahora.toISOString() : null;

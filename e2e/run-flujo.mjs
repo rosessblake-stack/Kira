@@ -444,7 +444,7 @@ try {
   anota("Kira (confirmación)", ultimo().text);
   check("I3. queda guardada en la conversación de la prueba, como foto del pelo y con la descripción de Blake", idsFoto(convI).length === 1 && f1.kind === "pelo" && f1.description === "rizado, fino, a los hombros" && f1.source === "telegram");
   check("I4. ficha completa: tipo por los bytes, tamaño, hash y caducidad a 60 días", f1.content_type === "image/jpeg" && f1.size_bytes === jpgPelo.length && f1.sha256 === sha(jpgPelo));
-  check("I4b. caduca exactamente a los 60 días", Date.parse(f1.expires_at) - Date.parse(f1.created_at) === 60 * 86_400_000);
+  check("I4b. la foto del pelo caduca exactamente a los 60 días", Date.parse(f1.expires_at) - Date.parse(f1.created_at) === 60 * 86_400_000);
   check("I5. el archivo está en el almacén privado, con ruta propia (conversación/id.jpg) y bytes idénticos", f1.storage_path === `${convI.id}/${f1.id}.jpg` && storage.has(`kira-fotos/${f1.storage_path}`) && igual(storage.get(`kira-fotos/${f1.storage_path}`).bytes, jpgPelo) && storage.get(`kira-fotos/${f1.storage_path}`).contentType === "image/jpeg");
   check("I6. Blake recibe confirmación: tipo, a qué prueba, su descripción y cuándo se borra", ultimo().text.includes("Guardada como «Pelo de la clienta»") && ultimo().text.includes("Hola! tengo el pelo por el hombro") && ultimo().text.includes("Tu descripción: «rizado, fino, a los hombros»") && /se borrará el 1?\d\/12\/2026/.test(ultimo().text));
   check("I7. queda en la línea de tiempo de ESA conversación", eventos("foto_recibida").some((e) => e.conversation_id === convI.id && e.detail.tipo === "pelo"));
@@ -453,6 +453,7 @@ try {
   await foto("ref1");
   const f2 = idsFoto(convI)[1];
   check("I8. la segunda foto sin pie se toma como «trenzas de referencia» y se avisa de cómo corregirlo", f2?.kind === "referencia" && ultimo().text.includes("La he tomado como «Trenzas de referencia»") && ultimo().text.includes("vuelve a mandarla con el pie"));
+  check("I8b. la foto de REFERENCIA se guarda sin fecha de caducidad (se conserva siempre) y la del pelo con fecha", f2.expires_at === null && f1.expires_at !== null && ultimo().text.includes("Esta foto se guarda siempre"));
   await foto("ref1", { caption: "referencia: boxeadoras hasta la cadera" });
   check("I9. reenviar la misma foto con pie NO la duplica: corrige su descripción", idsFoto(convI).length === 2 && idsFoto(convI)[1].description === "boxeadoras hasta la cadera" && ultimo().text.includes("ya la tenía") && enAlmacen().length === 2);
 
@@ -523,6 +524,7 @@ try {
   await pulsa(dato(propJ, "Editar"), propJ.message_id);
   await escribe(`pelo ${DESC_HTML}`);
   check("I29. una descripción con HTML se guarda tal cual (como texto)", idsFoto(convJ)[0].description === DESC_HTML);
+  check("I30. la limpieza borró la foto del pelo caducada y NO tocó las de referencia (siguen con su archivo y sin fecha)", tables.attachments.filter((a) => a.kind === "referencia").every((a) => a.purged_at === null && a.expires_at === null && storage.has(`kira-fotos/${a.storage_path}`)));
   check("I28. la limpieza queda registrada y las fotos no caducadas siguen ahí", eventos("fotos_caducadas_borradas").length === 1 && idsFoto(convI)[1].purged_at === null && storage.has(`kira-fotos/${idsFoto(convI)[1].storage_path}`));
 
   // ============================================================================ G. PAUSA (con el panel)
@@ -599,6 +601,7 @@ try {
   const textoF = await secFotos.innerText();
   check("G17. el detalle muestra las 2 fotos y las dos se ven de verdad (cargan como imagen)", cargadas.length === 2 && cargadas.every((c) => c.ok && c.w === 320), JSON.stringify(cargadas));
   check("G18. cada foto con su tipo, la descripción de Blake (o «Sin describir») y cuándo se borra", textoF.includes("Pelo de la clienta") && textoF.includes("Trenzas de referencia") && textoF.includes("Sin describir") && /Se borra el \d+ de diciembre de 2026/.test(textoF));
+  check("G18b. la foto de referencia dice «Se conserva siempre»", textoF.includes("Se conserva siempre") && (textoF.match(/Se borra el/g) ?? []).length === 1);
   check("G19. la descripción con HTML se ve como texto: no se interpreta ni se ejecuta", textoF.includes('<b>negrita</b>') && (await secFotos.locator("b").count()) === 0 && (await page.evaluate(() => window.__xss)) === undefined);
   check("G20. las imágenes se piden a la ruta privada del panel, sin nombres de archivo ni URLs públicas", cargadas.every((c) => /^\/panel\/foto\/[0-9a-f-]{36}$/.test(c.src)));
   await page.screenshot({ path: SHOTS + (SIN_CLAVE ? "sc-" : "") + "flujo-05-fotos.png", fullPage: true });

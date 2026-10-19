@@ -122,7 +122,8 @@ export type FotoPanel = {
   etiqueta: string;
   descripcion: string | null;
   creada: string;
-  caduca: string;
+  /** null = se conserva siempre (fotos de referencia). */
+  caduca: string | null;
   /** El archivo ya se borró por caducidad; la descripción se conserva. */
   borrada: boolean;
 };
@@ -185,7 +186,7 @@ export async function detalleConversacion(_a: Admin, id: string): Promise<Detall
   >("reservas", reservas);
   const ultima = reservasRows.at(-1);
 
-  const fotosRows = must<{ id: string; kind: TipoFoto; description: string | null; created_at: string; expires_at: string; purged_at: string | null }[]>("fotos", fotos);
+  const fotosRows = must<{ id: string; kind: TipoFoto; description: string | null; created_at: string; expires_at: string | null; purged_at: string | null }[]>("fotos", fotos);
 
   return {
     canal: conv.channel,

@@ -68,6 +68,13 @@ function defaults(table, row) {
   return r;
 }
 
+/** Restricciones de la base de datos real que la app debe respetar (se prueban igual que en producción). */
+function restricciones(table, row) {
+  if (table === "attachments" && (row.kind === "referencia") !== (row.expires_at === null || row.expires_at === undefined)) {
+    throw Object.assign(new Error('new row for relation "attachments" violates check constraint "attachments_retencion_check"'), { code: "23514" });
+  }
+}
+
 const isIso = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v);
 const cmp = (a, b) => (isIso(a) && isIso(b) ? Date.parse(a) - Date.parse(b) : a < b ? -1 : a > b ? 1 : 0);
 
@@ -198,6 +205,7 @@ const server = http.createServer(async (req, res) => {
           return send(res, 409, { code: "23505", message: "duplicate key value violates unique constraint" });
         }
         const row = defaults(table, raw);
+        restricciones(table, row);
         tables[table].push(row);
         out.push(row);
       }
@@ -207,7 +215,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "PATCH") {
       const filters = parseFilters(url.searchParams);
       const rows = tables[table].filter((r) => filters.every((f) => matches(r, f)));
-      for (const r of rows) Object.assign(r, body);
+      for (const r of rows) {
+        const nueva = { ...r, ...body };
+        restricciones(table, nueva);
+        Object.assign(r, body);
+      }
       if (!wantsRows) return send(res, 204, undefined);
       return conFilas(res, 200, structuredClone(rows), comoObjeto);
     }

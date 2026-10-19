@@ -3,7 +3,8 @@ import {
   ETIQUETA_FOTO,
   MAX_BYTES_FOTO,
   MAX_FOTOS_POR_CONVERSACION,
-  caducaEl,
+  caducidadPara,
+  seConserva,
   detectarImagen,
   interpretarPieDeFoto,
   rutaAlmacenamiento,
@@ -36,7 +37,8 @@ export type FotoGuardada = {
   description: string | null;
   described_at: string | null;
   created_at: string;
-  expires_at: string;
+  /** null = se conserva siempre (fotos de referencia). */
+  expires_at: string | null;
   purged_at: string | null;
 };
 
@@ -50,7 +52,8 @@ export type NuevaFoto = {
   sha256: string;
   descripcion: string | null;
   creadaEn: string;
-  caducaEn: string;
+  /** null = se conserva siempre (fotos de referencia). */
+  caducaEn: string | null;
 };
 
 /** Archivo que Blake envía por Telegram (foto normal o archivo de imagen). */
@@ -69,7 +72,8 @@ export interface PhotoDeps {
   fotosDe(conversationId: string): Promise<FotoGuardada[]>;
   descargar(fileId: string, maxBytes: number): Promise<Descarga>;
   guardar(f: NuevaFoto, bytes: Uint8Array): Promise<FotoGuardada>;
-  actualizarFicha(id: string, cambios: { tipo?: TipoFoto; descripcion?: string | null }, ahora: Date): Promise<void>;
+  /** `caducaEn` solo se envía si cambia la clase de retención (de/hacia referencia); null = se conserva siempre. */
+  actualizarFicha(id: string, cambios: { tipo?: TipoFoto; descripcion?: string | null; caducaEn?: string | null }, ahora: Date): Promise<void>;
   leerBytes(foto: FotoGuardada): Promise<Uint8Array | null>;
   /** Borra los archivos caducados (de mejor esfuerzo). */
   purgarCaducadas(ahora: Date): Promise<number>;
@@ -162,7 +166,19 @@ export function crearFlujoFotos(deps: PhotoDeps): PhotoPort {
     if (repetida) {
       // Misma foto otra vez: no se duplica. Si Blake la vuelve a mandar con un pie, así se corrige su tipo o su descripción.
       if (fijadaPorBlake.tipo || fijadaPorBlake.descripcion) {
-        await deps.actualizarFicha(repetida.id, { ...(fijadaPorBlake.tipo ? { tipo: fijadaPorBlake.tipo } : {}), ...(fijadaPorBlake.descripcion ? { descripcion: fijadaPorBlake.descripcion } : {}) }, ahora);
+        const nuevoTipo = fijadaPorBlake.tipo;
+        // Si el cambio de tipo cambia lo que se hace con la foto (guardarla siempre o borrarla a los 60 días), la fecha se recalcula
+        // desde hoy: corregir una foto de referencia mal etiquetada nunca debe borrarla de golpe.
+        const cambiaRetencion = nuevoTipo !== null && seConserva(nuevoTipo) !== seConserva(repetida.kind);
+        await deps.actualizarFicha(
+          repetida.id,
+          {
+            ...(nuevoTipo ? { tipo: nuevoTipo } : {}),
+            ...(fijadaPorBlake.descripcion ? { descripcion: fijadaPorBlake.descripcion } : {}),
+            ...(cambiaRetencion && nuevoTipo ? { caducaEn: caducidadPara(nuevoTipo, ahora)?.toISOString() ?? null } : {}),
+          },
+          ahora,
+        );
         await deps.logEvent({ source: "telegram", kind: "foto_actualizada", summary: "Foto repetida: actualizado su tipo o descripción", detail: { tipo: fijadaPorBlake.tipo }, ...ids });
         await deps.enviar(chatId, `Esa foto ya la tenía. He actualizado${fijadaPorBlake.tipo ? ` el tipo a «${ETIQUETA_FOTO[fijadaPorBlake.tipo]}»` : ""}${fijadaPorBlake.tipo && fijadaPorBlake.descripcion ? " y" : ""}${fijadaPorBlake.descripcion ? " la descripción" : ""}.`);
       } else {
@@ -188,7 +204,7 @@ export function crearFlujoFotos(deps: PhotoDeps): PhotoPort {
           sha256,
           descripcion: fijadaPorBlake.descripcion,
           creadaEn: ahora.toISOString(),
-          caducaEn: caducaEl(ahora).toISOString(),
+          caducaEn: caducidadPara(tipo, ahora)?.toISOString() ?? null,
         },
         bytes,
       );
@@ -214,7 +230,9 @@ export function crearFlujoFotos(deps: PhotoDeps): PhotoPort {
           ? `✍️ Tu descripción: «${fijadaPorBlake.descripcion}»`
           : "✍️ Sin descripción todavía. Mándala con un pie de foto («pelo: …» o «referencia: …») o, en la propuesta, pulsa Editar y escribe «pelo …» o «referencia …».",
         tipoSugerido(tipo, fijadaPorBlake.tipo !== null),
-        `🗑 La foto se borrará el ${fechaCorta(guardada.expires_at)}; tu descripción se conserva.`,
+        guardada.expires_at
+          ? `🗑 La foto se borrará el ${fechaCorta(guardada.expires_at)}; tu descripción se conserva.`
+          : "🗂 Esta foto se guarda siempre: con ella se enseñará a Kira a entender tus descripciones.",
       ]
         .filter(Boolean)
         .join("\n"),

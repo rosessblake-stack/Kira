@@ -18,7 +18,7 @@ Decisión de Blake (opción **C**): los datos que se pueden elegir se piden **co
    - Fecha y hora que prefiere (texto libre; es lo único que cuesta entender, y Claude solo lee ese campo)
    - Nombre y email (campos de ManyChat; el email se valida allí y otra vez en Kira)
 3. **Foto del pelo:** «Mándame **una** foto de tu pelo tal como lo tienes ahora». Se espera la imagen; no se avanza sin ella.
-4. **Foto de las trenzas:** «Mándame **una** foto de las trenzas que quieres (referencia)». Igual.
+4. **Foto de las trenzas:** «Mándame **una** foto de las trenzas que quieres (referencia). La guardo para mejorar mi servicio; si prefieres que la borre, dímelo.» Igual (una sola foto y se espera la imagen). El aviso es para que la clienta sepa que esta foto **no se borra**, a diferencia de la de su pelo.
 5. **Aviso final:** «Gracias, se lo paso a Blake y te confirma por aquí.» Y ManyChat llama a Kira con todos los campos.
 
 ## 2. Reglas para que no falle
@@ -35,4 +35,4 @@ Primero las fotos (álbum con «Pelo de la clienta» y «Trenzas de referencia»
 
 ## 4. Enseñar a Claude más adelante (opción B)
 
-Cada foto guarda su descripción de Blake (`attachments.description`). Esas descripciones, junto con la reserva final que Blake aprobó, son los **ejemplos etiquetados** con los que se podría enseñar o evaluar a Claude con visión. Claude **no aprende solo**: hace falta decidir, con esos ejemplos, usarlos en las instrucciones o en una evaluación. Las fotos se borran a los 60 días; la descripción se conserva (sin la foto sirve de ejemplo de texto, no de imagen). Si Blake quiere conservar fotos concretas para entrenar, habría que decidirlo y pedir permiso expreso a las clientas.
+Cada foto guarda su descripción de Blake (`attachments.description`). Esas descripciones, junto con la reserva final que Blake aprobó, son los **ejemplos etiquetados** con los que se podría enseñar o evaluar a Claude con visión. Claude **no aprende solo**: hace falta decidir, con esos ejemplos, usarlos en las instrucciones o en una evaluación. Decisión de Blake: **las fotos de referencia (el peinado que quiere la clienta) se guardan siempre** y son ese material de entrenamiento; **la foto del pelo de la clienta se borra a los 60 días** (su descripción se conserva como texto). Por eso el guion avisa a la clienta de que la foto de referencia se guarda, y debe poder pedir que se borre (pendiente: comando para borrar una foto concreta). Antes de usar las fotos para enseñar o evaluar a Claude, conviene repasarlas: una de referencia puede salir una persona.

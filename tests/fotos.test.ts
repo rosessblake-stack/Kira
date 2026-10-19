@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_DESCRIPCION,
   RETENCION_DIAS,
-  caducaEl,
+  caducidadPara,
   detectarImagen,
   esUuid,
   interpretarPieDeFoto,
   rutaAlmacenamiento,
+  seConserva,
   sha256Hex,
   siguienteTipo,
 } from "../lib/fotos";
@@ -62,10 +63,17 @@ describe("rutaAlmacenamiento: solo identificadores nuestros", () => {
   });
 });
 
-describe("caducidad", () => {
-  it(`la foto caduca a los ${RETENCION_DIAS} días`, () => {
-    const hoy = new Date("2026-10-19T12:00:00Z");
-    expect(caducaEl(hoy).toISOString()).toBe("2026-12-18T12:00:00.000Z");
+describe("caducidad: el pelo de la clienta se borra, el peinado de referencia se conserva siempre", () => {
+  const hoy = new Date("2026-10-19T12:00:00Z");
+  it(`la foto del pelo y las «otra» caducan a los ${RETENCION_DIAS} días`, () => {
+    expect(caducidadPara("pelo", hoy)?.toISOString()).toBe("2026-12-18T12:00:00.000Z");
+    expect(caducidadPara("otra", hoy)?.toISOString()).toBe("2026-12-18T12:00:00.000Z");
+  });
+  it("la foto de referencia no caduca nunca (null)", () => {
+    expect(caducidadPara("referencia", hoy)).toBeNull();
+  });
+  it("seConserva: solo la referencia", () => {
+    expect([seConserva("pelo"), seConserva("referencia"), seConserva("otra")]).toEqual([false, true, false]);
   });
 });
 

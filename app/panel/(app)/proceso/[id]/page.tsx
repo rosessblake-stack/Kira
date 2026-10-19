@@ -45,7 +45,7 @@ export default async function Conversacion({ params }: { params: Promise<{ id: s
                 <strong>{f.etiqueta}</strong>
                 {/* Lo que escribe Blake se pinta como texto plano, igual que todo lo demás. */}
                 <p className={f.descripcion ? "texto" : "texto muted"}>{f.descripcion ?? "Sin describir"}</p>
-                <span className="muted">{f.borrada ? "Descripción conservada" : `Se borra el ${soloFecha(f.caduca)}`}</span>
+                <span className="muted">{f.borrada ? "Descripción conservada" : f.caduca ? `Se borra el ${soloFecha(f.caduca)}` : "Se conserva siempre"}</span>
               </li>
             ))}
           </ul>

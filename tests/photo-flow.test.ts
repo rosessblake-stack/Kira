@@ -49,6 +49,9 @@ function mundo(op: Opciones = {}) {
     async actualizarFicha(id, cambios) {
       const f = w.fichas.get(id)!;
       if (cambios.tipo) f.kind = cambios.tipo;
+      if (cambios.caducaEn !== undefined) f.expires_at = cambios.caducaEn;
+      // Como la restricción de la base de datos: referencia <=> sin fecha de caducidad.
+      if ((f.kind === "referencia") !== (f.expires_at === null)) throw new Error("attachments_retencion_check");
       if (cambios.descripcion !== undefined) f.description = cambios.descripcion;
     },
     async leerBytes(f) { return f.storage_path ? (w.almacen.get(f.storage_path) ?? null) : null; },
@@ -56,7 +59,7 @@ function mundo(op: Opciones = {}) {
       if (op.fallaPurga) throw new Error("storage: timeout");
       let k = 0;
       for (const f of w.fichas.values()) {
-        if (!f.purged_at && Date.parse(f.expires_at) < ahora.getTime()) {
+        if (!f.purged_at && f.expires_at !== null && Date.parse(f.expires_at) < ahora.getTime()) {
           w.almacen.delete(f.storage_path!);
           f.storage_path = null;
           f.purged_at = ahora.toISOString();
@@ -91,7 +94,7 @@ describe("recibir una foto", () => {
     expect(f.storage_path).toBe(`${CONV}/${f.id}.jpg`);
     expect(esUuid(f.id)).toBe(true);
     expect(f.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(Date.parse(f.expires_at) - Date.parse(f.created_at)).toBe(RETENCION_DIAS * 86_400_000);
+    expect(Date.parse(f.expires_at!) - Date.parse(f.created_at)).toBe(RETENCION_DIAS * 86_400_000);
     expect(m.w.almacen.get(f.storage_path!)).toEqual(JPG(1));
     expect(m.ultimo()).toContain("Guardada como «Pelo de la clienta»");
     expect(m.ultimo()).toContain("Hola! tengo el pelo por el hombro");
@@ -277,5 +280,57 @@ describe("reenviar las fotos a Blake", () => {
     await m.flujo.reenviar(CHAT, null);
     expect(m.w.eventos.find((e) => e.kind === "foto_envio_fallo")).toMatchObject({ level: "error" });
     expect(m.ultimo()).toContain("No he podido enviarte las fotos");
+  });
+});
+
+describe("retención: el pelo de la clienta se borra, el peinado de referencia se conserva siempre", () => {
+  it("la foto de referencia se guarda SIN fecha de caducidad y se lo dice a Blake; la del pelo sí tiene fecha", async () => {
+    const m = mundo({ archivos: { a: { ok: true, bytes: JPG(1) }, b: { ok: true, bytes: JPG(2) }, c: { ok: true, bytes: PNG } } });
+    await m.flujo.recibir(CHAT, m.media("a"), null, "pelo: rizado");
+    expect(m.fichas()[0].expires_at).not.toBeNull();
+    expect(m.ultimo()).toContain("se borrará el 18/12/2026");
+    await m.flujo.recibir(CHAT, m.media("b"), null, "referencia: boxeadoras largas");
+    expect(m.fichas()[1]).toMatchObject({ kind: "referencia", expires_at: null });
+    expect(m.ultimo()).toContain("Esta foto se guarda siempre");
+    expect(m.ultimo()).not.toContain("se borrará");
+    await m.flujo.recibir(CHAT, m.media("c"), null, ""); // tercera sin pie: «otra», que sí caduca
+    expect(m.fichas()[2]).toMatchObject({ kind: "otra" });
+    expect(m.fichas()[2].expires_at).not.toBeNull();
+  });
+
+  it("pasado muchísimo tiempo se borran el pelo y las «otra», NUNCA la referencia", async () => {
+    const m = mundo({ archivos: { a: { ok: true, bytes: JPG(1) }, b: { ok: true, bytes: JPG(2) }, c: { ok: true, bytes: PNG }, d: { ok: true, bytes: JPG(4) } } });
+    await m.flujo.recibir(CHAT, m.media("a"), null, "pelo: rizado");
+    await m.flujo.recibir(CHAT, m.media("b"), null, "referencia: boxeadoras largas");
+    await m.flujo.recibir(CHAT, m.media("c"), null, "otra: detrás");
+    m.w.avanza(400);
+    await m.flujo.recibir(CHAT, m.media("d"), null, "otra: otra más"); // una foto nueva dispara la limpieza
+    const [pelo, ref, otra] = m.fichas();
+    expect(pelo.purged_at).not.toBeNull();
+    expect(otra.purged_at).not.toBeNull();
+    expect(ref).toMatchObject({ purged_at: null, expires_at: null });
+    expect(m.w.almacen.has(ref.storage_path!)).toBe(true);
+    expect(resumenDeFotos(m.fichas()).filter((x) => x.tipo === "referencia")).toEqual([{ tipo: "referencia", descripcion: "boxeadoras largas" }]);
+  });
+
+  it("corregir una foto del pelo que en realidad era de referencia: deja de caducar", async () => {
+    const m = mundo({ archivos: { a: { ok: true, bytes: JPG(1) }, b: { ok: true, bytes: JPG(1) } } });
+    await m.flujo.recibir(CHAT, m.media("a"), null, ""); // sin pie: se toma como pelo
+    expect(m.fichas()[0]).toMatchObject({ kind: "pelo" });
+    expect(m.fichas()[0].expires_at).not.toBeNull();
+    await m.flujo.recibir(CHAT, m.media("b"), null, "referencia: boxeadoras");
+    expect(m.fichas()[0]).toMatchObject({ kind: "referencia", expires_at: null, description: "boxeadoras" });
+  });
+
+  it("corregir una de referencia mal etiquetada como pelo: la nueva fecha cuenta desde la corrección y no se borra de golpe", async () => {
+    const m = mundo({ archivos: { a: { ok: true, bytes: JPG(1) }, b: { ok: true, bytes: JPG(1) }, c: { ok: true, bytes: JPG(3) } } });
+    await m.flujo.recibir(CHAT, m.media("a"), null, "referencia: boxeadoras"); // 19 oct: de referencia, sin fecha
+    m.w.avanza(100); // pasan 100 días (más de 60)
+    await m.flujo.recibir(CHAT, m.media("b"), null, "pelo: era del pelo de la clienta"); // se corrige: ahora es del pelo
+    const f = m.fichas()[0];
+    expect(f.kind).toBe("pelo");
+    expect(Date.parse(f.expires_at!) - Date.parse("2026-10-19T13:30:00Z")).toBe(160 * 86_400_000); // 100 días después + 60
+    await m.flujo.recibir(CHAT, m.media("c"), null, "referencia: otra"); // dispara la limpieza
+    expect(m.fichas()[0].purged_at).toBeNull(); // no se borró al corregir
   });
 });

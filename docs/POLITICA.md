@@ -53,8 +53,9 @@ Reembolsos y quejas, colaboraciones/marcas/prensa, VIPs y clientes conocidos, me
 
 - Kira pide (en Instagram, con ManyChat) una foto del pelo y otra de las trenzas de referencia. **Hoy Claude no las ve**: las guarda el servidor, te llegan a Telegram y las describes tú con tus palabras (`pelo …`, `referencia …`). Que Claude las describa con visión es una decisión tuya, para más adelante.
 - Faltar una foto es un **aviso** en la propuesta, no un bloqueo: decides tú.
-- Las fotos se guardan en privado y **se borran a los 60 días**; tu descripción se conserva. Nunca se muestran a nadie más ni se mandan a un servicio externo.
-- Claude no «aprende» solo de tus descripciones: se guardan como ejemplos etiquetados y, cuando quieras, se usan para enseñarle o evaluarlo (ver `docs/MANYCHAT.md` §4).
+- Las fotos se guardan en privado. **La foto del pelo de la clienta se borra a los 60 días** (tu descripción se conserva). **La foto de referencia (el peinado que quiere) se guarda siempre**: es el material para enseñar a Kira. Nunca se muestran a nadie más ni se mandan a un servicio externo.
+- La clienta tiene que saber que se guarda su foto de referencia (se le dice en el guion de ManyChat) y si pide que se borre, se borra.
+- Claude no «aprende» solo de tus descripciones: se guardan junto a cada foto de referencia como ejemplos etiquetados y, cuando quieras, se usan para enseñarle o evaluarlo (ver `docs/MANYCHAT.md` §4).
 
 ## 7. Qué verás en el panel
 

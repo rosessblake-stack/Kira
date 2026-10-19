@@ -22,7 +22,7 @@ export const ETIQUETA_FOTO: Record<TipoFoto, string> = {
 /** Cabe en la respuesta de una función de Vercel (4,5 MB) con margen; una foto normal de Telegram o Instagram pesa mucho menos. */
 export const MAX_BYTES_FOTO = 4 * 1024 * 1024;
 export const MAX_FOTOS_POR_CONVERSACION = 8;
-/** Pasado este plazo se borra la foto; la descripción de Blake se conserva. */
+/** Pasado este plazo se borra la foto (pelo de la clienta u otra); la descripción de Blake se conserva. */
 export const RETENCION_DIAS = 60;
 export const MAX_DESCRIPCION = 1000;
 /** Las fotos que Blake manda sueltas se pegan a la prueba más reciente si es de las últimas horas. */
@@ -53,7 +53,15 @@ export function rutaAlmacenamiento(conversacionId: string, fotoId: string, ext: 
   return `${conversacionId}/${fotoId}.${ext}`;
 }
 
-export const caducaEl = (ahora: Date) => new Date(ahora.getTime() + RETENCION_DIAS * 86_400_000);
+/**
+ * Las fotos de REFERENCIA (el peinado que quiere la clienta) se guardan siempre: con ellas se enseñará a Kira a entender
+ * cada descripción de Blake. Las que muestran a la clienta (su pelo) y cualquier «otra» caducan a los 60 días.
+ */
+export const seConserva = (tipo: TipoFoto) => tipo === "referencia";
+
+/** Cuándo se borra una foto de ese tipo guardada en `desde`; null = nunca. */
+export const caducidadPara = (tipo: TipoFoto, desde: Date): Date | null =>
+  seConserva(tipo) ? null : new Date(desde.getTime() + RETENCION_DIAS * 86_400_000);
 
 /** Sin indicación, la primera foto se toma como del pelo, la segunda como de referencia y el resto como «otra». */
 export function siguienteTipo(existentes: TipoFoto[]): TipoFoto {
