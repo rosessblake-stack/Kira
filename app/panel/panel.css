@@ -1,0 +1,127 @@
+:root {
+  --bg: #faf8f5;
+  --fg: #1d1b19;
+  --muted: #6b645c;
+  --card: #ffffff;
+  --line: #e6e0d8;
+  --accent: #3b2f2a;
+  --accent-fg: #ffffff;
+  --ok: #1f7a4d;
+  --ok-bg: #e4f3ea;
+  --espera: #8a5a00;
+  --espera-bg: #fdf0d6;
+  --mal: #b3261e;
+  --mal-bg: #fbe4e2;
+  --neutro: #5d5750;
+  --neutro-bg: #eeeae4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161412;
+    --fg: #f1ece6;
+    --muted: #a39a90;
+    --card: #211e1b;
+    --line: #38332e;
+    --accent: #e9dfd4;
+    --accent-fg: #161412;
+    --ok: #6fd3a0;
+    --ok-bg: #173a29;
+    --espera: #f0c46a;
+    --espera-bg: #3d3014;
+    --mal: #ff9d94;
+    --mal-bg: #4a1f1c;
+    --neutro: #c4bcb2;
+    --neutro-bg: #302c28;
+  }
+}
+
+body:has(.panel) {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.panel {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 16px;
+  line-height: 1.45;
+}
+.panel * { box-sizing: border-box; }
+.panel h1 { font-size: 1.4rem; margin: 0; }
+.panel h2 { font-size: 1.05rem; margin: 28px 0 10px; }
+.panel p { margin: 0 0 8px; }
+.panel code { background: var(--neutro-bg); padding: 1px 6px; border-radius: 4px; }
+.panel a { color: inherit; }
+.muted { color: var(--muted); font-size: 0.9rem; }
+
+.cabecera { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+
+.panel button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-radius: 8px;
+  padding: 10px 16px;
+  min-height: 44px;
+}
+.panel button.enlace { background: none; color: var(--muted); border-color: transparent; text-decoration: underline; padding: 6px 8px; min-height: 0; }
+
+.estado {
+  display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--card);
+}
+.estado.pausada { border-color: var(--mal); background: var(--mal-bg); }
+.estado.activa { border-color: var(--ok); }
+.estado p { margin: 2px 0 0; }
+
+.tabs { display: flex; gap: 2px; margin: 18px 0 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs a {
+  text-decoration: none; padding: 10px 10px; border-bottom: 3px solid transparent; color: var(--muted);
+  white-space: nowrap; display: inline-flex; gap: 6px; align-items: center; min-height: 44px;
+}
+@media (min-width: 480px) {
+  .tabs { gap: 6px; }
+  .tabs a { padding: 10px 14px; }
+}
+.tabs a[aria-current="page"] { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+
+.badge {
+  display: inline-block; min-width: 20px; padding: 1px 6px; border-radius: 10px; font-size: 0.78rem;
+  text-align: center; background: var(--mal); color: #fff;
+}
+@media (prefers-color-scheme: dark) { .badge { color: #161412; } }
+
+.etiqueta { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.82rem; white-space: nowrap; }
+.etiqueta.ok { background: var(--ok-bg); color: var(--ok); }
+.etiqueta.espera { background: var(--espera-bg); color: var(--espera); }
+.etiqueta.mal { background: var(--mal-bg); color: var(--mal); }
+.etiqueta.neutro { background: var(--neutro-bg); color: var(--neutro); }
+
+.lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.tarjeta {
+  display: block; text-decoration: none; border: 1px solid var(--line); background: var(--card);
+  border-radius: 12px; padding: 12px 14px;
+}
+a.tarjeta:hover { border-color: var(--accent); }
+.fila { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.fila strong { overflow-wrap: anywhere; }
+.tarjeta.error { border-left: 4px solid var(--mal); }
+.tarjeta.aviso { border-left: 4px solid var(--espera); }
+.tarjeta.marcado { border-left: 4px solid var(--mal); }
+
+.vacio { border: 1px dashed var(--line); border-radius: 12px; padding: 16px; color: var(--muted); }
+.texto { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 0; }
+.tecnico { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; margin-top: 4px; }
+
+.contadores { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.contador { border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 10px 12px; }
+.contador b { display: block; font-size: 1.5rem; }
+
+.centro { max-width: 420px; margin: 12vh auto 0; text-align: center; }
+.centro form { margin-top: 18px; }
+.alerta { background: var(--mal-bg); color: var(--mal); border-radius: 10px; padding: 10px 12px; margin-top: 14px; }

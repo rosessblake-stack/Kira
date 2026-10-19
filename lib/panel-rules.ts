@@ -243,6 +243,48 @@ export function problemasDeTareas(rows: TareaRow[], ahora: Date): Problema[] {
   return ordenar(out);
 }
 
+export type WebhookInfoLite = {
+  registrado: boolean;
+  pendientes: number;
+  ultimoError: string | null;
+  /** Cuándo falló Telegram por última vez (ISO). Telegram lo conserva aunque ya se haya recuperado. */
+  ultimoErrorFecha: string | null;
+};
+
+/** Webhooks perdidos: avisos de Telegram que no han llegado a Kira. */
+export function problemasDeWebhook(info: WebhookInfoLite, ahora: Date): Problema[] {
+  const out: Problema[] = [];
+  const desde = ahora.toISOString();
+  if (!info.registrado) {
+    out.push({
+      clave: "webhook:no_registrado",
+      gravedad: "error",
+      titulo: "Webhook de Telegram no registrado",
+      detalle: "Telegram no sabe a dónde enviar tus mensajes y botones. Hay que volver a registrarlo (/api/setup).",
+      desde,
+    });
+  }
+  if (info.pendientes > 0) {
+    out.push({
+      clave: "webhook:pendientes",
+      gravedad: "aviso",
+      titulo: `${info.pendientes} aviso(s) de Telegram sin entregar`,
+      detalle: "Telegram los tiene en cola porque Kira no los ha aceptado todavía.",
+      desde,
+    });
+  }
+  if (info.ultimoErrorFecha && minutosDesde(info.ultimoErrorFecha, ahora) < 24 * 60) {
+    out.push({
+      clave: "webhook:error_reciente",
+      gravedad: "error",
+      titulo: "Telegram no pudo entregar un aviso en las últimas 24 h",
+      detalle: recortar(info.ultimoError ?? "Sin detalle.", 200),
+      desde: info.ultimoErrorFecha,
+    });
+  }
+  return ordenar(out);
+}
+
 /** Errores antes que avisos; dentro de cada grupo, lo más antiguo primero. */
 export function ordenar(ps: Problema[]): Problema[] {
   const peso = (p: Problema) => (p.gravedad === "error" ? 0 : 1);
@@ -276,6 +318,61 @@ export function resumirDetalle(detail: unknown, max = 300): string {
     return "";
   }
   return !texto || texto === "{}" ? "" : recortar(texto, max);
+}
+
+// ---------------------------------------------------------------------------
+// Proceso: línea de tiempo de una conversación
+// ---------------------------------------------------------------------------
+
+export type ItemLinea = {
+  at: string;
+  tipo: "entrada" | "salida" | "evento" | "reserva";
+  titulo: string;
+  texto?: string;
+  nivel?: "info" | "warn" | "error";
+  /** Mensaje marcado como posible manipulación. */
+  marcado?: boolean;
+};
+
+export function euros(centimos: number | null | undefined): string {
+  if (centimos == null) return "—";
+  return `${(centimos / 100).toLocaleString("es-ES", { minimumFractionDigits: centimos % 100 ? 2 : 0 })} €`;
+}
+
+export function lineaDeTiempo(
+  mensajes: { created_at: string; direction: string; body: string; flagged: boolean }[],
+  eventos: { at: string; source: string; kind: string; level: string; summary: string }[],
+  reservas: {
+    created_at: string;
+    status: string;
+    service_description: string;
+    price_cents: number | null;
+    deposit_cents: number | null;
+  }[],
+): ItemLinea[] {
+  const items: ItemLinea[] = [
+    ...mensajes.map((m): ItemLinea => ({
+      at: m.created_at,
+      tipo: m.direction === "in" ? "entrada" : "salida",
+      titulo: m.direction === "in" ? "Mensaje del cliente" : "Respuesta enviada",
+      texto: m.body,
+      marcado: m.flagged,
+    })),
+    ...eventos.map((e): ItemLinea => ({
+      at: e.at,
+      tipo: "evento",
+      titulo: `${e.source} · ${e.kind}`,
+      texto: e.summary,
+      nivel: e.level as ItemLinea["nivel"],
+    })),
+    ...reservas.map((r): ItemLinea => ({
+      at: r.created_at,
+      tipo: "reserva",
+      titulo: `Reserva: ${ESTADOS_RESERVA[r.status] ?? r.status}`,
+      texto: `${r.service_description} · precio ${euros(r.price_cents)} · señal ${euros(r.deposit_cents)}`,
+    })),
+  ];
+  return items.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
 // ---------------------------------------------------------------------------

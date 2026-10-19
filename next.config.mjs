@@ -15,6 +15,14 @@ const nextConfig = {
         source: "/api/(.*)",
         headers: [{ key: "Cache-Control", value: "no-store" }],
       },
+      {
+        // Datos privados: nada del panel se guarda en cachés del navegador ni intermedias.
+        source: "/panel/:path*",
+        headers: [
+          { key: "Cache-Control", value: "no-store" },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'; base-uri 'self'; form-action 'self'" },
+        ],
+      },
     ];
   },
 };

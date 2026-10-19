@@ -5,3 +5,5 @@ node_modules
 .vercel
 next-env.d.ts
 *.tsbuildinfo
+
+e2e/shots

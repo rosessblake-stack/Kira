@@ -10,7 +10,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "node e2e/run-panel.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
