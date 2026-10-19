@@ -29,6 +29,8 @@ fs.mkdirSync(SHOTS, { recursive: true });
 const SIN_CLAVE = process.env.SIN_CLAVE === "1"; // sin ANTHROPIC_API_KEY: se prueba la lectura básica por reglas
 const BASE = "http://localhost:3100";
 const SECRET = "secreto-falso";
+/** Hoy en Madrid (AAAA-MM-DD): la prueba no puede depender del día en que se ejecute. */
+const hoyIsoMadrid = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Madrid" });
 const ADMIN = 111;
 const EXTRANO = 222;
 
@@ -250,7 +252,7 @@ try {
     check("A3. modelo claude-opus-5-5 con esfuerzo bajo y salida JSON con esquema", peticion.model === "claude-opus-5-5" && peticion.output_config?.effort === "low" && peticion.output_config?.format?.type === "json_schema");
     check("A4. sin parámetros que el modelo rechaza (thinking desactivado, temperature, prefill)", peticion.thinking === undefined && peticion.temperature === undefined && peticion.messages.length === 1 && peticion.messages[0].role === "user");
     check("A5. el mensaje del cliente viaja como DATO dentro de <mensaje_cliente>", /<mensaje_cliente>\n[\s\S]*6 trenzas[\s\S]*\n<\/mensaje_cliente>/.test(peticion.messages[0].content) && peticion.system.includes("DATOS NO FIABLES"));
-    check("A6. la petición lleva la fecha actual para resolver «el 20 de octubre»", /Fecha y hora actuales: \w+ 2026-10-19/.test(peticion.messages[0].content));
+    check("A6. la petición lleva la fecha actual para resolver «el 20 de octubre»", new RegExp(`Fecha y hora actuales: \\w+ ${hoyIsoMadrid}`).test(peticion.messages[0].content));
     check("A7. el esquema pedido exige los 18 campos y prohíbe extras", peticion.output_config.format.schema.additionalProperties === false && peticion.output_config.format.schema.required.length === 18);
     check("A8. la clave de API viaja por cabecera, no en el cuerpo", Boolean(claude.cabeceras[0]["x-api-key"]) && !JSON.stringify(peticion).includes("clave-falsa"));
 
@@ -601,6 +603,46 @@ try {
   const extrano = tg.enviados.length;
   await escribe("/viaje miami 1/1 al 5/1", EXTRANO);
   check("J19. un extraño no puede apuntar ni cambiar tus viajes", tables.app_settings.find((a) => a.key === "estancias").value.length === 1 && tg.enviados.length === extrano);
+
+  // ============================================================================ K. MATERIALES, PERFIL POR CITA Y DATOS REALES
+  console.log("\n=== K. Materiales, perfil por cita, registro del servicio, /real y /datos ===");
+  const antesK = legacy.recibidas.length;
+  const registrosAntesK = tables.service_records.length;
+  await escribe("/simular Quiero trenzas sueltas large con extensiones negras el jueves 22 a las 17:00, soy Marta, marta@correo.com");
+  const propK = conBotones();
+  const reservaK = reservas().at(-1);
+  check("K1. propuesta completa de sueltas large: materiales de por defecto (10 €) y aviso de sugerencia", legacy.recibidas.length === antesK + 1 && propK.text.includes("materiales 10 €") && propK.text.includes("«materiales 8»"));
+  await pulsa(dato(propK, "Editar"), propK.message_id);
+  check("K2. la ayuda de Editar explica materiales, estructura, zona y base", ultimo().text.includes("materiales 8") && ultimo().text.includes("estructura salon") && ultimo().text.includes("base 1500"));
+  await escribe("materiales 14\nhoras 4\nestructura salón\nzona premium");
+  const propK2 = conBotones();
+  const pK = legacy.recibidas.at(-1);
+  check("K3. Legacy recibe los materiales y las horas de Blake y el perfil cambiado SOLO para esta cita", legacy.recibidas.length === antesK + 2 && pK.materiales === 14 && pK.horas === 4 && pK.estructura === "salon" && pK.zona === "premium" && pK.nivel === "elite");
+  check("K4. la propuesta enseña materiales 14 €, 4 h y el perfil de esta cita, sin avisos de sugerencia", propK2.text.includes("4 h · materiales 14 € · perfil élite · zona premium · salón") && !propK2.text.includes("son una sugerencia"));
+  check("K5. el perfil general NO cambió: la siguiente propuesta de España vuelve a casa y zona media", !tables.app_settings.some((a) => a.key === "perfil_legacy"));
+  await pulsa(dato(propK2, "Aprobar"), propK2.message_id);
+  const regK = tables.service_records.find((x) => x.booking_id === reservaK.id);
+  check("K6. al aprobar se guarda el registro del servicio (una fila más)", tables.service_records.length === registrosAntesK + 1 && Boolean(regK));
+  check("K7. el registro tiene lo sugerido (3,5 h, 10 €) y lo que dejó Blake (4 h, 14 €, precio de Legacy)", regK.horas_sugeridas === 3.5 && regK.materiales_sugeridos === 10 && regK.horas_aprobadas === 4 && regK.materiales_aprobados === 14 && regK.precio_aprobado_cents === reservaK.price_cents && regK.precio_origen === "legacy" && regK.is_test === true);
+  check("K8. el registro guarda el servicio con valores cerrados y NO el mensaje, el email ni el nombre completo de la clienta", regK.tipo_trenzado === "sueltas" && regK.tamano === "large" && regK.extensiones === "con" && regK.client_name === "Marta" && !JSON.stringify(regK).match(/Quiero trenzas|marta@correo/));
+  check("K9. sin datos reales todavía: real_at vacío", regK.real_at === null && regK.horas_reales === null);
+
+  await escribe("/real");
+  check("K10. /real lista las últimas citas aprobadas con su número y marca las pruebas", ultimo().text.includes(`#${regK.seq} 🧪 Marta`) && ultimo().text.includes("real: sin anotar") && ultimo().text.includes("aprobado: 4 h · 14 € · "));
+  await escribe(`/real ${regK.seq} horas 4,5; materiales 15; precio 140; nota fue largo`);
+  const regK2 = tables.service_records.find((x) => x.booking_id === reservaK.id);
+  check("K11. /real anota lo real: horas, materiales, precio y nota", regK2.horas_reales === 4.5 && regK2.materiales_reales === 15 && regK2.precio_real_cents === 14000 && regK2.nota_real === "fue largo" && Boolean(regK2.real_at));
+  check("K12. responde con lo anotado, avisa de la desviación y de que es una prueba", ultimo().text.includes(`✅ Anotado en #${regK.seq}`) && ultimo().text.includes("tardó 0,5 h más") && ultimo().text.includes("🧪 Es de una prueba"));
+  check("K13. queda registrado el evento (sin el texto de la nota)", eventos("datos_reales_anotados").length === 1 && !JSON.stringify(eventos("datos_reales_anotados")).includes("fue largo"));
+  await escribe("/datos");
+  check("K14. /datos no cuenta las pruebas: lo dice y explica cómo empezar", ultimo().text.includes("Todavía no hay servicios reales anotados") && ultimo().text.includes("Hay 1 de prueba"));
+  await escribe("/datos pruebas");
+  check("K15. /datos pruebas las incluye y agrupa por tipo", ultimo().text.includes("sueltas large · con extensiones — 1 servicio: 4,5 h de media") && ultimo().text.includes("materiales 15 €") && ultimo().text.includes("cobras 140 €"));
+  await escribe("/real 9999 horas 3");
+  check("K16. una cita que no existe no toca nada", ultimo().text.includes("No encuentro la cita #9999"));
+  const enviadosK = tg.enviados.length;
+  await escribe(`/real ${regK.seq} horas 1`, EXTRANO);
+  check("K17. un extraño no puede anotar datos reales", tables.service_records.find((x) => x.booking_id === reservaK.id).horas_reales === 4.5 && tg.enviados.length === enviadosK);
 
   // ============================================================================ G. PAUSA (con el panel)
   console.log("\n=== G. Panel: login, mapeo, pausa, fallos y seguridad ===");

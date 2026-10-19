@@ -17,10 +17,12 @@ export const tables = {
   scheduled_jobs: [],
   processed_webhooks: [],
   attachments: [],
+  service_records: [],
 };
 /** Almacén de archivos falso (Supabase Storage): "bucket/ruta" -> { bytes, contentType }. */
 export const storage = new Map();
 let seq = 1;
+let seqRegistro = 1; // service_records.seq: el número que Blake ve en /real
 const intId = new Set(["event_log", "security_events"]);
 
 function defaults(table, row) {
@@ -55,6 +57,18 @@ function defaults(table, row) {
   }
   if (table === "attachments") {
     Object.assign(r, { created_at: r.created_at ?? nowIso(), description: r.description ?? null, described_at: r.described_at ?? null, purged_at: r.purged_at ?? null });
+  }
+  if (table === "service_records") {
+    Object.assign(r, {
+      seq: r.seq ?? seqRegistro++,
+      created_at: r.created_at ?? nowIso(),
+      updated_at: r.updated_at ?? nowIso(),
+      horas_reales: r.horas_reales ?? null,
+      materiales_reales: r.materiales_reales ?? null,
+      precio_real_cents: r.precio_real_cents ?? null,
+      nota_real: r.nota_real ?? null,
+      real_at: r.real_at ?? null,
+    });
   }
   if (table === "conversations") {
     Object.assign(r, {
@@ -201,6 +215,9 @@ const server = http.createServer(async (req, res) => {
           const existing = tables[table].find((r) => r[pk] === raw[pk]);
           if (existing) { Object.assign(existing, raw); out.push(existing); continue; }
         }
+        // upsert(onConflict, ignoreDuplicates): si ya hay una fila con esa clave única, no se toca ni se inserta otra.
+        const alConflicto = url.searchParams.get("on_conflict");
+        if (alConflicto && prefer.includes("resolution=ignore-duplicates") && tables[table].some((r) => r[alConflicto] === raw[alConflicto])) continue;
         if (table === "processed_webhooks" && tables[table].some((r) => r.provider === raw.provider && r.external_id === raw.external_id)) {
           return send(res, 409, { code: "23505", message: "duplicate key value violates unique constraint" });
         }

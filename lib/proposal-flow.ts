@@ -122,6 +122,8 @@ export interface FlowDeps {
   describirFoto(conversationId: string, tipo: "pelo" | "referencia", texto: string): Promise<boolean>;
   /** Envía a Blake las fotos guardadas de la conversación, antes de la propuesta (no hace nada si no hay). */
   enviarFotos(chatId: number, conversationId: string): Promise<void>;
+  /** Guarda la foto fija de la cita al aprobarla (lo sugerido, lo aprobado) para calibrar horas y materiales con datos propios. */
+  guardarRegistro(r: Reserva): Promise<void>;
 
   logEvent(e: { source: Fuente; kind: string; level?: "info" | "warn" | "error"; summary: string; detail?: Record<string, unknown>; conversation_id?: string | null; booking_id?: string | null }): Promise<void>;
   logSecurity(e: { kind: "posible_inyeccion" | "limite_de_peticiones"; source: string; conversation_id?: string | null; detail?: Record<string, unknown> }): Promise<void>;
@@ -182,7 +184,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     if (faltan.length) return { resultado: { origen: "sin_calcular", faltan }, guardado: { origen: "sin_calcular", perfil, moneda } };
 
     const horas = spec.horas ?? horasPorDefecto(spec.servicio);
-    const materiales = materialesPorDefecto(spec.servicio);
+    const materiales = spec.materiales ?? materialesPorDefecto(spec.servicio);
     try {
       const precio = await deps.precio(construirPeticion(spec.servicio, perfil, horas, materiales));
       await deps.logEvent({
@@ -507,6 +509,12 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     if (b.accion === "ok") {
       await deps.actualizarReserva(r.id, { status: "aprobada", approved_by_telegram_user: b.fromId, approved_at: deps.now().toISOString() });
       if (r.conversation_id) await deps.actualizarConversacion(r.conversation_id, { status: "esperando_cliente" });
+      try {
+        await deps.guardarRegistro({ ...r, status: "aprobada" });
+      } catch (e) {
+        // Que no se pueda anotar el registro no impide aprobar: queda a la vista en Fallos.
+        await deps.logEvent({ source: "system", kind: "registro_servicio_fallo", level: "error", summary: msg(e), ...ids });
+      }
       await deps.responderCallback(b.callbackId, "✅ Aprobada");
       await editarMensaje(
         `${r.is_test ? "🧪 PRUEBA · " : ""}✅ APROBADA\n\n${resumenDecision(r)}\n\nNo se ha enviado nada al cliente (el canal de Instagram no está conectado).\nSiguientes pasos pendientes de conectar: calendario (reserva provisional) y enlace de pago de la señal.`,
@@ -568,8 +576,9 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       return true;
     }
 
-    const { spec, recalcular } = aplicarCambios(r.spec, cambios);
-    const perfil = r.pricing.perfil ?? (await deps.perfil(lugar.ubicacion));
+    const { spec, perfil: cambioDePerfil, recalcular } = aplicarCambios(r.spec, cambios);
+    // Lo que Blake cambie del perfil (estructura, zona, nivel, base) vale solo para esta cita.
+    const perfil = { ...(r.pricing.perfil ?? (await deps.perfil(lugar.ubicacion))), ...cambioDePerfil };
     let guardado: PricingGuardado = r.pricing;
     if (recalcular || r.pricing.origen === "sin_calcular" || r.pricing.origen === "error") {
       guardado = (await calcularPrecio(spec, perfil, ids)).guardado;

@@ -12,6 +12,8 @@ import { authStore } from "../../../lib/panel-store";
 import { consultarLegacy } from "../../../lib/pricing";
 import { crearFlujoPropuestas, type FlowDeps } from "../../../lib/proposal-flow";
 import * as store from "../../../lib/proposal-store";
+import { crearFlujoRegistro } from "../../../lib/registro-flow";
+import * as registroStore from "../../../lib/registro-store";
 import { isPaused } from "../../../lib/settings";
 import { crearFlujoViajes } from "../../../lib/trip-flow";
 import * as tg from "../../../lib/telegram";
@@ -79,6 +81,7 @@ function makeFlowDeps(photos: PhotoPort): FlowDeps {
     fotosDe: async (conversationId) => resumenDeFotos(await fotoStore.listarFotos(conversationId)),
     describirFoto: (conversationId, tipo, texto) => fotoStore.describirUltima(conversationId, tipo, texto, new Date()),
     enviarFotos: (chatId, conversationId) => photos.reenviar(chatId, conversationId, { silencioso: true }),
+    guardarRegistro: registroStore.guardarRegistro,
     logEvent: ({ source, ...e }) => db.logEvent(source, e),
     logSecurity: db.logSecurity,
     enviar: tg.sendMessage,
@@ -107,6 +110,15 @@ function makeDeps(host: string | null): Deps {
     },
     proposals: crearFlujoPropuestas(makeFlowDeps(photos)),
     photos,
+    records: crearFlujoRegistro({
+      now: () => new Date(),
+      listar: registroStore.listarRegistros,
+      leerPorSeq: registroStore.leerRegistroPorSeq,
+      anotar: registroStore.anotarReal,
+      conDatosReales: registroStore.registrosConDatosReales,
+      enviar: tg.sendMessage,
+      logEvent: (e) => db.logEvent("telegram", e),
+    }),
     trips: crearFlujoViajes({
       now: () => new Date(),
       leer: leerEstancias,

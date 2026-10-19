@@ -1,6 +1,8 @@
 import { ZONA_MADRID, aUtc, avisosDeHorario, duracionLegible, fechaLarga, horasTexto, partesEn } from "./agenda";
 import {
+  ESTILOS_PEGADAS,
   EXTENSIONES,
+  LARGOS_CABELLO,
   LARGOS_EXTENSIONES,
   TAMANOS,
   TIPOS_TRENZADO,
@@ -49,6 +51,8 @@ export type SpecGuardada = {
   clasificador?: "claude" | "basica";
   /** Horas fijadas por Blake; null = las de por defecto. */
   horas: number | null;
+  /** Materiales fijados por Blake (en la moneda de la ubicación); null/ausente = los de por defecto. */
+  materiales?: number | null;
   /** Precio puesto a mano por Blake; null = lo calcula Legacy. */
   precio_manual_centimos: number | null;
   senal_centimos: number;
@@ -175,7 +179,7 @@ export function componerPropuesta(
 ): Propuesta {
   const lugar = contextoDe(spec);
   const horasUsadas = spec.horas ?? horasPorDefecto(spec.servicio);
-  const materialesUsados = materialesPorDefecto(spec.servicio);
+  const materialesUsados = spec.materiales ?? materialesPorDefecto(spec.servicio);
   const duracionMinutos = horasUsadas > 0 ? Math.round(horasUsadas * 60) : null;
 
   // La fecha y la hora que da la clienta son las de SU ciudad (Madrid o Miami).
@@ -214,8 +218,15 @@ export function componerPropuesta(
   if (precio.origen === "manual") avisos.push("El precio lo has puesto tú: no lo ha calculado Legacy.");
   if (precio.origen === "legacy") {
     if (!ctx.perfil.confirmado) avisos.push(`Perfil de precios sin confirmar (${resumenPerfil(ctx.perfil, lugar.moneda)}).`);
-    if (spec.horas === null) {
-      avisos.push(`Horas (${horasTexto(horasUsadas)} h) y materiales (${materialesUsados} ${lugar.moneda === "USD" ? "$" : "€"}) son una sugerencia: ajústalas con «horas 3».`);
+    const sinHoras = spec.horas === null;
+    const sinMateriales = (spec.materiales ?? null) === null;
+    const simbolo = lugar.moneda === "USD" ? "$" : "€";
+    if (sinHoras && sinMateriales) {
+      avisos.push(`Horas (${horasTexto(horasUsadas)} h) y materiales (${materialesUsados} ${simbolo}) son una sugerencia: ajústalas con «horas 3» y «materiales 8».`);
+    } else if (sinHoras) {
+      avisos.push(`Las horas (${horasTexto(horasUsadas)} h) son una sugerencia: ajústalas con «horas 3».`);
+    } else if (sinMateriales) {
+      avisos.push(`Los materiales (${materialesUsados} ${simbolo}) son una sugerencia: ajústalos con «materiales 8».`);
     }
   }
   const s = spec.servicio;
@@ -366,13 +377,23 @@ export const AYUDA_EDICION = [
   "Dime qué cambiar, una cosa por línea. Por ejemplo:",
   "precio 70",
   "señal 15",
-  "horas 3",
+  "horas 3   (lo que dura el servicio)",
+  "materiales 8   (lo que gastas en material)",
   "fecha 20/10 12:00",
   "tipo pegadas",
   "tamaño large",
   "extensiones con",
-  "largo caderas",
+  "largo caderas   (hasta dónde llegan las trenzas)",
+  "largo pelo hombros   (hasta dónde le llega su pelo)",
   "trenzas 6",
+  "estilo twist   (cornrows, twist o barrel_twist)",
+  "boho si",
+  "color rojo",
+  "instagram usuario",
+  "estructura salon   (casa o salon)",
+  "zona premium   (premium, media o baja)",
+  "nivel elite",
+  "base 1500   (salario base con el que calcula Legacy)",
   "nombre Ana",
   "email ana@correo.com",
   "dirección Calle Ejemplo 12, Miami   (dónde es la cita)",
@@ -380,13 +401,23 @@ export const AYUDA_EDICION = [
   "pelo rizado, fino, a los hombros   (lo que ves en su foto del pelo)",
   "referencia boxeadoras hasta la cadera   (lo que ves en su foto de trenzas)",
   "",
-  "«precio auto» devuelve el precio a Legacy. /cancelar lo deja como está.",
+  "«precio auto», «horas auto» y «materiales auto» devuelven ese dato a Legacy y a Kira. /cancelar lo deja como está.",
 ].join("\n");
 
 export type Cambio =
   | { k: "precio"; centimos: number | null }
   | { k: "senal"; centimos: number }
-  | { k: "horas"; horas: number }
+  | { k: "horas"; horas: number | null }
+  | { k: "materiales"; valor: number | null }
+  | { k: "boho"; v: boolean }
+  | { k: "estilo"; v: (typeof ESTILOS_PEGADAS)[number] }
+  | { k: "largo_cabello"; v: (typeof LARGOS_CABELLO)[number] }
+  | { k: "color"; v: string }
+  | { k: "instagram"; v: string }
+  | { k: "estructura"; v: PerfilLegacy["estructura"] }
+  | { k: "zona"; v: PerfilLegacy["zona"] }
+  | { k: "nivel"; v: PerfilLegacy["nivel"] }
+  | { k: "base"; n: number }
   | { k: "fecha"; fecha: string; hora: string | null }
   | { k: "hora"; hora: string }
   | { k: "tipo"; v: (typeof TIPOS_TRENZADO)[number] }
@@ -404,7 +435,8 @@ export type Cambio =
 
 /** Nombre de cada cambio tal como lo escribe Blake (no el identificador interno). */
 const ETIQUETAS_CAMBIO: Record<Cambio["k"], string> = {
-  precio: "precio", senal: "señal", horas: "horas", fecha: "fecha", hora: "hora", tipo: "tipo", tamano: "tamaño",
+  precio: "precio", senal: "señal", horas: "horas", materiales: "materiales", boho: "boho", estilo: "estilo", largo_cabello: "largo del pelo",
+  color: "color", instagram: "instagram", estructura: "estructura", zona: "zona", nivel: "nivel", base: "base salarial", fecha: "fecha", hora: "hora", tipo: "tipo", tamano: "tamaño",
   extensiones: "extensiones", largo_ext: "largo", trenzas: "trenzas", nombre: "nombre", email: "email", direccion: "dirección", respuesta: "respuesta",
   foto_pelo: "descripción del pelo", foto_referencia: "descripción de la referencia",
 };
@@ -483,9 +515,74 @@ export function parsearEdicion(texto: string, ahora: Date, zona: string = ZONA_M
         break;
       }
       case "horas": {
+        if (/^auto$/i.test(valor)) { cambios.push({ k: "horas", horas: null }); break; }
         const n = numero(valor);
         if (n === null || n < 0.5 || n > 14) err("las horas deben estar entre 0,5 y 14, por ejemplo «horas 3».");
         else cambios.push({ k: "horas", horas: Math.round(n * 2) / 2 });
+        break;
+      }
+      case "materiales": {
+        if (/^auto$/i.test(valor)) { cambios.push({ k: "materiales", valor: null }); break; }
+        const n = numero(valor);
+        if (n === null || n > 500) err("los materiales deben ser un importe, por ejemplo «materiales 8».");
+        else cambios.push({ k: "materiales", valor: Math.round(n * 100) / 100 });
+        break;
+      }
+      case "boho": {
+        const v = quitarAcentos(valor.toLowerCase());
+        if (v === "si" || v === "yes" || v === "true") cambios.push({ k: "boho", v: true });
+        else if (v === "no" || v === "false") cambios.push({ k: "boho", v: false });
+        else err("escribe «boho si» o «boho no».");
+        break;
+      }
+      case "estilo": {
+        const t = ESTILOS_PEGADAS.find((x) => x === quitarAcentos(valor.toLowerCase()).replace(/[\s-]+/g, "_"));
+        if (!t) err(`el estilo debe ser ${ESTILOS_PEGADAS.join(", ")}.`);
+        else cambios.push({ k: "estilo", v: t });
+        break;
+      }
+      case "largopelo": {
+        const t = LARGOS_CABELLO.find((x) => x === quitarAcentos(valor.toLowerCase()).replace(/\s+/g, "_"));
+        if (!t) err(`el largo del pelo debe ser ${LARGOS_CABELLO.join(", ")}.`);
+        else cambios.push({ k: "largo_cabello", v: t });
+        break;
+      }
+      case "color": {
+        const v = limpiarTexto(valor, 40);
+        if (!v) err("escribe el color después de «color», por ejemplo «color rojo».");
+        else cambios.push({ k: "color", v });
+        break;
+      }
+      case "instagram": {
+        const v = valor.replace(/^@/, "").trim();
+        if (!/^[A-Za-z0-9._]{1,30}$/.test(v)) err("ese usuario de Instagram no es válido; escribe solo el nombre, por ejemplo «instagram ana_trenzas».");
+        else cambios.push({ k: "instagram", v });
+        break;
+      }
+      case "estructura": {
+        const v = quitarAcentos(valor.toLowerCase());
+        if (v === "casa" || v === "salon") cambios.push({ k: "estructura", v });
+        else err("la estructura debe ser casa o salon.");
+        break;
+      }
+      case "zona": {
+        const v = quitarAcentos(valor.toLowerCase());
+        const z = v === "normal" ? "media" : v;
+        if (z === "premium" || z === "media" || z === "baja") cambios.push({ k: "zona", v: z });
+        else err("la zona debe ser premium, media o baja.");
+        break;
+      }
+      case "nivel": {
+        const v = quitarAcentos(valor.toLowerCase());
+        const n = (["junior", "intermedio", "avanzado", "profesional", "elite"] as const).find((x) => x === v);
+        if (!n) err("el nivel debe ser junior, intermedio, avanzado, profesional o elite.");
+        else cambios.push({ k: "nivel", v: n });
+        break;
+      }
+      case "base": {
+        const n = numero(valor);
+        if (n === null || n < 100 || n > 20000) err("la base salarial debe ser un importe mensual, por ejemplo «base 1500».");
+        else cambios.push({ k: "base", n });
         break;
       }
       case "fecha": {
@@ -520,6 +617,13 @@ export function parsearEdicion(texto: string, ahora: Date, zona: string = ZONA_M
         break;
       }
       case "largo": {
+        const delPelo = /^pelo\s+(.+)$/i.exec(quitarAcentos(valor));
+        if (delPelo) {
+          const p = LARGOS_CABELLO.find((x) => x === delPelo[1].toLowerCase().replace(/\s+/g, "_"));
+          if (!p) err(`el largo del pelo debe ser ${LARGOS_CABELLO.join(", ")}.`);
+          else cambios.push({ k: "largo_cabello", v: p });
+          break;
+        }
         const t = LARGOS_EXTENSIONES.find((x) => x === quitarAcentos(valor.toLowerCase()).replace(/\s+/g, "_"));
         if (!t) err(`el largo debe ser ${LARGOS_EXTENSIONES.join(", ")}.`);
         else cambios.push({ k: "largo_ext", v: t });
@@ -562,22 +666,29 @@ export function parsearEdicion(texto: string, ahora: Date, zona: string = ZONA_M
         break;
       }
       default:
-        err("no sé qué cambiar con eso. Claves: precio, señal, horas, fecha, hora, tipo, tamaño, extensiones, largo, trenzas, nombre, email, dirección, respuesta, pelo, referencia.");
+        err("no sé qué cambiar con eso. Claves: precio, señal, horas, materiales, fecha, hora, tipo, tamaño, extensiones, largo, trenzas, estilo, boho, color, instagram, nombre, email, dirección, estructura, zona, nivel, base, respuesta, pelo, referencia.");
     }
   }
   return { cambios, errores };
 }
 
+export type CambioDePerfil = Partial<Pick<PerfilLegacy, "estructura" | "zona" | "nivel" | "smi">>;
+
 export type ResultadoAplicar = {
   spec: SpecGuardada;
+  /** Lo que Blake cambió del perfil de precios SOLO para esta cita (el perfil general no se toca). */
+  perfil: CambioDePerfil;
   /** true si hay que volver a pedir el precio a Legacy (cambió algo que lo afecta y no hay precio manual). */
   recalcular: boolean;
 };
 
-const AFECTAN_AL_PRECIO = new Set(["horas", "tipo", "tamano", "extensiones", "largo_ext", "trenzas"]);
+const AFECTAN_AL_PRECIO = new Set([
+  "horas", "materiales", "tipo", "tamano", "extensiones", "largo_ext", "trenzas", "estilo", "boho", "largo_cabello", "estructura", "zona", "nivel", "base",
+]);
 
 export function aplicarCambios(spec: SpecGuardada, cambios: Cambio[]): ResultadoAplicar {
   const s: SpecGuardada = { ...spec, servicio: { ...spec.servicio } };
+  const perfil: CambioDePerfil = {};
   let tocaPrecio = false;
   for (const c of cambios) {
     if (AFECTAN_AL_PRECIO.has(c.k)) tocaPrecio = true;
@@ -585,6 +696,16 @@ export function aplicarCambios(spec: SpecGuardada, cambios: Cambio[]): Resultado
       case "precio": s.precio_manual_centimos = c.centimos; if (c.centimos === null) tocaPrecio = true; break;
       case "senal": s.senal_centimos = c.centimos; break;
       case "horas": s.horas = c.horas; break;
+      case "materiales": s.materiales = c.valor; break;
+      case "boho": s.servicio.boho = c.v; break;
+      case "estilo": s.servicio.estilo_pegadas = c.v; break;
+      case "largo_cabello": s.servicio.largo_cabello = c.v; break;
+      case "color": s.color_extensiones = c.v; break;
+      case "instagram": s.instagram = c.v; break;
+      case "estructura": perfil.estructura = c.v; break;
+      case "zona": perfil.zona = c.v; break;
+      case "nivel": perfil.nivel = c.v; break;
+      case "base": perfil.smi = c.n; break;
       case "fecha": s.fecha = c.fecha; if (c.hora) s.hora = c.hora; break;
       case "hora": s.hora = c.hora; break;
       case "tipo": s.servicio.tipo_trenzado = c.v; break;
@@ -603,7 +724,7 @@ export function aplicarCambios(spec: SpecGuardada, cambios: Cambio[]): Resultado
     }
   }
   // Si Blake fijó el precio a mano, los cambios de servicio no lo pisan.
-  return { spec: s, recalcular: tocaPrecio && s.precio_manual_centimos === null };
+  return { spec: s, perfil, recalcular: tocaPrecio && s.precio_manual_centimos === null };
 }
 
 /** ¿Hay datos suficientes para pedir el precio a Legacy? */

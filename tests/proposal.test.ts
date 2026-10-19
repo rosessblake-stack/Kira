@@ -464,3 +464,83 @@ describe("horas en español", () => {
     expect(horasTexto(0.5)).toBe("0,5");
   });
 });
+
+describe("edición: materiales, perfil de la cita y demás datos", () => {
+  const p = (t: string) => parsearEdicion(t, AHORA);
+  const edit = (spec: SpecGuardada, t: string) => aplicarCambios(spec, parsearEdicion(t, AHORA).cambios);
+
+  it("materiales: importe con coma o punto, «auto» y límites", () => {
+    expect(p("materiales 8").cambios).toEqual([{ k: "materiales", valor: 8 }]);
+    expect(p("materiales 7,5 €").cambios).toEqual([{ k: "materiales", valor: 7.5 }]);
+    expect(p("materiales 12.25").cambios).toEqual([{ k: "materiales", valor: 12.25 }]);
+    expect(p("materiales 0").cambios).toEqual([{ k: "materiales", valor: 0 }]);
+    expect(p("materiales auto").cambios).toEqual([{ k: "materiales", valor: null }]);
+    expect(p("materiales mucho").errores).toHaveLength(1);
+    expect(p("materiales 900").errores).toHaveLength(1);
+    expect(p("materiales -3").errores).toHaveLength(1);
+  });
+
+  it("horas auto devuelve las de por defecto", () => {
+    expect(p("horas auto").cambios).toEqual([{ k: "horas", horas: null }]);
+    expect(edit(specReferencia({ tipo_trenzado: "pegadas" }), "horas 4").spec.horas).toBe(4);
+    expect(edit({ ...specReferencia({ tipo_trenzado: "pegadas" }), horas: 4 }, "horas auto").spec.horas).toBeNull();
+  });
+
+  it("boho, estilo, largo del pelo, color e instagram", () => {
+    expect(p("boho sí").cambios).toEqual([{ k: "boho", v: true }]);
+    expect(p("boho no").cambios).toEqual([{ k: "boho", v: false }]);
+    expect(p("boho quizás").errores).toHaveLength(1);
+    expect(p("estilo barrel twist").cambios).toEqual([{ k: "estilo", v: "barrel_twist" }]);
+    expect(p("estilo twist").cambios).toEqual([{ k: "estilo", v: "twist" }]);
+    expect(p("estilo rizado").errores).toHaveLength(1);
+    expect(p("largo pelo media espalda").cambios).toEqual([{ k: "largo_cabello", v: "media_espalda" }]);
+    expect(p("largopelo caderas").cambios).toEqual([{ k: "largo_cabello", v: "caderas" }]);
+    expect(p("largo pelo larguísimo").errores).toHaveLength(1);
+    expect(p("largo caderas").cambios).toEqual([{ k: "largo_ext", v: "caderas" }]); // el de las trenzas sigue igual
+    expect(p("color negro 1B").cambios).toEqual([{ k: "color", v: "negro 1B" }]);
+    expect(p("color").errores).toHaveLength(1);
+    expect(p("instagram @ana_trenzas").cambios).toEqual([{ k: "instagram", v: "ana_trenzas" }]);
+    expect(p("instagram ana trenzas").errores).toHaveLength(1);
+    expect(p("instagram https://instagram.com/x").errores).toHaveLength(1);
+  });
+
+  it("perfil de la cita: estructura, zona (normal = media), nivel y base", () => {
+    expect(p("estructura salón").cambios).toEqual([{ k: "estructura", v: "salon" }]);
+    expect(p("estructura casa").cambios).toEqual([{ k: "estructura", v: "casa" }]);
+    expect(p("estructura garaje").errores).toHaveLength(1);
+    expect(p("zona normal").cambios).toEqual([{ k: "zona", v: "media" }]);
+    expect(p("zona premium").cambios).toEqual([{ k: "zona", v: "premium" }]);
+    expect(p("zona lujo").errores).toHaveLength(1);
+    expect(p("nivel élite").cambios).toEqual([{ k: "nivel", v: "elite" }]);
+    expect(p("nivel dios").errores).toHaveLength(1);
+    expect(p("base 1500").cambios).toEqual([{ k: "base", n: 1500 }]);
+    expect(p("base 5").errores).toHaveLength(1);
+    expect(p("base 99999").errores).toHaveLength(1);
+  });
+
+  it("los cambios de perfil no tocan el servicio y piden recalcular; los de color e instagram no", () => {
+    const s = specReferencia({ tipo_trenzado: "pegadas" });
+    const r = edit(s, "estructura salon\nzona premium\nbase 1600");
+    expect(r.perfil).toEqual({ estructura: "salon", zona: "premium", smi: 1600 });
+    expect(r.spec.servicio).toEqual(s.servicio);
+    expect(r.recalcular).toBe(true);
+    const c = edit(s, "color rojo\ninstagram ana");
+    expect(c.recalcular).toBe(false);
+    expect(c.perfil).toEqual({});
+    expect(c.spec).toMatchObject({ color_extensiones: "rojo", instagram: "ana" });
+  });
+
+  it("materiales pide recalcular salvo que el precio sea manual", () => {
+    const s = specReferencia({ tipo_trenzado: "pegadas" });
+    expect(edit(s, "materiales 9").recalcular).toBe(true);
+    expect(edit({ ...s, precio_manual_centimos: 7000 }, "materiales 9").recalcular).toBe(false);
+    expect(edit(s, "materiales 9").spec.materiales).toBe(9);
+  });
+
+  it("no modifica el original", () => {
+    const s = specReferencia({ tipo_trenzado: "pegadas" });
+    edit(s, "materiales 9\nboho si");
+    expect(s.materiales ?? null).toBeNull();
+    expect(s.servicio.boho).toBeNull();
+  });
+});

@@ -36,6 +36,8 @@ type Opciones = {
   fotosIniciales?: ResumenFoto[];
   fallaLecturaFotos?: boolean;
   fallaEnvioFotos?: boolean;
+  /** Que guardar el registro del servicio al aprobar falle. */
+  fallaRegistro?: boolean;
   /** Viajes de Blake a Miami (de qué fecha a qué fecha). Por defecto, ninguno. */
   estancias?: Estancia[];
   fallaLecturaViajes?: boolean;
@@ -62,6 +64,7 @@ function mundo(op: Opciones = {}) {
     zonasClasificar: [] as (string | undefined)[],
     fotos: new Map<string, ResumenFoto[]>(),
     albumes: [] as { chat: number; conv: string; antesDeLosMensajes: number }[],
+    registros: [] as Reserva[],
   };
   if (op.fotosIniciales) w.fotos.set("conv-1", structuredClone(op.fotosIniciales));
   const deps: FlowDeps = {
@@ -131,6 +134,10 @@ function mundo(op: Opciones = {}) {
     async enviarFotos(chat, conv) {
       if (op.fallaEnvioFotos) throw new Error("Telegram sendMediaGroup: error");
       w.albumes.push({ chat, conv, antesDeLosMensajes: w.enviados.length });
+    },
+    async guardarRegistro(r) {
+      if (op.fallaRegistro) throw new Error("fallo guardando service_records");
+      w.registros.push(structuredClone(r));
     },
     async logEvent(e) { w.eventos.push(e); },
     async logSecurity(e) { w.seguridad.push(e); },
@@ -320,7 +327,8 @@ describe("edición", () => {
     expect(m.w.llamadasLegacy).toHaveLength(2);
     expect(m.w.llamadasLegacy[1]).toMatchObject({ horas: 3 });
     expect(m.reserva()).toMatchObject({ price_cents: 7000, duration_minutes: 180, ends_at: "2026-10-20T13:00:00.000Z" });
-    expect(m.ultimo().texto).not.toContain("son una sugerencia"); // las horas ya las fijó Blake
+    expect(m.ultimo().texto).not.toContain("Las horas"); // las horas ya las fijó Blake...
+    expect(m.ultimo().texto).toContain("Los materiales (5 €) son una sugerencia: ajústalos con «materiales 8»."); // ...pero los materiales siguen siendo los de por defecto
   });
 
   it("un precio puesto por Blake manda y no se pisa", async () => {
@@ -954,5 +962,116 @@ describe("viajes de Blake: la propuesta avisa si la fecha no cuadra con dónde e
     expect(m.w.reservas.size).toBe(1);
     expect(m.reserva().warnings.join("\n")).not.toContain("🚫");
     expect(m.w.eventos.find((e) => e.kind === "viajes_lectura_fallo")).toMatchObject({ level: "warn" });
+  });
+});
+
+
+describe("materiales y demás datos editables", () => {
+  async function conEdicionAbierta(op: Opciones = {}) {
+    const m = mundo(op);
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    return m;
+  }
+
+  it("«materiales 8» recalcula con Legacy usando esos materiales y deja de ser una sugerencia", async () => {
+    const m = await conEdicionAbierta({ legacy: async (p) => ({ ...legacy6015, totalCentimos: Number(p.materiales) === 8 ? 6315 : 6015, materiales: Number(p.materiales) }) });
+    await m.flujo.textoLibre(CHAT, "tipo pegadas\nhoras 3");
+    expect(m.w.llamadasLegacy.at(-1)).toMatchObject({ materiales: 5 });
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "materiales 8");
+    expect(m.w.llamadasLegacy).toHaveLength(2);
+    expect(m.w.llamadasLegacy[1]).toMatchObject({ materiales: 8, horas: 3 });
+    expect(m.reserva()).toMatchObject({ price_cents: 6315 });
+    expect(m.reserva().spec.materiales).toBe(8);
+    expect(m.reserva().pricing).toMatchObject({ origen: "legacy", materiales: 8 });
+    expect(m.ultimo().texto).toContain("materiales 8 €");
+    expect(m.ultimo().texto).not.toContain("son una sugerencia");
+  });
+
+  it("«materiales auto» devuelve los de por defecto", async () => {
+    const m = await conEdicionAbierta();
+    await m.flujo.textoLibre(CHAT, "tipo pegadas\nmateriales 9");
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "materiales auto");
+    expect(m.w.llamadasLegacy.at(-1)).toMatchObject({ materiales: 5 });
+    expect(m.ultimo().texto).toContain("materiales 5 €");
+  });
+
+  it("con precio puesto a mano, los materiales se guardan pero no se vuelve a llamar a Legacy", async () => {
+    const m = await conEdicionAbierta();
+    await m.flujo.textoLibre(CHAT, "tipo pegadas\nprecio 80");
+    const llamadas = m.w.llamadasLegacy.length;
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "materiales 12");
+    expect(m.w.llamadasLegacy).toHaveLength(llamadas);
+    expect(m.reserva().spec.materiales).toBe(12);
+    expect(m.reserva().price_cents).toBe(8000);
+  });
+
+  it("el perfil se puede cambiar solo para esta cita: «estructura salon», «zona premium», «nivel», «base 1600»", async () => {
+    const m = await conEdicionAbierta();
+    await m.flujo.textoLibre(CHAT, "tipo pegadas");
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "estructura salón\nzona premium\nbase 1600");
+    expect(m.w.llamadasLegacy).toHaveLength(2);
+    expect(m.w.llamadasLegacy[1]).toMatchObject({ estructura: "salon", zona: "premium", smi: 1600, nivel: "elite" });
+    expect(m.reserva().pricing.perfil).toMatchObject({ estructura: "salon", zona: "premium", smi: 1600 });
+    expect(m.ultimo().texto).toContain("perfil élite · zona premium · salón · base salarial 1600 €");
+    // el perfil general no cambia: la siguiente propuesta parte del de siempre
+    expect(CONFIG_UBICACION.espana.perfilPorDefecto).toMatchObject({ estructura: "casa", zona: "media", smi: 1500 });
+  });
+
+  it("boho, estilo, largo del pelo y color afectan al precio (o al evento) y se aplican", async () => {
+    const m = await conEdicionAbierta();
+    await m.flujo.textoLibre(CHAT, "tipo pegadas");
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "boho si\nestilo twist\nlargo pelo caderas\ncolor negro 1B\ninstagram @ana_trenzas");
+    expect(m.w.llamadasLegacy).toHaveLength(2);
+    expect(m.w.llamadasLegacy[1]).toMatchObject({ bohoPegadas: "si", tipoPegadas: "twist", largoCabello: "caderas" });
+    expect(m.reserva().spec).toMatchObject({ color_extensiones: "negro 1B", instagram: "ana_trenzas" });
+    expect(m.reserva().spec.servicio).toMatchObject({ boho: true, estilo_pegadas: "twist", largo_cabello: "caderas" });
+  });
+
+  it("solo color o instagram no vuelven a llamar a Legacy", async () => {
+    const m = await conEdicionAbierta();
+    await m.flujo.textoLibre(CHAT, "tipo pegadas");
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "color azul\ninstagram ana");
+    expect(m.w.llamadasLegacy).toHaveLength(1);
+  });
+});
+
+describe("registro del servicio al aprobar", () => {
+  async function aprobada(op: Opciones = {}, edicion = "tipo pegadas\nmateriales 7\nhoras 3,5\nnombre Ana López") {
+    const m = mundo(op);
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, edicion);
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    return m;
+  }
+
+  it("al aprobar se guarda el registro del servicio con la reserva ya aprobada y con lo que dejó Blake", async () => {
+    const m = await aprobada();
+    expect(m.w.registros).toHaveLength(1);
+    const r = m.w.registros[0];
+    expect(r).toMatchObject({ id: "res-1", status: "aprobada", is_test: true });
+    expect(r.spec).toMatchObject({ materiales: 7, horas: 3.5 });
+    expect(r.price_cents).toBe(6015);
+  });
+
+  it("si no se puede guardar el registro, la cita se aprueba igualmente y el fallo queda en Fallos", async () => {
+    const m = await aprobada({ fallaRegistro: true });
+    expect(m.reserva().status).toBe("aprobada");
+    expect(m.w.respuestas.at(-1)!.texto).toBe("✅ Aprobada");
+    expect(m.w.eventos.find((e) => e.kind === "registro_servicio_fallo")).toMatchObject({ level: "error", booking_id: "res-1" });
+  });
+
+  it("rechazar no guarda ningún registro", async () => {
+    const m = mundo();
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "no", m.ultimo().id);
+    expect(m.w.registros).toHaveLength(0);
   });
 });

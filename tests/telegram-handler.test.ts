@@ -18,6 +18,7 @@ type Calls = {
     cancelar: number;
   };
   trips: { k: string; chatId: number; texto?: string }[];
+  records: { k: string; chatId: number; texto: string }[];
   fotos: { recibir: { chatId: number; fileId: string; tamano: number | null; conversationId: string | null; pie: string }[]; reenviar: { chatId: number; conversationId: string | null }[] };
   edited: { chatId: number; messageId: number; text: string }[];
   answered: { id: string; text?: string }[];
@@ -26,7 +27,7 @@ type Calls = {
 };
 
 function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } = {}) {
-  const calls: Calls = { sent: [], links: 0, prop: { simular: [], botones: [], libres: [], cancelar: 0 }, trips: [], fotos: { recibir: [], reenviar: [] }, edited: [], answered: [], events: [], security: [] };
+  const calls: Calls = { sent: [], links: 0, prop: { simular: [], botones: [], libres: [], cancelar: 0 }, trips: [], records: [], fotos: { recibir: [], reenviar: [] }, edited: [], answered: [], events: [], security: [] };
   const seen = new Set<string>(opts.seen ?? []);
   const issued = new Set<string>(opts.issued ?? []);
   let counter = 0;
@@ -76,6 +77,10 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       async viaje(chatId, texto) { calls.trips.push({ k: "viaje", chatId, texto }); },
       async viajes(chatId) { calls.trips.push({ k: "viajes", chatId }); },
       async borrarViaje(chatId, texto) { calls.trips.push({ k: "borrar", chatId, texto }); },
+    },
+    records: {
+      async real(chatId, texto) { calls.records.push({ k: "real", chatId, texto }); },
+      async datos(chatId, texto) { calls.records.push({ k: "datos", chatId, texto }); },
     },
     photos: {
       async recibir(chatId, media, conversationId, pie) { calls.fotos.recibir.push({ chatId, fileId: media.fileId, tamano: media.tamano, conversationId, pie }); },
@@ -554,5 +559,37 @@ describe("viajes a Miami: comandos", () => {
     const { calls, deps } = setup();
     await handleTelegramRequest(SECRET, msg("/viaje miami 3/11 al 20/11", ADMIN, "supergroup"), admin(ADMIN), deps);
     expect(calls.trips).toEqual([]);
+  });
+});
+
+
+describe("datos reales de cada servicio: /real y /datos", () => {
+  it("pasan al flujo SOLO con el texto que sigue al comando", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/real"), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, msg("/real 12 horas 3,5; materiales 9"), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, msg("/datos"), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, msg("/datos@KiracitasBot pruebas"), admin(ADMIN), deps);
+    expect(calls.records).toEqual([
+      { k: "real", chatId: ADMIN, texto: "" },
+      { k: "real", chatId: ADMIN, texto: "12 horas 3,5; materiales 9" },
+      { k: "datos", chatId: ADMIN, texto: "" },
+      { k: "datos", chatId: ADMIN, texto: "pruebas" },
+    ]);
+  });
+
+  it("nadie más puede anotar datos reales: se descarta y queda en seguridad", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/real 1 horas 1", OTHER), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, msg("/datos", OTHER), admin(ADMIN), deps);
+    expect(calls.records).toEqual([]);
+    expect(calls.security.map((x) => x.kind)).toEqual(["telegram_no_autorizado", "telegram_no_autorizado"]);
+  });
+
+  it("/start los explica", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/start"), admin(ADMIN), deps);
+    expect(calls.sent[0].text).toContain("/real");
+    expect(calls.sent[0].text).toContain("/datos");
   });
 });
