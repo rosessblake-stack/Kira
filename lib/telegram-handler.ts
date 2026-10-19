@@ -23,7 +23,8 @@ export type SecurityKind =
   | "firma_invalida"
   | "telegram_no_autorizado"
   | "limite_de_peticiones"
-  | "payload_inesperado";
+  | "payload_inesperado"
+  | "acceso_panel_denegado";
 
 export interface Deps {
   /** Devuelve true si es nuevo, false si ya se había procesado. */
@@ -40,10 +41,17 @@ export interface Deps {
     detail?: Record<string, unknown>;
   }): Promise<void>;
   hasIssuedTest(nonce: string): Promise<boolean>;
-  sendMessage(chatId: number, text: string, replyMarkup?: unknown): Promise<void>;
+  sendMessage(
+    chatId: number,
+    text: string,
+    replyMarkup?: unknown,
+    opts?: { noPreview?: boolean },
+  ): Promise<void>;
   answerCallback(callbackId: string, text?: string): Promise<void>;
   editMessage(chatId: number, messageId: number, text: string): Promise<void>;
   newNonce(): string;
+  /** Emite un enlace de un solo uso para entrar al panel. Nunca debe registrarse. */
+  createLoginLink(): Promise<string>;
 }
 
 export type HandlerResult = { status: number; body: Record<string, unknown> };
@@ -157,7 +165,23 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   if (cmd === "/start") {
     await deps.sendMessage(
       chatId,
-      "Kira activa. Te he identificado como administrador.\n\nPrueba con /prueba para recibir un mensaje con botones.",
+      "Kira activa. Te he identificado como administrador.\n\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
+    );
+    return;
+  }
+
+  if (cmd === "/panel") {
+    const url = await deps.createLoginLink();
+    // El enlace es una credencial: ni el aviso ni el registro llevan jamás el token.
+    await deps.logEvent({
+      kind: "panel_enlace_emitido",
+      summary: "Enlace de acceso al panel enviado al administrador",
+    });
+    await deps.sendMessage(
+      chatId,
+      `Enlace para entrar al panel. Vale 5 minutos y solo se puede usar una vez:\n\n${url}\n\nSi no lo has pedido tú, ignóralo.`,
+      undefined,
+      { noPreview: true },
     );
     return;
   }
@@ -186,7 +210,7 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
     return;
   }
 
-  await deps.sendMessage(chatId, "No conozco ese comando. Prueba con /prueba.");
+  await deps.sendMessage(chatId, "No conozco ese comando. Prueba con /panel o /prueba.");
 }
 
 async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {

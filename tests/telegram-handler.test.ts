@@ -6,9 +6,11 @@ const SECRET = "secreto-de-prueba";
 const ADMIN = 111;
 const OTHER = 222;
 const NONCE = "a".repeat(32);
+const LINK_TOKEN = "Z".repeat(43);
 
 type Calls = {
-  sent: { chatId: number; text: string; markup?: any }[];
+  sent: { chatId: number; text: string; markup?: any; opts?: { noPreview?: boolean } }[];
+  links: number;
   edited: { chatId: number; messageId: number; text: string }[];
   answered: { id: string; text?: string }[];
   events: { kind: string; level?: string; detail?: any }[];
@@ -16,7 +18,7 @@ type Calls = {
 };
 
 function setup(opts: { issued?: string[]; seen?: string[] } = {}) {
-  const calls: Calls = { sent: [], edited: [], answered: [], events: [], security: [] };
+  const calls: Calls = { sent: [], links: 0, edited: [], answered: [], events: [], security: [] };
   const seen = new Set<string>(opts.seen ?? []);
   const issued = new Set<string>(opts.issued ?? []);
   let counter = 0;
@@ -37,8 +39,8 @@ function setup(opts: { issued?: string[]; seen?: string[] } = {}) {
     async hasIssuedTest(n) {
       return issued.has(n);
     },
-    async sendMessage(chatId, text, markup) {
-      calls.sent.push({ chatId, text, markup });
+    async sendMessage(chatId, text, markup, opts) {
+      calls.sent.push({ chatId, text, markup, opts });
     },
     async answerCallback(id, text) {
       calls.answered.push({ id, text });
@@ -47,6 +49,10 @@ function setup(opts: { issued?: string[]; seen?: string[] } = {}) {
       calls.edited.push({ chatId, messageId, text });
     },
     newNonce: () => (counter++ === 0 ? NONCE : "b".repeat(32)),
+    async createLoginLink() {
+      calls.links++;
+      return `https://kira.test/panel/entrar?t=${LINK_TOKEN}`;
+    },
   };
   return { calls, deps };
 }
@@ -180,6 +186,51 @@ describe("con administrador", () => {
     const buttons = calls.sent[0].markup.inline_keyboard[0];
     expect(buttons.map((b: any) => b.text)).toEqual(["Aprobar", "Editar", "Rechazar"]);
     for (const b of buttons) expect(Buffer.byteLength(b.callback_data)).toBeLessThanOrEqual(64);
+  });
+
+  it("/panel envía el enlace de acceso sin vista previa", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/panel"), admin(ADMIN), deps);
+    expect(calls.links).toBe(1);
+    expect(calls.sent).toHaveLength(1);
+    expect(calls.sent[0].chatId).toBe(ADMIN);
+    expect(calls.sent[0].text).toContain(`https://kira.test/panel/entrar?t=${LINK_TOKEN}`);
+    expect(calls.sent[0].opts?.noPreview).toBe(true);
+  });
+
+  it("/panel deja constancia pero el token nunca llega a los registros", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/panel"), admin(ADMIN), deps);
+    expect(calls.events.map((e) => e.kind)).toEqual(["panel_enlace_emitido"]);
+    expect(JSON.stringify([calls.events, calls.security])).not.toContain(LINK_TOKEN);
+  });
+
+  it("/panel@KiracitasBot también funciona", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/panel@KiracitasBot"), admin(ADMIN), deps);
+    expect(calls.links).toBe(1);
+  });
+
+  it("/panel de un usuario ajeno: nada de enlace y queda registrado", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/panel", OTHER), admin(ADMIN), deps);
+    expect(calls.links).toBe(0);
+    expect(calls.sent).toHaveLength(0);
+    expect(calls.security.map((s) => s.kind)).toEqual(["telegram_no_autorizado"]);
+  });
+
+  it("/panel desde un grupo no emite enlace", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/panel", ADMIN, "group"), admin(ADMIN), deps);
+    expect(calls.links).toBe(0);
+    expect(calls.sent).toHaveLength(0);
+  });
+
+  it("/panel sin administrador configurado no emite enlace", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/panel", 4242), admin(null), deps);
+    expect(calls.links).toBe(0);
+    expect(calls.sent).toHaveLength(0);
   });
 
   it("comando desconocido: respuesta amable", async () => {

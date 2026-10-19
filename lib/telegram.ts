@@ -38,11 +38,18 @@ export async function tgCall<T = unknown>(
   return json.result as T;
 }
 
-export async function sendMessage(chatId: number, text: string, replyMarkup?: unknown) {
+export async function sendMessage(
+  chatId: number,
+  text: string,
+  replyMarkup?: unknown,
+  opts?: { noPreview?: boolean },
+) {
   await tgCall("sendMessage", {
     chat_id: chatId,
     text,
     ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+    // Sin vista previa: así nada abre el enlace por su cuenta antes que Blake.
+    ...(opts?.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
   });
 }
 
