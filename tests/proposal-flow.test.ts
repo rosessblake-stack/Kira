@@ -4,7 +4,8 @@ import { SinClaveError } from "../lib/claude";
 import type { ResumenFoto } from "../lib/fotos";
 import { LIMITES } from "../lib/intents";
 import { leerBasico } from "../lib/lectura-basica";
-import { PERFIL_POR_DEFECTO, LegacyError, type PeticionLegacy, type PrecioLegacy } from "../lib/pricing";
+import { LegacyError, type PeticionLegacy, type PrecioLegacy } from "../lib/pricing";
+import { CONFIG_UBICACION } from "../lib/ubicacion";
 import { crearFlujoPropuestas, EDICION_CADUCA_MIN, type FlowDeps, type NuevaReserva, type Reserva } from "../lib/proposal-flow";
 
 const CHAT = 111;
@@ -53,6 +54,8 @@ function mundo(op: Opciones = {}) {
     respuestas: [] as { id: string; texto?: string }[],
     llamadasClaude: 0,
     llamadasLegacy: [] as PeticionLegacy[],
+    perfilesPedidos: [] as string[],
+    zonasClasificar: [] as (string | undefined)[],
     fotos: new Map<string, ResumenFoto[]>(),
     albumes: [] as { chat: number; conv: string; antesDeLosMensajes: number }[],
   };
@@ -60,12 +63,13 @@ function mundo(op: Opciones = {}) {
   const deps: FlowDeps = {
     now: () => reloj,
     newNonce: () => (++n).toString(16).padStart(32, "0"),
-    async clasificar(texto) {
+    async clasificar(texto, _ahora, zona) {
+      w.zonasClasificar.push(zona);
       w.llamadasClaude++;
       return op.claude ? op.claude(texto) : { tipo: "ok", raw: salidaClaude(), entrada: 900, salida: 220 };
     },
     lecturaBasica: op.conLecturaBasica ? (texto, ahora) => ({ tipo: "ok", raw: leerBasico(texto, ahora), entrada: 0, salida: 0 }) : undefined,
-    async perfil() { return PERFIL_POR_DEFECTO; },
+    async perfil(ubicacion) { w.perfilesPedidos.push(ubicacion); return CONFIG_UBICACION[ubicacion].perfilPorDefecto; },
     async precio(p) {
       w.llamadasLegacy.push(p);
       return op.legacy ? op.legacy(p) : legacy6015;
@@ -308,7 +312,7 @@ describe("edición", () => {
     expect(m.w.llamadasLegacy).toHaveLength(2);
     expect(m.w.llamadasLegacy[1]).toMatchObject({ horas: 3 });
     expect(m.reserva()).toMatchObject({ price_cents: 7000, duration_minutes: 180, ends_at: "2026-10-20T13:00:00.000Z" });
-    expect(m.ultimo().texto).not.toContain("valores por defecto sin confirmar"); // las horas ya las fijó Blake
+    expect(m.ultimo().texto).not.toContain("son una sugerencia"); // las horas ya las fijó Blake
   });
 
   it("un precio puesto por Blake manda y no se pisa", async () => {
@@ -772,5 +776,91 @@ describe("fotos de la clienta en el flujo", () => {
       expect(m.reserva().warnings).not.toContain("Falta la foto del pelo de la clienta.");
       expect(m.reserva().warnings).toContain("Falta la foto de las trenzas de referencia.");
     });
+  });
+});
+
+describe("Miami: otra ciudad, otro nivel de precios, dólares y hora de Nueva York", () => {
+  const MENSAJE_MIAMI = "Hola! quiero 6 trenzas pegadas con extensiones rojas, por las caderas, para el 20 de octubre a las 12pm. Mi correo es rosessblake@gmail.com";
+  const salidaMiami = () => ({ tipo: "ok" as const, raw: salidaClaude({ tipo_trenzado: "pegadas" }), entrada: 1, salida: 1 });
+
+  it("«miami: …» pide el perfil de Miami (salón, zona premium, EE. UU.) a Legacy y guarda la ubicación", async () => {
+    const m = mundo({ claude: async () => salidaMiami() });
+    await m.flujo.simular(CHAT, `miami: ${MENSAJE_MIAMI}`);
+    expect(m.w.perfilesPedidos).toEqual(["miami"]);
+    expect(m.w.llamadasLegacy[0]).toMatchObject({ pais: "us", zona: "premium", estructura: "salon", nivel: "elite", smi: 1257 });
+    expect(m.reserva().spec.ubicacion).toBe("miami");
+    expect(m.reserva().pricing).toMatchObject({ origen: "legacy", moneda: "USD" });
+    expect(m.w.msgs[0].body).toBe(MENSAJE_MIAMI); // el prefijo no se guarda como parte del mensaje del cliente
+  });
+
+  it("la propuesta habla de Miami, en dólares y con la hora de Miami (12:00 en Nueva York = 16:00 UTC en octubre)", async () => {
+    const m = mundo({ claude: async () => salidaMiami() });
+    await m.flujo.simular(CHAT, `Miami: ${MENSAJE_MIAMI}`);
+    expect(m.reserva().starts_at).toBe("2026-10-20T16:00:00.000Z");
+    const t = m.ultimo().texto;
+    expect(t).toContain("📍 Miami · dólares · hora de Miami");
+    expect(t).toContain("mar 20 oct, 12:00 → 14:00 (2 h)");
+    expect(t).toContain("60,15 $ (Legacy) · Señal: 20 $");
+    expect(t).toContain("materiales 5 $");
+    expect(t).toContain("SMI 1257 $");
+    expect(t).not.toContain("€");
+    expect(m.reserva().deposit_cents).toBe(2000);
+    expect(m.reserva().warnings.join("\n")).toContain("Perfil de precios sin confirmar");
+    expect(m.reserva().warnings.join("\n")).toContain("Miami: la señal (20 $), el horario, los días libres, la dirección y cómo se cobra todavía no los has confirmado");
+    expect(m.reserva().reply_draft).toContain("el precio es de 60,15 $");
+    expect(m.reserva().reply_draft).toContain("señal de 20 $");
+  });
+
+  it("sin «miami:» sigue siendo España (euros, hora de Madrid, perfil español)", async () => {
+    const m = mundo({ claude: async () => salidaMiami() });
+    await m.flujo.simular(CHAT, MENSAJE_MIAMI);
+    expect(m.w.perfilesPedidos).toEqual(["espana"]);
+    expect(m.reserva().spec.ubicacion).toBe("espana");
+    expect(m.reserva().starts_at).toBe("2026-10-20T10:00:00.000Z");
+    expect(m.ultimo().texto).toContain("📍 España · euros · hora de Madrid");
+    expect(m.ultimo().texto).toContain("60,15 € (Legacy) · Señal: 20 €");
+  });
+
+  it("«miami» sin dos puntos al principio de un mensaje real NO se interpreta como elección de ciudad", async () => {
+    const m = mundo({ claude: async () => salidaMiami() });
+    await m.flujo.simular(CHAT, "Miami es mi ciudad, quiero 6 trenzas pegadas");
+    expect(m.w.perfilesPedidos).toEqual(["espana"]);
+    expect(m.w.msgs[0].body).toBe("Miami es mi ciudad, quiero 6 trenzas pegadas");
+  });
+
+  it("en Miami no hay días libres ni horario definidos: un domingo o las 7 de la mañana no generan aviso", async () => {
+    const m = mundo({ ahora: "2026-10-19T13:30:00Z", claude: async () => ({ tipo: "ok", raw: salidaClaude({ tipo_trenzado: "pegadas", fecha: "2026-10-25", hora: "07:00" }), entrada: 1, salida: 1 }) }); // hoy lunes; cita un domingo
+    await m.flujo.simular(CHAT, `miami: ${MENSAJE_MIAMI}`);
+    expect(m.w.enviados.some((e) => e.texto.includes("día libre"))).toBe(false); // ni la nota de hoy (lunes)
+    expect(m.reserva().warnings.join("\n")).not.toMatch(/día libre|horario habitual/);
+  });
+
+  it("Editar en Miami: «fecha 21/10 13:30» se lee en hora de Miami y «precio 90» son dólares", async () => {
+    const m = mundo({ claude: async () => salidaMiami() });
+    await m.flujo.simular(CHAT, `miami: ${MENSAJE_MIAMI}`);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "fecha 21/10 13:30\nprecio 90 $\nseñal 25 dólares");
+    expect(m.reserva().starts_at).toBe("2026-10-21T17:30:00.000Z");
+    expect(m.reserva()).toMatchObject({ price_cents: 9000, deposit_cents: 2500 });
+    expect(m.ultimo().texto).toContain("90 $ (puesto por ti) · Señal: 25 $");
+    expect(m.reserva().pricing).toMatchObject({ origen: "manual", moneda: "USD" }); // el precio puesto a mano también recuerda la moneda
+    expect(m.ultimo().texto).toContain("mié 21 oct, 13:30");
+  });
+
+  it("Aprobar en Miami: el resumen dice Miami y va en dólares y hora de Miami", async () => {
+    const m = mundo({ claude: async () => salidaMiami() });
+    await m.flujo.simular(CHAT, `miami: ${MENSAJE_MIAMI}`);
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    const t = m.w.editados.at(-1)!.texto;
+    expect(t).toContain("✅ APROBADA");
+    expect(t).toContain("📍 Miami");
+    expect(t).toContain("mar 20 oct, 12:00 · 💶 60,15 $ (señal 20 $)");
+  });
+
+  it("Claude recibe la zona de la clienta para resolver «el sábado» o «mañana» en SU calendario", async () => {
+    const m = mundo({ claude: async () => salidaMiami() });
+    await m.flujo.simular(CHAT, `miami: ${MENSAJE_MIAMI}`);
+    await m.flujo.simular(CHAT, MENSAJE_MIAMI);
+    expect(m.w.zonasClasificar).toEqual(["America/New_York", "Europe/Madrid"]);
   });
 });

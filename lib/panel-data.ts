@@ -7,6 +7,7 @@ import {
   filasDeMapeo,
   filasDePrecio,
   lineaDeTiempo,
+  monedaDeSpec,
   pasoDeConversacion,
   problemasDeReservas,
   problemasDeTareas,
@@ -18,7 +19,9 @@ import {
   type ReservaRow,
   type TareaRow,
   type WebhookInfoLite,
+  zonaDeSpec,
 } from "./panel-rules";
+import type { Moneda } from "./ubicacion";
 import type { Admin } from "./panel-session";
 import { getWebhookInfo } from "./telegram";
 
@@ -110,6 +113,9 @@ export type ReservaDetalle = {
   fin: string | null;
   precioCentimos: number | null;
   senalCentimos: number | null;
+  /** Moneda y zona horaria de la ciudad de la clienta (España o Miami). */
+  moneda: Moneda;
+  zona: string;
   mapeo: Fila[];
   precio: Fila[];
   avisos: string[];
@@ -209,6 +215,8 @@ export async function detalleConversacion(_a: Admin, id: string): Promise<Detall
       fin: r.ends_at,
       precioCentimos: r.price_cents,
       senalCentimos: r.deposit_cents,
+      moneda: monedaDeSpec(r.spec),
+      zona: zonaDeSpec(r.spec),
       mapeo: filasDeMapeo(r.spec),
       precio: filasDePrecio(r.pricing),
       avisos: Array.isArray(r.warnings) ? r.warnings.filter((w): w is string => typeof w === "string") : [],

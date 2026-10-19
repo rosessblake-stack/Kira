@@ -153,20 +153,20 @@ describe("la clienta de referencia: 6 trenzas rojas, 20 oct 12:00", () => {
     expect(p.borrador).toContain("señal de 20 €"); // la paga y señal de Blake
   });
 
-  it("avisa de todo lo provisional: calendario, perfil (si no está confirmado) y horas por defecto", () => {
+  it("avisa de todo lo provisional: calendario, perfil (si no está confirmado) y horas sugeridas", () => {
     const p = componerPropuesta(specReferencia({ tipo_trenzado: "pegadas" }), legacy(60.15), { ...ctx, perfil: { ...PERFIL_POR_DEFECTO, confirmado: false } });
     const a = p.avisos.join("\n");
     expect(a).toMatch(/Disponibilidad NO comprobada/);
     expect(a).toMatch(/Perfil de precios sin confirmar/);
-    expect(a).toMatch(/valores por defecto sin confirmar/);
+    expect(a).toMatch(/son una sugerencia: ajústalas con «horas 3»/);
     expect(a).toMatch(/No dice su nombre/);
     expect(a).not.toMatch(/No tengo su email/);
   });
 
-  it("con el perfil confirmado de Blake no avisa de perfil sin confirmar; las horas por defecto siguen avisando", () => {
+  it("con el perfil confirmado de Blake no avisa de perfil sin confirmar; las horas y materiales siguen avisando como sugerencia", () => {
     const a = componerPropuesta(specReferencia({ tipo_trenzado: "pegadas" }), legacy(60.15), ctx).avisos.join("\n");
     expect(a).not.toMatch(/Perfil de precios sin confirmar/);
-    expect(a).toMatch(/valores por defecto sin confirmar/);
+    expect(a).toMatch(/son una sugerencia: ajústalas con «horas 3»/);
   });
 
   it("el texto de Telegram lleva lo esencial y marca la prueba", () => {
@@ -291,7 +291,7 @@ describe("parsearEdicion", () => {
     const { cambios, errores } = p("precio gratis\nhoras 3\ntipo rastas\nfecha 31/02\nemail no-es-email\nbaila 3\nprecio -5\nhoras 99");
     expect(cambios).toEqual([{ k: "horas", horas: 3 }]);
     expect(errores).toHaveLength(7);
-    expect(errores.join("\n")).toMatch(/precio debe ser un número/);
+    expect(errores.join("\n")).toMatch(/el precio debe ser un importe/);
     expect(errores.join("\n")).toMatch(/tipo debe ser pegadas, sueltas, fulani/);
     expect(errores.join("\n")).toMatch(/Claves:/);
   });

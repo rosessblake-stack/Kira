@@ -8,6 +8,8 @@ import {
   filasDeMapeo,
   filasDePrecio,
   hace,
+  monedaDeSpec,
+  zonaDeSpec,
   lineaDeTiempo,
   pasoDeConversacion,
   problemasDeWebhook,
@@ -367,5 +369,53 @@ describe("filasDeMapeo y filasDePrecio (lo que se muestra de una propuesta)", ()
   it("las reservas de prueba se avisan como tales en Fallos", () => {
     const [p] = problemasDeReservas([reserva({ status: "propuesta", created_at: hacia(45), is_test: true })], AHORA);
     expect(p.detalle).toMatch(/^Reserva de prueba\./);
+  });
+});
+
+describe("Miami en el panel: dólares y hora de Miami", () => {
+  const specMiami = { ubicacion: "miami", servicio: {}, mensaje_cliente: "hola" };
+
+  it("moneda y zona según la ciudad guardada; sin dato, España", () => {
+    expect([monedaDeSpec(specMiami), zonaDeSpec(specMiami)]).toEqual(["USD", "America/New_York"]);
+    expect([monedaDeSpec({ ubicacion: "espana" }), zonaDeSpec({})]).toEqual(["EUR", "Europe/Madrid"]);
+    expect([monedaDeSpec(null), monedaDeSpec("x"), monedaDeSpec({ ubicacion: "Marte" })]).toEqual(["EUR", "EUR", "EUR"]);
+  });
+
+  it("«Lo que Kira entendió» dice la ubicación y el precio puesto por Blake va en dólares", () => {
+    const f = filasDeMapeo({ ...specMiami, precio_manual_centimos: 9000 });
+    expect(f[0]).toEqual({ etiqueta: "Ubicación", valor: "Miami (dólares, hora de Miami)" });
+    expect(f.find((x) => x.etiqueta === "Precio puesto por ti")?.valor).toBe("90 $");
+    expect(filasDeMapeo({})[0]).toEqual({ etiqueta: "Ubicación", valor: "España (euros, hora de Madrid)" });
+  });
+
+  it("el precio de Miami se enseña con $: total, materiales, SMI y tarifa", () => {
+    const f = filasDePrecio({ origen: "legacy", moneda: "USD", horas: 2, materiales: 5, perfil: { nivel: "elite", zona: "premium", estructura: "salon", smi: 1257, confirmado: false }, legacy: { totalCentimos: 9000, tarifaHora: 40 } });
+    const v = (e: string) => f.find((x) => x.etiqueta === e)?.valor;
+    expect(v("Materiales")).toBe("5 $");
+    expect(v("Perfil usado")).toBe("elite · zona premium · salon · SMI 1257 $ (sin confirmar)");
+    expect(v("Total de Legacy")).toBe("90 $");
+    expect(v("Tarifa por hora")).toBe("40 $/h");
+  });
+
+  it("sin moneda guardada pero con perfil de EE. UU.: dólares (defensa si un precio se guardó sin moneda)", () => {
+    const f = filasDePrecio({ origen: "manual", perfil: { nivel: "elite", zona: "premium", estructura: "salon", smi: 1257, pais: "us", confirmado: false } });
+    expect(f.find((x) => x.etiqueta === "Perfil usado")?.valor).toBe("elite · zona premium · salon · SMI 1257 $ (sin confirmar)");
+  });
+
+  it("sin moneda guardada (propuestas antiguas) sigue en euros", () => {
+    const f = filasDePrecio({ origen: "legacy", materiales: 5, legacy: { totalCentimos: 6015 } });
+    expect(f.find((x) => x.etiqueta === "Materiales")?.valor).toBe("5 €");
+    expect(f.find((x) => x.etiqueta === "Total de Legacy")?.valor).toBe("60,15 €");
+  });
+
+  it("las citas de Miami se muestran en su hora (12:00 allí = 16:00 UTC), las demás en la de Madrid", () => {
+    expect(fechaHora("2026-10-20T16:00:00.000Z", "America/New_York")).toMatch(/12:00/);
+    expect(fechaHora("2026-10-20T16:00:00.000Z")).toMatch(/18:00/);
+    expect(fechaHora("2026-10-20T10:00:00.000Z", "Europe/Madrid")).toMatch(/12:00/);
+  });
+
+  it("la línea de tiempo pone la reserva de Miami en dólares", () => {
+    const [it] = lineaDeTiempo([], [], [{ created_at: "2026-10-19T10:00:00Z", status: "propuesta", service_description: "6 trenzas", price_cents: 6015, deposit_cents: 2000, spec: specMiami }]);
+    expect(it.texto).toBe("6 trenzas · precio 60,15 $ · señal 20 $");
   });
 });

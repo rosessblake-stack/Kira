@@ -72,9 +72,9 @@ Devuelve únicamente el JSON.`;
 const DIAS = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
 
 /** "lunes 2026-10-19, 15:30 (hora de Madrid)": el modelo necesita el día de la semana para fechas relativas. */
-export function describirAhora(ahora: Date): string {
+export function describirAhora(ahora: Date, zona: string = "Europe/Madrid"): string {
   const partes = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Madrid",
+    timeZone: zona,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -85,14 +85,14 @@ export function describirAhora(ahora: Date): string {
   }).formatToParts(ahora);
   const get = (t: string) => partes.find((p) => p.type === t)?.value ?? "";
   const dia = DIAS[["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(get("weekday"))] ?? get("weekday");
-  return `${dia} ${get("year")}-${get("month")}-${get("day")}, ${get("hour")}:${get("minute")} (hora de Madrid)`;
+  return `${dia} ${get("year")}-${get("month")}-${get("day")}, ${get("hour")}:${get("minute")} (${zona === "Europe/Madrid" ? "hora de Madrid" : zona === "America/New_York" ? "hora de Miami" : zona})`;
 }
 
-export function construirPrompt(textoCliente: string, ahora: Date): string {
-  return `Fecha y hora actuales: ${describirAhora(ahora)}.\n\n${envolverMensajeCliente(textoCliente)}`;
+export function construirPrompt(textoCliente: string, ahora: Date, zona?: string): string {
+  return `Fecha y hora actuales: ${describirAhora(ahora, zona)}.\n\n${envolverMensajeCliente(textoCliente)}`;
 }
 
-export async function clasificarConClaude(textoCliente: string, ahora: Date): Promise<RespuestaClaude> {
+export async function clasificarConClaude(textoCliente: string, ahora: Date, zona?: string): Promise<RespuestaClaude> {
   if (!process.env.ANTHROPIC_API_KEY) throw new SinClaveError();
 
   const client = new Anthropic({ maxRetries: 1, timeout: 30_000 });
@@ -101,7 +101,7 @@ export async function clasificarConClaude(textoCliente: string, ahora: Date): Pr
     // La reflexión interna también cuenta contra max_tokens: se deja holgura para que el JSON no se corte.
     max_tokens: 4000,
     system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: construirPrompt(textoCliente, ahora) }],
+    messages: [{ role: "user", content: construirPrompt(textoCliente, ahora, zona) }],
     output_config: { effort: "low", format: { type: "json_schema", schema: CLASIFICACION_SCHEMA } },
   });
 

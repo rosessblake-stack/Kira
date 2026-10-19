@@ -1,5 +1,6 @@
 import { euros } from "./panel-rules";
-import { esDiaLibre, fechaLarga, listaDiasLibres, nombreDia, partesMadrid } from "./agenda";
+import { esDiaLibre, fechaLarga, listaDiasLibres, nombreDia, partesEn } from "./agenda";
+import { CONFIG_UBICACION, dinero, separarUbicacion, SIMBOLO, type Moneda, type Ubicacion } from "./ubicacion";
 import type { ResumenFoto } from "./fotos";
 import {
   INTENCION_EN_BD,
@@ -29,6 +30,7 @@ import {
   parsearEdicion,
   specDesdeClasificacion,
   textoPropuesta,
+  contextoDe,
   type Cambio,
   type Propuesta,
   type ResultadoPrecio,
@@ -69,6 +71,8 @@ export type Reserva = {
 
 export type PricingGuardado = {
   origen: ResultadoPrecio["origen"];
+  /** Moneda de los importes (la de la ubicación de la clienta). Las propuestas antiguas, sin dato, son en euros. */
+  moneda?: Moneda;
   perfil?: PerfilLegacy;
   horas?: number;
   materiales?: number;
@@ -84,13 +88,14 @@ type Fuente = "manychat" | "stripe" | "telegram" | "typeform" | "claude" | "cale
 export interface FlowDeps {
   now(): Date;
   newNonce(): string;
-  clasificar(texto: string, ahora: Date): Promise<RespuestaClaude>;
+  clasificar(texto: string, ahora: Date, zonaHoraria?: string): Promise<RespuestaClaude>;
   /**
    * Lectura por reglas, SIN Claude. Solo para las conversaciones de prueba (/simular) y solo cuando falta la clave:
    * deja ver todo el recorrido antes de tenerla. Un canal real nunca debe usarla.
    */
-  lecturaBasica?(texto: string, ahora: Date): RespuestaClaude;
-  perfil(): Promise<PerfilLegacy>;
+  lecturaBasica?(texto: string, ahora: Date, zonaHoraria?: string): RespuestaClaude;
+  /** Perfil de precios de Legacy de ese lugar (España o Miami). */
+  perfil(ubicacion: Ubicacion): Promise<PerfilLegacy>;
   precio(peticion: PeticionLegacy): Promise<PrecioLegacy>;
   estaPausada(): Promise<boolean>;
   contarLlamadasClaudeHoy(): Promise<number>;
@@ -163,14 +168,15 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     perfil: PerfilLegacy,
     ids: { conversation_id: string | null; booking_id?: string | null },
   ): Promise<{ resultado: ResultadoPrecio; guardado: PricingGuardado }> {
+    const { moneda } = contextoDe(spec);
     if (spec.precio_manual_centimos !== null) {
       return {
         resultado: { origen: "manual", totalCentimos: spec.precio_manual_centimos },
-        guardado: { origen: "manual", perfil },
+        guardado: { origen: "manual", perfil, moneda },
       };
     }
     const faltan = datosFaltantes(spec.servicio);
-    if (faltan.length) return { resultado: { origen: "sin_calcular", faltan }, guardado: { origen: "sin_calcular", perfil } };
+    if (faltan.length) return { resultado: { origen: "sin_calcular", faltan }, guardado: { origen: "sin_calcular", perfil, moneda } };
 
     const horas = spec.horas ?? horasPorDefecto(spec.servicio);
     const materiales = materialesPorDefecto(spec.servicio);
@@ -179,14 +185,14 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       await deps.logEvent({
         source: "legacy",
         kind: "precio_calculado",
-        summary: `Legacy calculó ${euros(precio.totalCentimos)} (${horas} h, materiales ${materiales} €)`,
+        summary: `Legacy calculó ${dinero(precio.totalCentimos, moneda)} (${horas} h, materiales ${materiales} ${SIMBOLO[moneda]})`,
         detail: { horas, materiales, total_centimos: precio.totalCentimos, tarifa_hora: precio.tarifaHora },
         ...ids,
       });
-      return { resultado: { origen: "legacy", precio }, guardado: { origen: "legacy", perfil, horas, materiales, legacy: precio } };
+      return { resultado: { origen: "legacy", precio }, guardado: { origen: "legacy", perfil, moneda, horas, materiales, legacy: precio } };
     } catch (e) {
       await deps.logEvent({ source: "legacy", kind: "legacy_error", level: "error", summary: msg(e), ...ids });
-      return { resultado: { origen: "error", error: msg(e) }, guardado: { origen: "error", perfil, horas, materiales, error: msg(e) } };
+      return { resultado: { origen: "error", error: msg(e) }, guardado: { origen: "error", perfil, moneda, horas, materiales, error: msg(e) } };
     }
   }
 
@@ -219,12 +225,14 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     };
   }
 
-  const resumenDecision = (r: Reserva) =>
-    [
-      `👤 ${r.spec?.nombre ?? "sin nombre"}${r.client_email ? ` (${r.client_email})` : ""}`,
+  const resumenDecision = (r: Reserva) => {
+    const lugar = contextoDe(r.spec ?? {});
+    return [
+      `👤 ${r.spec?.nombre ?? "sin nombre"}${r.client_email ? ` (${r.client_email})` : ""} · 📍 ${lugar.nombre}`,
       `🧾 ${r.service_description}`,
-      `📅 ${r.starts_at ? fechaLarga(new Date(r.starts_at)) : "sin fecha"} · 💶 ${euros(r.price_cents)} (señal ${euros(r.deposit_cents)})`,
+      `📅 ${r.starts_at ? fechaLarga(new Date(r.starts_at), lugar.zonaHoraria) : "sin fecha"} · 💶 ${dinero(r.price_cents, lugar.moneda)} (señal ${dinero(r.deposit_cents, lugar.moneda)})`,
     ].join("\n");
+  };
 
   async function avisarADerivar(chatId: number, convId: string, titulo: string, texto: string, detalle?: Record<string, unknown>) {
     await deps.logEvent({ source: "system", kind: "derivado_a_blake", level: "warn", summary: titulo, detail: detalle, conversation_id: convId });
@@ -264,7 +272,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
   async function enviarPropuesta(chatId: number, r: Reserva, prefijo = ""): Promise<void> {
     const spec = r.spec;
     const guardado = resultadoGuardado(r);
-    const perfil = r.pricing.perfil ?? (await deps.perfil());
+    const perfil = r.pricing.perfil ?? (await deps.perfil(contextoDe(spec).ubicacion));
     const fotos = await fotosParaPropuesta(r.conversation_id);
     const prop = componerPropuesta(spec, guardado, { ahora: deps.now(), perfil, calendarioConectado: false, fotos });
     const nonce = deps.newNonce();
@@ -307,9 +315,12 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     conversacionCreada: (id: string) => void,
   ): Promise<void> {
     const ahora = deps.now();
-    const texto = textoBruto.trim().slice(0, MAX_CARACTERES_CLIENTE);
+    // «miami: …» al principio elige dónde está la clienta (en ManyChat lo decide el primer botón); sin él, España.
+    const { ubicacion, texto: sinPrefijo } = separarUbicacion(textoBruto);
+    const lugar = CONFIG_UBICACION[ubicacion];
+    const texto = sinPrefijo.trim().slice(0, MAX_CARACTERES_CLIENTE);
     if (!texto) {
-      await deps.enviar(chatId, "Escribe el mensaje del cliente después de /simular. Por ejemplo:\n\n/simular Hola, quiero 6 trenzas con extensiones para el sábado a las 12");
+      await deps.enviar(chatId, "Escribe el mensaje del cliente después de /simular. Por ejemplo:\n\n/simular Hola, quiero 6 trenzas con extensiones para el sábado a las 12\n\nPara una clienta de Miami: /simular miami: Hola, quiero 6 trenzas…");
       return;
     }
 
@@ -317,7 +328,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     conversacionCreada(convId);
     await deps.guardarMensaje(convId, "in", texto, false);
     await deps.actualizarConversacion(convId, { last_client_message_at: ahora.toISOString() });
-    await deps.logEvent({ source: "system", kind: "mensaje_simulado", summary: "Mensaje de cliente simulado recibido", detail: { caracteres: texto.length }, conversation_id: convId });
+    await deps.logEvent({ source: "system", kind: "mensaje_simulado", summary: `Mensaje de cliente simulado recibido (${lugar.nombre})`, detail: { caracteres: texto.length, ubicacion }, conversation_id: convId });
     if (alCrear) {
       try {
         await alCrear(convId);
@@ -335,9 +346,10 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     }
 
     // Día libre: con una clienta real Kira no contestaría (docs/POLITICA.md). Esto es una prueba de Blake, así que sigue, pero se lo dice.
-    if (esDiaLibre(ahora)) {
-      await deps.logEvent({ source: "system", kind: "mensaje_en_dia_libre", summary: `Mensaje simulado en día libre (${nombreDia(partesMadrid(ahora).diaSemana)})`, conversation_id: convId });
-      await deps.enviar(chatId, `ℹ️ Hoy es ${nombreDia(partesMadrid(ahora).diaSemana)}, día libre (no trabajas: ${listaDiasLibres()}). Con una clienta real Kira no contestaría. Como esto es una prueba, sigo.`);
+    if (esDiaLibre(ahora, lugar.reglas)) {
+      const hoy = nombreDia(partesEn(ahora, lugar.zonaHoraria).diaSemana);
+      await deps.logEvent({ source: "system", kind: "mensaje_en_dia_libre", summary: `Mensaje simulado en día libre (${hoy}, ${lugar.nombre})`, conversation_id: convId });
+      await deps.enviar(chatId, `ℹ️ Hoy es ${hoy}, día libre (no trabajas: ${listaDiasLibres(lugar.reglas)}). Con una clienta real Kira no contestaría. Como esto es una prueba, sigo.`);
     }
 
     // 2. Señales de manipulación: sin gastar una llamada a Claude y sin contestar.
@@ -356,14 +368,14 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     let respuesta: RespuestaClaude;
     let basica = false;
     try {
-      respuesta = await deps.clasificar(texto, ahora);
+      respuesta = await deps.clasificar(texto, ahora, lugar.zonaHoraria);
     } catch (e) {
       const sinClave = e instanceof SinClaveError;
       if (sinClave && deps.lecturaBasica) {
         // Sin clave: se lee con reglas simples (solo pruebas) para poder ver todo el recorrido. Cualquier otro
         // fallo de Claude NO cae aquí: ahí lo correcto es derivar a Blake.
         basica = true;
-        respuesta = deps.lecturaBasica(texto, ahora);
+        respuesta = deps.lecturaBasica(texto, ahora, lugar.zonaHoraria);
         await deps.logEvent({ source: "system", kind: "lectura_basica", level: "warn", summary: "Sin clave de Claude: mensaje leído con la lectura básica por reglas (solo pruebas)", conversation_id: convId });
       } else {
         await deps.logEvent({ source: "claude", kind: sinClave ? "sin_clave_anthropic" : "claude_error", level: "error", summary: describirErrorClaude(e), conversation_id: convId });
@@ -413,12 +425,12 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       );
       return;
     }
-    await proponerCita(chatId, convId, c, texto, basica);
+    await proponerCita(chatId, convId, c, texto, basica, ubicacion);
   }
 
-  async function proponerCita(chatId: number, convId: string, c: Clasificacion, texto: string, basica: boolean) {
-    const spec = specDesdeClasificacion(c, texto, basica ? "basica" : "claude");
-    const perfil = await deps.perfil();
+  async function proponerCita(chatId: number, convId: string, c: Clasificacion, texto: string, basica: boolean, ubicacion: Ubicacion) {
+    const spec = specDesdeClasificacion(c, texto, basica ? "basica" : "claude", ubicacion);
+    const perfil = await deps.perfil(ubicacion);
     const { resultado, guardado } = await calcularPrecio(spec, perfil, { conversation_id: convId });
     const fotos = await fotosParaPropuesta(convId);
     const prop = componerPropuesta(spec, resultado, { ahora: deps.now(), perfil, calendarioConectado: false, fotos });
@@ -521,7 +533,8 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       return true;
     }
 
-    const { cambios: pedidos, errores } = parsearEdicion(texto, deps.now());
+    const lugar = contextoDe(r.spec);
+    const { cambios: pedidos, errores } = parsearEdicion(texto, deps.now(), lugar.zonaHoraria);
     const esDeFoto = (c: Cambio) => c.k === "foto_pelo" || c.k === "foto_referencia";
     const cambios: Cambio[] = pedidos.filter((c) => !esDeFoto(c));
     // Lo que Blake ve en las fotos se guarda junto a cada foto; no cambia la reserva.
@@ -541,12 +554,12 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     }
 
     const { spec, recalcular } = aplicarCambios(r.spec, cambios);
-    const perfil = r.pricing.perfil ?? (await deps.perfil());
+    const perfil = r.pricing.perfil ?? (await deps.perfil(lugar.ubicacion));
     let guardado: PricingGuardado = r.pricing;
     if (recalcular || r.pricing.origen === "sin_calcular" || r.pricing.origen === "error") {
       guardado = (await calcularPrecio(spec, perfil, ids)).guardado;
     } else if (spec.precio_manual_centimos !== null) {
-      guardado = { origen: "manual", perfil };
+      guardado = { origen: "manual", perfil, moneda: lugar.moneda };
     }
     await deps.actualizarReserva(r.id, { spec, pricing: guardado });
     await deps.logEvent({ source: "telegram", kind: "propuesta_editada", summary: `Blake editó la propuesta (${cambios.map((c) => etiquetaCambio(c.k)).join(", ")})`, detail: { cambios: cambios.map((c) => c.k), recalculado: recalcular }, ...ids });

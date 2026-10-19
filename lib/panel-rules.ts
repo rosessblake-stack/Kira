@@ -3,6 +3,8 @@
  * fallo y cómo se muestran fechas. Sin acceso a datos, para poder probarlas.
  */
 
+import { CONFIG_UBICACION, SIMBOLO, dinero, interpretarUbicacion, type Moneda } from "./ubicacion";
+
 export const UMBRALES = {
   /** Una propuesta sin tu Aprobar durante más de esto es un aviso. */
   propuestaSinAprobarMin: 30,
@@ -343,8 +345,7 @@ export type ItemLinea = {
 };
 
 export function euros(centimos: number | null | undefined): string {
-  if (centimos == null) return "—";
-  return `${(centimos / 100).toLocaleString("es-ES", { minimumFractionDigits: centimos % 100 ? 2 : 0 })} €`;
+  return dinero(centimos, "EUR");
 }
 
 export function lineaDeTiempo(
@@ -356,6 +357,8 @@ export function lineaDeTiempo(
     service_description: string;
     price_cents: number | null;
     deposit_cents: number | null;
+    /** Lo guardado de la propuesta: dice de qué ciudad es (y por tanto en qué moneda están los importes). */
+    spec?: unknown;
   }[],
 ): ItemLinea[] {
   const items: ItemLinea[] = [
@@ -377,7 +380,7 @@ export function lineaDeTiempo(
       at: r.created_at,
       tipo: "reserva",
       titulo: `Reserva: ${ESTADOS_RESERVA[r.status] ?? r.status}`,
-      texto: `${r.service_description} · precio ${euros(r.price_cents)} · señal ${euros(r.deposit_cents)}`,
+      texto: `${r.service_description} · precio ${dinero(r.price_cents, monedaDeSpec(r.spec))} · señal ${dinero(r.deposit_cents, monedaDeSpec(r.spec))}`,
     })),
   ];
   return items.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
@@ -388,6 +391,10 @@ export function lineaDeTiempo(
 // ---------------------------------------------------------------------------
 
 export type Fila = { etiqueta: string; valor: string };
+
+/** Moneda y zona horaria de una propuesta según lo guardado (sin dato = España y euros). */
+export const monedaDeSpec = (spec: unknown): Moneda => CONFIG_UBICACION[interpretarUbicacion((spec as { ubicacion?: unknown } | null)?.ubicacion)].moneda;
+export const zonaDeSpec = (spec: unknown): string => CONFIG_UBICACION[interpretarUbicacion((spec as { ubicacion?: unknown } | null)?.ubicacion)].zonaHoraria;
 
 const NO_INDICADO = "no indicado";
 const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
@@ -410,7 +417,9 @@ export function filasDeMapeo(spec: unknown): Fila[] {
     return t ? (mapa?.[t] ?? t) : NO_INDICADO;
   };
   const ext = txt(v.extensiones);
+  const lugar = CONFIG_UBICACION[interpretarUbicacion(s.ubicacion)];
   const filas: Fila[] = [
+    { etiqueta: "Ubicación", valor: `${lugar.nombre} (${lugar.moneda === "USD" ? "dólares, hora de Miami" : "euros, hora de Madrid"})` },
     { etiqueta: "Mensaje del cliente", valor: txt(s.mensaje_cliente) ?? "—" },
     { etiqueta: "Tipo de trenzado", valor: dato(v.tipo_trenzado) },
     { etiqueta: "Número de trenzas", valor: numr(v.numero_trenzas) !== null ? String(numr(v.numero_trenzas)) : NO_INDICADO },
@@ -430,7 +439,7 @@ export function filasDeMapeo(spec: unknown): Fila[] {
   if (s.clasificador === "claude") filas.push({ etiqueta: "Quién lo interpretó", valor: "Claude" });
   if (s.clasificador === "basica") filas.push({ etiqueta: "Quién lo interpretó", valor: "Lectura básica por reglas (sin Claude)" });
   if (numr(s.horas) !== null) filas.push({ etiqueta: "Horas fijadas por ti", valor: `${numr(s.horas)} h` });
-  if (numr(s.precio_manual_centimos) !== null) filas.push({ etiqueta: "Precio puesto por ti", valor: euros(numr(s.precio_manual_centimos)) });
+  if (numr(s.precio_manual_centimos) !== null) filas.push({ etiqueta: "Precio puesto por ti", valor: dinero(numr(s.precio_manual_centimos), lugar.moneda) });
   return filas;
 }
 
@@ -441,41 +450,40 @@ const ORIGENES_PRECIO: Record<string, string> = {
   error: "Error al consultar Legacy",
 };
 
-/** Cómo se llegó al precio: origen, perfil usado y datos de Legacy. */
+/** Cómo se llegó al precio: origen, perfil usado y datos de Legacy. La moneda es la guardada con el precio (sin dato, euros). */
 export function filasDePrecio(pricing: unknown): Fila[] {
   const p = obj(pricing);
   const origen = txt(p.origen);
   if (!origen) return [];
+  // La moneda guardada con el precio; si falta, la del país del perfil usado (EE. UU. = dólares). Sin nada, euros.
+  const moneda: Moneda = p.moneda === "USD" || (p.moneda === undefined && obj(p.perfil).pais === "us") ? "USD" : "EUR";
+  const sim = SIMBOLO[moneda];
   const perfil = obj(p.perfil);
   const legacy = obj(p.legacy);
   const filas: Fila[] = [{ etiqueta: "Origen del precio", valor: ORIGENES_PRECIO[origen] ?? origen }];
   if (numr(p.horas) !== null) filas.push({ etiqueta: "Horas usadas", valor: `${numr(p.horas)} h` });
-  if (numr(p.materiales) !== null) filas.push({ etiqueta: "Materiales", valor: `${numr(p.materiales)} €` });
+  if (numr(p.materiales) !== null) filas.push({ etiqueta: "Materiales", valor: `${numr(p.materiales)} ${sim}` });
   if (txt(perfil.nivel)) {
     filas.push({
       etiqueta: "Perfil usado",
-      valor: `${txt(perfil.nivel)} · zona ${txt(perfil.zona) ?? "?"} · ${txt(perfil.estructura) ?? "?"} · SMI ${numr(perfil.smi) ?? "?"} €${perfil.confirmado === true ? "" : " (sin confirmar)"}`,
+      valor: `${txt(perfil.nivel)} · zona ${txt(perfil.zona) ?? "?"} · ${txt(perfil.estructura) ?? "?"} · SMI ${numr(perfil.smi) ?? "?"} ${sim}${perfil.confirmado === true ? "" : " (sin confirmar)"}`,
     });
   }
-  if (numr(legacy.totalCentimos) !== null) filas.push({ etiqueta: "Total de Legacy", valor: euros(numr(legacy.totalCentimos)) });
-  if (numr(legacy.tarifaHora) !== null) filas.push({ etiqueta: "Tarifa por hora", valor: `${numr(legacy.tarifaHora)} €/h` });
+  if (numr(legacy.totalCentimos) !== null) filas.push({ etiqueta: "Total de Legacy", valor: dinero(numr(legacy.totalCentimos), moneda) });
+  if (numr(legacy.tarifaHora) !== null) filas.push({ etiqueta: "Tarifa por hora", valor: `${numr(legacy.tarifaHora)} ${sim}/h` });
   if (txt(p.error)) filas.push({ etiqueta: "Error", valor: txt(p.error)! });
   return filas;
 }
 
 // ---------------------------------------------------------------------------
-// Fechas (siempre hora de Madrid)
+// Fechas (hora de Madrid, salvo las citas de Miami, que se enseñan en su hora)
 // ---------------------------------------------------------------------------
 
 const ZONA = "Europe/Madrid";
-const fmtFechaHora = new Intl.DateTimeFormat("es-ES", {
-  timeZone: ZONA,
-  day: "numeric",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  hourCycle: "h23",
-});
+const formatoFechaHora = (zona: string) =>
+  new Intl.DateTimeFormat("es-ES", { timeZone: zona, day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const fmtFechaHora = formatoFechaHora(ZONA);
+const fmtFechaHoraMiami = formatoFechaHora("America/New_York");
 
 const fmtSoloFecha = new Intl.DateTimeFormat("es-ES", { timeZone: ZONA, day: "numeric", month: "long", year: "numeric" });
 
@@ -485,10 +493,11 @@ export function soloFecha(iso: string | null | undefined): string {
   return Number.isNaN(t) ? "—" : fmtSoloFecha.format(new Date(t));
 }
 
-export function fechaHora(iso: string | null | undefined): string {
+export function fechaHora(iso: string | null | undefined, zona?: string): string {
   if (!iso) return "—";
   const t = Date.parse(iso);
-  return Number.isNaN(t) ? "—" : fmtFechaHora.format(new Date(t));
+  if (Number.isNaN(t)) return "—";
+  return (zona === "America/New_York" ? fmtFechaHoraMiami : fmtFechaHora).format(new Date(t));
 }
 
 export function hace(iso: string | null | undefined, ahora: Date): string {

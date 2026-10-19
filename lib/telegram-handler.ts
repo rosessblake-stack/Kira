@@ -218,7 +218,7 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   if (cmd === "/start") {
     await deps.sendMessage(
       chatId,
-      "Kira activa. Te he identificado como administrador.\n\n/simular <mensaje> → simula el mensaje de un cliente y te manda la propuesta\nFotos → mándame la foto del pelo y la de las trenzas; si quieres, con un pie («pelo: rizado, fino…» o «referencia: boxeadoras largas»)\n/fotos → te devuelvo las fotos de la última prueba\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
+      "Kira activa. Te he identificado como administrador.\n\n/simular <mensaje> → simula el mensaje de un cliente (España) y te manda la propuesta\n/simular miami: <mensaje> → igual, pero una clienta de Miami (dólares y hora de Miami)\nFotos → mándame la foto del pelo y la de las trenzas; si quieres, con un pie («pelo: rizado, fino…» o «referencia: boxeadoras largas»)\n/fotos → te devuelvo las fotos de la última prueba\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
     );
     return;
   }

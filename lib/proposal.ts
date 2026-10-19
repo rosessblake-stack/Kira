@@ -1,4 +1,4 @@
-import { avisosDeHorario, duracionLegible, fechaLarga, madridAUtc, partesMadrid } from "./agenda";
+import { ZONA_MADRID, aUtc, avisosDeHorario, duracionLegible, fechaLarga, partesEn } from "./agenda";
 import {
   EXTENSIONES,
   LARGOS_EXTENSIONES,
@@ -8,7 +8,7 @@ import {
   type Clasificacion,
 } from "./intents";
 import { ETIQUETA_FOTO, limpiarDescripcion, type ResumenFoto } from "./fotos";
-import { euros } from "./panel-rules";
+import { CONFIG_UBICACION, dinero, interpretarUbicacion, type Moneda, type Ubicacion } from "./ubicacion";
 import {
   datosFaltantes,
   horasPorDefecto,
@@ -23,11 +23,13 @@ import {
  * Todo es lógica pura. Nada de aquí envía nada a nadie ni toca el calendario.
  */
 
-export const SENAL_POR_DEFECTO_CENTIMOS = 2000; // paga y señal fijada por Blake: 20 € (admite 10–20 €; «señal N» la cambia en una propuesta)
+export const SENAL_POR_DEFECTO_CENTIMOS = CONFIG_UBICACION.espana.senalCentimos; // paga y señal fijada por Blake: 20 € (admite 10–20 €; «señal N» la cambia en una propuesta)
 export const SENAL_MIN_CENTIMOS = 1000;
 export const SENAL_MAX_CENTIMOS = 2000;
 
 export type SpecGuardada = {
+  /** Dónde está la clienta (primera pregunta de ManyChat). Las propuestas antiguas, sin este dato, son de España. */
+  ubicacion?: Ubicacion;
   /** Mensaje original del cliente (recortado): permite volver a mostrar la propuesta al editarla. */
   mensaje_cliente: string;
   servicio: ServicioParaPrecio;
@@ -50,12 +52,20 @@ export type SpecGuardada = {
   respuesta_manual: string | null;
 };
 
+/** Ubicación, moneda y zona horaria de una propuesta (las antiguas sin dato son de España y euros). */
+export function contextoDe(spec: Pick<SpecGuardada, "ubicacion">) {
+  const ubicacion = interpretarUbicacion(spec.ubicacion);
+  return { ubicacion, ...CONFIG_UBICACION[ubicacion] };
+}
+
 export function specDesdeClasificacion(
   c: Clasificacion,
   mensajeCliente: string,
   clasificador: "claude" | "basica" = "claude",
+  ubicacion: Ubicacion = "espana",
 ): SpecGuardada {
   return {
+    ubicacion,
     mensaje_cliente: mensajeCliente,
     clasificador,
     servicio: {
@@ -79,7 +89,7 @@ export function specDesdeClasificacion(
     avisos_validacion: c.avisosValidacion,
     horas: null,
     precio_manual_centimos: null,
-    senal_centimos: SENAL_POR_DEFECTO_CENTIMOS,
+    senal_centimos: CONFIG_UBICACION[ubicacion].senalCentimos,
     respuesta_manual: null,
   };
 }
@@ -150,8 +160,8 @@ function describirServicioNatural(s: SpecGuardada): string {
   return partes.join(" ");
 }
 
-export function resumenPerfil(p: PerfilLegacy): string {
-  return `${p.nivel === "elite" ? "élite" : p.nivel} · zona ${p.zona} · ${p.estructura === "salon" ? "salón" : "casa"} · SMI ${p.smi} €`;
+export function resumenPerfil(p: PerfilLegacy, moneda: Moneda = "EUR"): string {
+  return `${p.nivel === "elite" ? "élite" : p.nivel} · zona ${p.zona} · ${p.estructura === "salon" ? "salón" : "casa"} · SMI ${p.smi} ${moneda === "USD" ? "$" : "€"}`;
 }
 
 export function componerPropuesta(
@@ -159,12 +169,14 @@ export function componerPropuesta(
   precio: ResultadoPrecio,
   ctx: { ahora: Date; perfil: PerfilLegacy; calendarioConectado: boolean; fotos?: ResumenFoto[] },
 ): Propuesta {
+  const lugar = contextoDe(spec);
   const horasUsadas = spec.horas ?? horasPorDefecto(spec.servicio);
   const materialesUsados = materialesPorDefecto(spec.servicio);
   const duracionMinutos = horasUsadas > 0 ? Math.round(horasUsadas * 60) : null;
 
+  // La fecha y la hora que da la clienta son las de SU ciudad (Madrid o Miami).
   let inicio: Date | null = null;
-  if (spec.fecha && spec.hora) inicio = madridAUtc(spec.fecha, spec.hora);
+  if (spec.fecha && spec.hora) inicio = aUtc(spec.fecha, spec.hora, lugar.zonaHoraria);
   const fin = inicio && duracionMinutos ? new Date(inicio.getTime() + duracionMinutos * 60_000) : null;
 
   const precioCentimos =
@@ -189,12 +201,13 @@ export function componerPropuesta(
   if (!ctx.calendarioConectado) {
     avisos.push("Disponibilidad NO comprobada: el calendario todavía no está conectado. Mira tu agenda antes de aprobar.");
   }
-  avisos.push(...avisosDeHorario(inicio, fin, ctx.ahora));
+  avisos.push(...avisosDeHorario(inicio, fin, ctx.ahora, lugar.reglas));
+  avisos.push(...lugar.pendientes);
   if (precio.origen === "manual") avisos.push("El precio lo has puesto tú: no lo ha calculado Legacy.");
   if (precio.origen === "legacy") {
-    if (!ctx.perfil.confirmado) avisos.push(`Perfil de precios sin confirmar (${resumenPerfil(ctx.perfil)}).`);
+    if (!ctx.perfil.confirmado) avisos.push(`Perfil de precios sin confirmar (${resumenPerfil(ctx.perfil, lugar.moneda)}).`);
     if (spec.horas === null) {
-      avisos.push(`Horas (${horasUsadas} h) y materiales (${materialesUsados} €) son valores por defecto sin confirmar. Cámbialos con «horas 3».`);
+      avisos.push(`Horas (${horasUsadas} h) y materiales (${materialesUsados} ${lugar.moneda === "USD" ? "$" : "€"}) son una sugerencia: ajústalas con «horas 3».`);
     }
   }
   const s = spec.servicio;
@@ -209,7 +222,7 @@ export function componerPropuesta(
   if (!spec.email) avisos.push("No tengo su email: hará falta para la reserva y el recibo.");
   if (!spec.nombre) avisos.push("No dice su nombre.");
   if (spec.senal_centimos < SENAL_MIN_CENTIMOS || spec.senal_centimos > SENAL_MAX_CENTIMOS) {
-    avisos.push(`La señal (${euros(spec.senal_centimos)}) está fuera del rango habitual de 10–20 €.`);
+    avisos.push(`La señal (${dinero(spec.senal_centimos, lugar.moneda)}) está fuera del rango habitual de 10–20 ${lugar.moneda === "USD" ? "$" : "€"}.`);
   }
   avisos.push(...spec.avisos_validacion);
   if (spec.notas) avisos.push(`Nota del clasificador: ${spec.notas}`);
@@ -228,7 +241,7 @@ export function componerPropuesta(
     materialesUsados,
     avisos,
     faltan,
-    borrador: componerBorrador(spec, precioCentimos, duracionMinutos, inicio, faltan),
+    borrador: componerBorrador(spec, precioCentimos, duracionMinutos, inicio, faltan, lugar.moneda, lugar.zonaHoraria),
     precioOrigen: precio.origen,
   };
 }
@@ -245,6 +258,8 @@ function componerBorrador(
   duracion: number | null,
   inicio: Date | null,
   faltan: string[],
+  moneda: Moneda,
+  zona: string,
 ): string {
   if (spec.respuesta_manual) return spec.respuesta_manual;
   if (precio === null || !inicio) {
@@ -253,9 +268,9 @@ function componerBorrador(
   const saludo = spec.nombre ? `¡Hola, ${spec.nombre}!` : "¡Hola!";
   return [
     `${saludo} Gracias por escribirme 😊`,
-    `Para ${describirServicioNatural(spec)}, el precio es de ${euros(precio)}${duracion ? ` y dura aproximadamente ${duracionLegible(duracion)}` : ""}.`,
-    `Me pides el ${fechaLarga(inicio)}. Lo confirmo y te aviso enseguida.`,
-    `Para reservar el hueco se deja una señal de ${euros(spec.senal_centimos)}, que se descuenta del total. En cuanto lo confirme te paso el enlace de pago.`,
+    `Para ${describirServicioNatural(spec)}, el precio es de ${dinero(precio, moneda)}${duracion ? ` y dura aproximadamente ${duracionLegible(duracion)}` : ""}.`,
+    `Me pides el ${fechaLarga(inicio, zona)}. Lo confirmo y te aviso enseguida.`,
+    `Para reservar el hueco se deja una señal de ${dinero(spec.senal_centimos, moneda)}, que se descuenta del total. En cuanto lo confirme te paso el enlace de pago.`,
   ].join("\n\n");
 }
 
@@ -270,9 +285,11 @@ export function textoPropuesta(
   spec: SpecGuardada,
   ctx: { mensajeCliente: string; esPrueba: boolean; perfil: PerfilLegacy; fotos?: ResumenFoto[] },
 ): string {
+  const lugar = contextoDe(spec);
   const l: string[] = [];
   l.push(`${ctx.esPrueba ? "🧪 PRUEBA · " : ""}PROPUESTA DE CITA`);
   l.push("");
+  l.push(`📍 ${lugar.nombre} · ${lugar.moneda === "USD" ? "dólares · hora de Miami" : "euros · hora de Madrid"}`);
   l.push(`👤 Cliente: ${spec.nombre ?? "sin nombre"}${p.emailCliente ? ` (${p.emailCliente})` : ""}${spec.instagram ? ` · ${spec.instagram}` : ""}`);
   l.push(`💬 Dijo: «${recorte(limpiarTexto(ctx.mensajeCliente, 600), 500)}»`);
   l.push("");
@@ -281,7 +298,7 @@ export function textoPropuesta(
   if (spec.servicio.largo_cabello) l.push(`• Pelo de la clienta: ${LARGO_CABELLO[spec.servicio.largo_cabello]}`);
   if (spec.servicio.largo_extensiones) l.push(`• Largo de las trenzas: ${LARGO_EXTENSIONES[spec.servicio.largo_extensiones]}`);
   if (p.inicio) {
-    l.push(`• Fecha pedida: ${fechaLarga(p.inicio)}${p.fin ? ` → ${partesMadrid(p.fin).hora}` : ""}${p.duracionMinutos ? ` (${duracionLegible(p.duracionMinutos)})` : ""}`);
+    l.push(`• Fecha pedida: ${fechaLarga(p.inicio, lugar.zonaHoraria)}${p.fin ? ` → ${partesEn(p.fin, lugar.zonaHoraria).hora}` : ""}${p.duracionMinutos ? ` (${duracionLegible(p.duracionMinutos)})` : ""}`);
   } else {
     l.push("• Fecha pedida: sin concretar");
   }
@@ -298,10 +315,10 @@ export function textoPropuesta(
   l.push("");
   if (p.precioCentimos !== null) {
     const origen = p.precioOrigen === "manual" ? "puesto por ti" : "Legacy";
-    l.push(`💶 Precio: ${euros(p.precioCentimos)} (${origen}) · Señal: ${euros(p.senalCentimos)}`);
-    if (p.precioOrigen === "legacy") l.push(`   ${p.horasUsadas} h · materiales ${p.materialesUsados} € · perfil ${resumenPerfil(ctx.perfil)}`);
+    l.push(`💶 Precio: ${dinero(p.precioCentimos, lugar.moneda)} (${origen}) · Señal: ${dinero(p.senalCentimos, lugar.moneda)}`);
+    if (p.precioOrigen === "legacy") l.push(`   ${p.horasUsadas} h · materiales ${p.materialesUsados} ${lugar.moneda === "USD" ? "$" : "€"} · perfil ${resumenPerfil(ctx.perfil, lugar.moneda)}`);
   } else {
-    l.push(`💶 Precio: sin calcular · Señal: ${euros(p.senalCentimos)}`);
+    l.push(`💶 Precio: sin calcular · Señal: ${dinero(p.senalCentimos, lugar.moneda)}`);
   }
   if (p.avisos.length) {
     l.push("");
@@ -385,14 +402,14 @@ export const etiquetaCambio = (k: Cambio["k"]) => ETIQUETAS_CAMBIO[k];
 const quitarAcentos = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 function numero(txt: string): number | null {
-  const m = /^\s*(\d+(?:[.,]\d+)?)\s*(?:€|eur|euros)?\s*$/i.exec(txt);
+  const m = /^\s*(\d+(?:[.,]\d+)?)\s*(?:€|\$|eur|euros|usd|d[oó]lares)?\s*$/i.exec(txt);
   return m ? Number(m[1].replace(",", ".")) : null;
 }
 
 const HORA_RE = /\b([01]?\d|2[0-3])[:.h]([0-5]\d)\b/;
 
 /** "20/10", "20/10/2026", "20-10", "2026-10-20" → AAAA-MM-DD (sin año: la próxima vez que llegue esa fecha). */
-export function interpretarFecha(txt: string, ahora: Date): string | null {
+export function interpretarFecha(txt: string, ahora: Date, zona: string = ZONA_MADRID): string | null {
   const iso = /\b(\d{4})-(\d{2})-(\d{2})\b/.exec(txt);
   let y: number, m: number, d: number;
   if (iso) {
@@ -402,7 +419,7 @@ export function interpretarFecha(txt: string, ahora: Date): string | null {
     if (!dm) return null;
     d = Number(dm[1]);
     m = Number(dm[2]);
-    const hoy = partesMadrid(ahora).fecha.split("-").map(Number);
+    const hoy = partesEn(ahora, zona).fecha.split("-").map(Number);
     if (dm[3]) {
       y = Number(dm[3]) < 100 ? 2000 + Number(dm[3]) : Number(dm[3]);
     } else {
@@ -425,7 +442,7 @@ export function interpretarHora(txt: string): string | null {
 
 const EMAIL_RE = /^[^\s@<>"',;()]{1,64}@[A-Za-z0-9.-]{1,80}\.[A-Za-z]{2,24}$/;
 
-export function parsearEdicion(texto: string, ahora: Date): { cambios: Cambio[]; errores: string[] } {
+export function parsearEdicion(texto: string, ahora: Date, zona: string = ZONA_MADRID): { cambios: Cambio[]; errores: string[] } {
   const cambios: Cambio[] = [];
   const errores: string[] = [];
   const lineas = texto
@@ -444,13 +461,13 @@ export function parsearEdicion(texto: string, ahora: Date): { cambios: Cambio[];
       case "precio": {
         if (/^auto$/i.test(valor)) { cambios.push({ k: "precio", centimos: null }); break; }
         const n = numero(valor);
-        if (n === null || n <= 0 || n > 5000) err("el precio debe ser un número de euros, por ejemplo «precio 70».");
+        if (n === null || n <= 0 || n > 5000) err("el precio debe ser un importe, por ejemplo «precio 70».");
         else cambios.push({ k: "precio", centimos: Math.round(n * 100) });
         break;
       }
       case "senal": {
         const n = numero(valor);
-        if (n === null || n <= 0 || n > 500) err("la señal debe ser un número de euros, por ejemplo «señal 15».");
+        if (n === null || n <= 0 || n > 500) err("la señal debe ser un importe, por ejemplo «señal 15».");
         else cambios.push({ k: "senal", centimos: Math.round(n * 100) });
         break;
       }
@@ -461,7 +478,7 @@ export function parsearEdicion(texto: string, ahora: Date): { cambios: Cambio[];
         break;
       }
       case "fecha": {
-        const f = interpretarFecha(valor, ahora);
+        const f = interpretarFecha(valor, ahora, zona);
         if (!f) { err("no entiendo la fecha; prueba «fecha 20/10 12:00»."); break; }
         cambios.push({ k: "fecha", fecha: f, hora: interpretarHora(valor.replace(/\b\d{1,2}[/\-.]\d{1,2}(?:[/\-.]\d{2,4})?\b|\b\d{4}-\d{2}-\d{2}\b/, "")) });
         break;

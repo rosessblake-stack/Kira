@@ -38,16 +38,30 @@ export const PERFIL_POR_DEFECTO: PerfilLegacy = {
   confirmado: true,
 };
 
-/** Si el perfil guardado en app_settings está corrupto se usan los valores de Blake, pero avisando en cada propuesta. */
-const PERFIL_DE_RESPALDO: PerfilLegacy = { ...PERFIL_POR_DEFECTO, confirmado: false };
+/**
+ * Perfil de Blake en MIAMI (dicho por él: «en Miami suelo estar en salón y zona premium»); dólares. El nivel (élite) se da por
+ * el mismo que en España y el SMI (1257 $) es el que trae Legacy para Miami: por eso va marcado «sin confirmar».
+ */
+export const PERFIL_MIAMI: PerfilLegacy = {
+  pais: "us",
+  zona: "premium",
+  estructura: "salon",
+  nivel: "elite",
+  smi: 1257,
+  confirmado: false,
+};
 
 const ZONAS = ["premium", "media", "baja"] as const;
 const ESTRUCTURAS = ["casa", "salon"] as const;
 const NIVELES = ["junior", "intermedio", "avanzado", "profesional", "elite"] as const;
 
-/** Lee el perfil guardado: sin nada guardado, el de Blake; si lo guardado está roto, el de Blake pero marcado «sin confirmar». */
-export function interpretarPerfil(raw: unknown): PerfilLegacy {
-  if (raw === null || raw === undefined) return PERFIL_POR_DEFECTO;
+/**
+ * Lee el perfil guardado: sin nada guardado, el de Blake de ese lugar (`porDefecto`); si lo guardado está roto, el mismo pero
+ * marcado «sin confirmar».
+ */
+export function interpretarPerfil(raw: unknown, porDefecto: PerfilLegacy = PERFIL_POR_DEFECTO): PerfilLegacy {
+  if (raw === null || raw === undefined) return porDefecto;
+  const PERFIL_DE_RESPALDO: PerfilLegacy = { ...porDefecto, confirmado: false };
   if (typeof raw !== "object") return PERFIL_DE_RESPALDO;
   const o = raw as Record<string, unknown>;
   const zona = (ZONAS as readonly unknown[]).includes(o.zona) ? (o.zona as PerfilLegacy["zona"]) : null;

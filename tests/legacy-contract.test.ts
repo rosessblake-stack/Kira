@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  PERFIL_MIAMI,
   PERFIL_POR_DEFECTO,
   construirPeticion,
   horasPorDefecto,
@@ -92,6 +93,17 @@ describe.skipIf(!hayLegacy)("contrato con la fórmula real de Legacy", () => {
     const casa = (await precio(s, 6, { ...PERFIL_POR_DEFECTO, estructura: "casa" })).parsed!;
     const salon = (await precio(s, 6, { ...PERFIL_POR_DEFECTO, estructura: "salon" })).parsed!;
     expect(salon.totalCentimos).toBeGreaterThan(casa.totalCentimos);
+  });
+
+  it("Miami (EE. UU., salón, zona premium, élite): Legacy lo acepta, responde en dólares y cobra más que en España", async () => {
+    const s = servicio({ tipo_trenzado: "pegadas", numero_trenzas: 6, extensiones: "con", largo_cabello: "nuca_hombros", largo_extensiones: "caderas" });
+    const espana = await precio(s, 2, PERFIL_POR_DEFECTO);
+    const miami = await precio(s, 2, PERFIL_MIAMI);
+    expect(miami.r.code, JSON.stringify(miami.r.body)).toBe(200);
+    expect(miami.parsed!.totalCentimos).toBeGreaterThan(espana.parsed!.totalCentimos); // premium (×1,2) y salón (×1,3) con SMI parecido
+    // Sin conversión de moneda: para EE. UU. Legacy trabaja en dólares (tasa 1), así que el total ya viene en $.
+    const casa = await precio(s, 2, { ...PERFIL_MIAMI, estructura: "casa", zona: "media" });
+    expect(miami.parsed!.totalCentimos).toBeGreaterThan(casa.parsed!.totalCentimos);
   });
 
   it("si Kira enviara algo incompleto, Legacy lo rechaza con 400 (y Kira no inventaría precio)", async () => {

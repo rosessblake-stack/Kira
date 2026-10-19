@@ -58,7 +58,7 @@ function makeFlowDeps(photos: PhotoPort): FlowDeps {
     newNonce: () => randomUUID().replace(/-/g, ""),
     clasificar: clasificarConClaude,
     // Solo /simular usa este flujo: sin clave de Claude se puede probar todo con la lectura básica.
-    lecturaBasica: (texto, ahora) => ({ tipo: "ok", raw: leerBasico(texto, ahora), entrada: 0, salida: 0 }),
+    lecturaBasica: (texto, ahora, zona) => ({ tipo: "ok", raw: leerBasico(texto, ahora, zona), entrada: 0, salida: 0 }),
     perfil: store.perfilGuardado,
     precio: (peticion) => consultarLegacy(peticion),
     estaPausada: isPaused,

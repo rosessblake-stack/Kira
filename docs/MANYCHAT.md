@@ -6,7 +6,7 @@ Decisión de Blake (opción **C**): los datos que se pueden elegir se piden **co
 
 ## 1. Orden de las preguntas
 
-0. **¿Dónde estás: Miami o España?** (botones). Es lo primero, porque en Miami Blake cobra al nivel de Miami y **en dólares**; en España, en euros. Decide el perfil de precios, la moneda, la zona horaria de la fecha que pida la clienta, los días libres, la dirección y cómo se paga la señal. **Pendiente de definir con Blake los datos de Miami** (ver `CLAUDE.md`).
+0. **¿Dónde estás: Miami o España?** (botones). Es lo primero, porque en Miami Blake cobra al nivel de Miami y **en dólares**; en España, en euros. Decide el perfil de precios (Miami: salón y zona premium), la moneda, la zona horaria de la fecha que pida la clienta, los días libres, la dirección y cómo se paga la señal. **Kira ya lo entiende** (`ubicacion` = `espana` | `miami`; se prueba con `/simular miami: …`); el botón de ManyChat solo tendrá que mandar ese valor. **Pendiente de definir con Blake algunos datos de Miami** (señal en dólares, horario, días libres, dirección, cómo cobra allí; ver `CLAUDE.md`).
 1. **¿Qué te interesa?** Botones: `Cita en el salón` · `Formación online` · `Formación presencial` · `Otra cosa`. Con esto la intención ya viene decidida por el botón; solo «Otra cosa» y los textos libres pasan por Claude, y siempre con Aprobar.
 2. **Cita en el salón** (cada pregunta, una a una):
    - Tipo: `Pegadas` · `Sueltas` · `Fulani` · `No lo sé` → `pegadas | sueltas | fulani | no_indicado`

@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { detalleConversacion } from "../../../../../lib/panel-data";
-import { CANALES, ESTADOS_RESERVA, INTENCIONES, euros, fechaHora, soloFecha } from "../../../../../lib/panel-rules";
+import { CANALES, ESTADOS_RESERVA, INTENCIONES, fechaHora, soloFecha } from "../../../../../lib/panel-rules";
+import { dinero } from "../../../../../lib/ubicacion";
 import { requireAdmin } from "../../../../../lib/panel-session";
 import { Etiqueta, Vacio } from "../../../_components";
 
@@ -59,7 +60,7 @@ export default async function Conversacion({ params }: { params: Promise<{ id: s
               {r.esPrueba ? "🧪 " : ""}Propuesta: {ESTADOS_RESERVA[r.estado] ?? r.estado}
             </strong>
             <span className="muted">
-              {r.inicio ? fechaHora(r.inicio) : "sin fecha"} · {euros(r.precioCentimos)} (señal {euros(r.senalCentimos)})
+              {r.inicio ? fechaHora(r.inicio, r.zona) : "sin fecha"} · {dinero(r.precioCentimos, r.moneda)} (señal {dinero(r.senalCentimos, r.moneda)})
             </span>
           </div>
           <p className="texto">{r.servicio}</p>

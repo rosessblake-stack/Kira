@@ -1,5 +1,6 @@
 import { getDb } from "./db";
 import { interpretarPerfil, type PerfilLegacy } from "./pricing";
+import { CONFIG_UBICACION, type Ubicacion } from "./ubicacion";
 import type { NuevaReserva, Reserva } from "./proposal-flow";
 
 /** Persistencia real del flujo de propuestas, sobre Supabase (solo servidor, clave service_role). */
@@ -107,9 +108,13 @@ export async function contarLlamadasClaudeHoy(): Promise<number> {
   return count ?? 0;
 }
 
-/** Perfil de precios de Blake (app_settings.perfil_legacy); si no hay o es raro, el provisional sin confirmar. */
-export async function perfilGuardado(): Promise<PerfilLegacy> {
-  const { data, error } = await getDb().from("app_settings").select("value").eq("key", "perfil_legacy").maybeSingle();
-  if (error) return interpretarPerfil(null);
-  return interpretarPerfil((data as { value: unknown } | null)?.value);
+/**
+ * Perfil de precios de Blake en ese lugar (app_settings: `perfil_legacy` para España, `perfil_legacy_miami` para Miami).
+ * Sin nada guardado, el de Blake por defecto; si lo guardado está roto, el mismo pero marcado «sin confirmar».
+ */
+export async function perfilGuardado(ubicacion: Ubicacion = "espana"): Promise<PerfilLegacy> {
+  const cfg = CONFIG_UBICACION[ubicacion];
+  const { data, error } = await getDb().from("app_settings").select("value").eq("key", cfg.clavePerfil).maybeSingle();
+  if (error) return interpretarPerfil(null, cfg.perfilPorDefecto);
+  return interpretarPerfil((data as { value: unknown } | null)?.value, cfg.perfilPorDefecto);
 }

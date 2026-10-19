@@ -1,4 +1,4 @@
-import { partesMadrid } from "./agenda";
+import { ZONA_MADRID, partesEn } from "./agenda";
 
 /**
  * Lectura básica por reglas: una alternativa SIN Claude para poder probar todo el recorrido (/simular)
@@ -41,9 +41,9 @@ function fechaReal(y: number, m: number, d: number): number | null {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d ? ms : null;
 }
 
-/** AAAA-MM-DD en el calendario de Madrid, o null si el mensaje no da una fecha clara. */
-export function extraerFecha(t: string, ahora: Date): string | null {
-  const hoy = partesMadrid(ahora);
+/** AAAA-MM-DD en el calendario de la clienta (por defecto, Madrid), o null si el mensaje no da una fecha clara. */
+export function extraerFecha(t: string, ahora: Date, zona: string = ZONA_MADRID): string | null {
+  const hoy = partesEn(ahora, zona);
   const [hy, hm, hd] = hoy.fecha.split("-").map(Number);
   const hoyMs = Date.UTC(hy, hm - 1, hd);
   const DIA = 86_400_000;
@@ -136,7 +136,7 @@ export type LecturaBasica = Record<string, unknown>;
 const DERIVAR_SIEMPRE =
   /\b(reembolso|devolucion|queja|reclamacion|descuento|colaboracion|colaborar|prensa|influencer|menor\s+de\s+edad|urgente|enfadad[oa])\b|\bmi\s+hij[oa]\s+(?:de\s+)?\d{1,2}\s+anos\b/;
 
-export function leerBasico(texto: string, ahora: Date): LecturaBasica {
+export function leerBasico(texto: string, ahora: Date, zona: string = ZONA_MADRID): LecturaBasica {
   const t = sinAcentos(texto);
   // El aviso de que no la leyó Claude lo añade la propuesta; aquí solo van las dudas concretas del mensaje.
   const notas: string[] = [];
@@ -145,7 +145,7 @@ export function leerBasico(texto: string, ahora: Date): LecturaBasica {
   const curso = /\b(curso|formacion|academia|infoproducto|masterclass)\b/.test(t);
   const servicio = /\b(trenza|trenzas|braids?|fulani|cornrows?|boxer|boxeadoras?|extensiones|rastas|twist|peinado)\b/.test(t);
   const pregunta = /\b(cuanto|precio|precios|cuesta|tarifa|vale)\b/.test(t);
-  const fecha = extraerFecha(t, ahora);
+  const fecha = extraerFecha(t, ahora, zona);
 
   let intencion = "derivar_a_blake";
   if (DERIVAR_SIEMPRE.test(t)) intencion = "derivar_a_blake";
