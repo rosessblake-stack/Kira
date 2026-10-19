@@ -16,6 +16,8 @@ export async function GET() {
     TELEGRAM_BOT_TOKEN: Boolean(process.env.TELEGRAM_BOT_TOKEN),
     TELEGRAM_WEBHOOK_SECRET: Boolean(process.env.TELEGRAM_WEBHOOK_SECRET),
     TELEGRAM_ADMIN_USER_ID: Boolean(process.env.TELEGRAM_ADMIN_USER_ID),
+    // Sin ella /simular usa la lectura básica por reglas y un canal real derivaría todo a Blake. Solo sí o no, nunca el valor.
+    ANTHROPIC_API_KEY: Boolean(process.env.ANTHROPIC_API_KEY),
   };
 
   let supabase = false;
