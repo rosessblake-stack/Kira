@@ -430,6 +430,7 @@ export function filasDeMapeo(spec: unknown): Fila[] {
     { etiqueta: "Boho", valor: v.boho === true ? "sí" : v.boho === false ? "no" : NO_INDICADO },
     { etiqueta: "Largo del pelo", valor: dato(v.largo_cabello, LARGOS_PELO) },
     { etiqueta: "Largo de las trenzas", valor: dato(v.largo_extensiones, LARGOS_TRENZAS) },
+    { etiqueta: "Dirección del evento", valor: dato(s.direccion) },
     { etiqueta: "Fecha y hora pedidas", valor: txt(s.fecha) ? `${txt(s.fecha)}${txt(s.hora) ? ` ${txt(s.hora)}` : ""}` : NO_INDICADO },
     { etiqueta: "Nombre", valor: dato(s.nombre) },
     { etiqueta: "Email", valor: dato(s.email) },

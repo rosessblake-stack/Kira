@@ -546,24 +546,26 @@ try {
   anota("Blake escribe", `/simular miami: ${MENSAJE_MIAMI}`);
   anota("Kira (propuesta Miami)", `${propM.text}\n[botones: ${botones(propM).join(" | ")}]`);
   const pM = legacy.recibidas.at(-1);
-  check("J1. se pide a Legacy el perfil de MIAMI: EE. UU., salón, zona premium, élite, SMI 1257", legacy.recibidas.length === legacyAntesJ + 1 && pM.pais === "us" && pM.zona === "premium" && pM.estructura === "salon" && pM.nivel === "elite" && Number(pM.smi) === 1257 && pM.tipoTrenzado === "pegadas");
+  check("J1. se pide a Legacy el perfil de MIAMI: EE. UU., salón, zona premium, élite, SMI 2600 (15 $/h de Florida)", legacy.recibidas.length === legacyAntesJ + 1 && pM.pais === "us" && pM.zona === "premium" && pM.estructura === "salon" && pM.nivel === "elite" && Number(pM.smi) === 2600 && pM.tipoTrenzado === "pegadas");
   check("J2. a Legacy tampoco le llega ningún dato de la clienta de Miami", String(pM.email).endsWith(".invalid") && !JSON.stringify(pM).match(/Dani|dani@/i));
   const totalM = Math.round(legacy.respuestas.at(-1).precioTotal * 100);
   const dolares = (c) => `${(c / 100).toLocaleString("es-ES", { minimumFractionDigits: c % 100 ? 2 : 0 })} $`;
   check(`J3. la propuesta enseña el precio de Legacy EN DÓLARES (${dolares(totalM)}) y no hay ningún euro`, propM.text.includes(`${dolares(totalM)} (Legacy)`) && !propM.text.includes("€"));
   check("J4. señal de 20 $ y la ciudad bien visible", propM.text.includes("Señal: 20 $") && propM.text.includes("📍 Miami · dólares · hora de Miami"));
   check("J5. la hora es la de Miami: 15:00 allí = 19:00 UTC y se ve «jue 22 oct, 15:00»", reservas().at(-1).starts_at === "2026-10-22T19:00:00.000Z" && propM.text.includes("jue 22 oct, 15:00"));
-  check("J6. perfil de Miami sin confirmar y lo pendiente (señal, horario, días libres, dirección, cobro) a la vista", propM.text.includes("Perfil de precios sin confirmar") && propM.text.includes("SMI 1257 $") && propM.text.includes("Miami: la señal (20 $), el horario, los días libres, la dirección y cómo se cobra todavía no los has confirmado"));
+  check("J6. perfil de Miami confirmado (SMI 2600 $, sin aviso de «sin confirmar») y la dirección pendiente, a la vista", propM.text.includes("SMI 2600 $") && !propM.text.includes("Perfil de precios sin confirmar") && propM.text.includes("🏠 Dirección: sin indicar") && propM.text.includes("No hay dirección para el evento (cambia según el día)"));
   check("J7. el mensaje de la clienta se guardó sin el prefijo «miami:» y la reserva sabe que es de Miami", tables.messages.find((m) => m.conversation_id === convM.id)?.body === MENSAJE_MIAMI && reservas().at(-1).spec.ubicacion === "miami" && reservas().at(-1).pricing.moneda === "USD");
-  check("J8. en Miami no hay días libres definidos: ninguna nota de «día libre» ni aviso de horario", tg.enviados.filter((m) => m.text.startsWith("ℹ️ Hoy es")).length === notasDiaLibreAntes && !propM.text.includes("día libre") && !propM.text.includes("horario habitual"));
+  const hoyMiami = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "short" });
+  const hoyMiamiLibre = hoyMiami === "Sun" || hoyMiami === "Mon";
+  check(`J8. en Miami rigen los mismos días libres (domingo y lunes) con SU calendario: hoy es ${hoyMiami} allí, así que ${hoyMiamiLibre ? "Blake recibe la nota de día libre" : "no hay nota"}; la cita del jueves no avisa`, tg.enviados.filter((m) => m.text.startsWith("ℹ️ Hoy es")).length === notasDiaLibreAntes + (hoyMiamiLibre ? 1 : 0) && !propM.text.includes("La cita cae en") && !propM.text.includes("horario habitual"));
   if (!SIN_CLAVE) {
     const peticionM = claude.llamadas[claudeAntesJ];
     check("J9. Claude recibe la fecha actual en la hora de Miami para resolver «mañana» o «el sábado»", /\(hora de Miami\)/.test(peticionM.messages[0].content));
   }
   await pulsa(dato(propM, "Editar"), propM.message_id);
-  await escribe("fecha 23/10 11:00\nprecio 150\nseñal 25");
+  await escribe("fecha 23/10 11:00\nprecio 150\nseñal 25\ndirección 1234 Collins Ave, Miami Beach");
   const propM2 = conBotones();
-  check("J10. editar en Miami: la fecha se lee en hora de Miami (11:00 allí = 15:00 UTC) y los importes son dólares", reservas().at(-1).starts_at === "2026-10-23T15:00:00.000Z" && propM2.text.includes("150 $ (puesto por ti) · Señal: 25 $") && propM2.text.includes("vie 23 oct, 11:00"));
+  check("J10. editar en Miami: la fecha se lee en hora de Miami (11:00 allí = 15:00 UTC) y los importes son dólares", reservas().at(-1).starts_at === "2026-10-23T15:00:00.000Z" && propM2.text.includes("150 $ (puesto por ti) · Señal: 25 $") && propM2.text.includes("vie 23 oct, 11:00") && propM2.text.includes("🏠 Dirección: 1234 Collins Ave, Miami Beach") && !propM2.text.includes("No hay dirección para el evento"));
   await pulsa(dato(propM2, "Aprobar"), propM2.message_id);
   check("J11. aprobar en Miami: el resumen dice Miami, en dólares y hora de Miami", tg.editados.at(-1).text.includes("✅ APROBADA") && tg.editados.at(-1).text.includes("📍 Miami") && tg.editados.at(-1).text.includes("vie 23 oct, 11:00 · 💶 150 $ (señal 25 $)"));
   await escribe("/simular Miami es mi ciudad. Hola! tengo el pelo por el hombro, quiero 6 trenzas con extensiones rojas, por las caderas, para el 20 de octubre a las 12pm");
@@ -678,7 +680,7 @@ try {
   await page.goto(`${BASE}/panel/proceso/${convM.id}`);
   const detM = await page.locator("body").innerText();
   check("G29. el detalle de una clienta de Miami: ciudad, dólares y hora de Miami", /Ubicación\s+Miami \(dólares, hora de Miami\)/.test(detM) && /23 oct[^·\n]*11:00 · 150 \$ \(señal 25 \$\)/.test(detM), detM.slice(0, 600));
-  check("G30. el precio puesto por Blake y el perfil de Miami, en $ (nada en €) y sin confirmar", /Precio puesto por ti\s+150 \$/.test(detM) && /zona premium · salon · SMI 1257 \$ \(sin confirmar\)/.test(detM) && !/ €/.test(detM.slice(detM.indexOf("Ubicación"), detM.indexOf("LÍNEA DE TIEMPO") > 0 ? detM.indexOf("LÍNEA DE TIEMPO") : undefined)), JSON.stringify(detM.slice(detM.indexOf("PRECIO") >= 0 ? detM.indexOf("PRECIO") : detM.indexOf("Precio"), (detM.indexOf("PRECIO") >= 0 ? detM.indexOf("PRECIO") : detM.indexOf("Precio")) + 420)));
+  check("G30. el precio puesto por Blake, el perfil de Miami (confirmado, SMI 2600 $) y la dirección, todo en $ (nada en €)", /Precio puesto por ti\s+150 \$/.test(detM) && /zona premium · salon · SMI 2600 \$/.test(detM) && !/SMI 2600 \$ \(sin confirmar\)/.test(detM) && /Dirección del evento\s+1234 Collins Ave, Miami Beach/.test(detM) && !/ €/.test(detM.slice(detM.indexOf("Ubicación"), detM.indexOf("LÍNEA DE TIEMPO") > 0 ? detM.indexOf("LÍNEA DE TIEMPO") : undefined)), JSON.stringify(detM.slice(detM.indexOf("PRECIO") >= 0 ? detM.indexOf("PRECIO") : detM.indexOf("Precio"), (detM.indexOf("PRECIO") >= 0 ? detM.indexOf("PRECIO") : detM.indexOf("Precio")) + 420)));
   await page.screenshot({ path: SHOTS + (SIN_CLAVE ? "sc-" : "") + "flujo-07-miami.png", fullPage: true });
 
   // ============================================================================ H. Sin secretos en los registros

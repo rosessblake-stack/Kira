@@ -381,6 +381,11 @@ describe("Miami en el panel: dólares y hora de Miami", () => {
     expect([monedaDeSpec(null), monedaDeSpec("x"), monedaDeSpec({ ubicacion: "Marte" })]).toEqual(["EUR", "EUR", "EUR"]);
   });
 
+  it("«Lo que Kira entendió» incluye la dirección del evento (o «no indicado»)", () => {
+    expect(filasDeMapeo({ ...specMiami, direccion: "1234 Collins Ave" }).find((x) => x.etiqueta === "Dirección del evento")?.valor).toBe("1234 Collins Ave");
+    expect(filasDeMapeo(specMiami).find((x) => x.etiqueta === "Dirección del evento")?.valor).toBe("no indicado");
+  });
+
   it("«Lo que Kira entendió» dice la ubicación y el precio puesto por Blake va en dólares", () => {
     const f = filasDeMapeo({ ...specMiami, precio_manual_centimos: 9000 });
     expect(f[0]).toEqual({ etiqueta: "Ubicación", valor: "Miami (dólares, hora de Miami)" });

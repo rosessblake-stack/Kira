@@ -39,6 +39,8 @@ export type SpecGuardada = {
   nombre: string | null;
   email: string | null;
   instagram: string | null;
+  /** Dónde se hace la cita (va al evento del calendario). Cambia según el día: se pone o corrige con «dirección …». */
+  direccion?: string | null;
   notas: string | null;
   confianza: "alta" | "media" | "baja";
   avisos_validacion: string[];
@@ -90,6 +92,7 @@ export function specDesdeClasificacion(
     horas: null,
     precio_manual_centimos: null,
     senal_centimos: CONFIG_UBICACION[ubicacion].senalCentimos,
+    direccion: CONFIG_UBICACION[ubicacion].direccionPorDefecto,
     respuesta_manual: null,
   };
 }
@@ -203,6 +206,7 @@ export function componerPropuesta(
   }
   avisos.push(...avisosDeHorario(inicio, fin, ctx.ahora, lugar.reglas));
   avisos.push(...lugar.pendientes);
+  if (!spec.direccion) avisos.push("No hay dirección para el evento (cambia según el día): ponla con «dirección …» antes de aprobar.");
   if (precio.origen === "manual") avisos.push("El precio lo has puesto tú: no lo ha calculado Legacy.");
   if (precio.origen === "legacy") {
     if (!ctx.perfil.confirmado) avisos.push(`Perfil de precios sin confirmar (${resumenPerfil(ctx.perfil, lugar.moneda)}).`);
@@ -290,6 +294,7 @@ export function textoPropuesta(
   l.push(`${ctx.esPrueba ? "🧪 PRUEBA · " : ""}PROPUESTA DE CITA`);
   l.push("");
   l.push(`📍 ${lugar.nombre} · ${lugar.moneda === "USD" ? "dólares · hora de Miami" : "euros · hora de Madrid"}`);
+  l.push(`🏠 Dirección: ${spec.direccion ? recorte(limpiarTexto(spec.direccion, 200), 200) : "sin indicar"}`);
   l.push(`👤 Cliente: ${spec.nombre ?? "sin nombre"}${p.emailCliente ? ` (${p.emailCliente})` : ""}${spec.instagram ? ` · ${spec.instagram}` : ""}`);
   l.push(`💬 Dijo: «${recorte(limpiarTexto(ctx.mensajeCliente, 600), 500)}»`);
   l.push("");
@@ -366,6 +371,7 @@ export const AYUDA_EDICION = [
   "trenzas 6",
   "nombre Ana",
   "email ana@correo.com",
+  "dirección Calle Ejemplo 12, Miami   (dónde es la cita)",
   "respuesta Hola Ana, ...",
   "pelo rizado, fino, a los hombros   (lo que ves en su foto del pelo)",
   "referencia boxeadoras hasta la cadera   (lo que ves en su foto de trenzas)",
@@ -386,6 +392,7 @@ export type Cambio =
   | { k: "trenzas"; n: number }
   | { k: "nombre"; v: string }
   | { k: "email"; v: string }
+  | { k: "direccion"; v: string }
   | { k: "respuesta"; v: string }
   /** Lo que Blake ve en una foto: no cambia la reserva, se guarda junto a la foto. */
   | { k: "foto_pelo"; v: string }
@@ -394,7 +401,7 @@ export type Cambio =
 /** Nombre de cada cambio tal como lo escribe Blake (no el identificador interno). */
 const ETIQUETAS_CAMBIO: Record<Cambio["k"], string> = {
   precio: "precio", senal: "señal", horas: "horas", fecha: "fecha", hora: "hora", tipo: "tipo", tamano: "tamaño",
-  extensiones: "extensiones", largo_ext: "largo", trenzas: "trenzas", nombre: "nombre", email: "email", respuesta: "respuesta",
+  extensiones: "extensiones", largo_ext: "largo", trenzas: "trenzas", nombre: "nombre", email: "email", direccion: "dirección", respuesta: "respuesta",
   foto_pelo: "descripción del pelo", foto_referencia: "descripción de la referencia",
 };
 export const etiquetaCambio = (k: Cambio["k"]) => ETIQUETAS_CAMBIO[k];
@@ -531,6 +538,12 @@ export function parsearEdicion(texto: string, ahora: Date, zona: string = ZONA_M
         else cambios.push({ k: "email", v: valor.toLowerCase() });
         break;
       }
+      case "direccion": {
+        const v = limpiarTexto(valor, 200);
+        if (!v) err("escribe la dirección después de «dirección», por ejemplo «dirección Calle Ejemplo 12, Miami».");
+        else cambios.push({ k: "direccion", v });
+        break;
+      }
       case "respuesta": {
         const v = valor.replace(/\s+$/g, "");
         if (!v) err("escribe el texto de la respuesta después de «respuesta».");
@@ -545,7 +558,7 @@ export function parsearEdicion(texto: string, ahora: Date, zona: string = ZONA_M
         break;
       }
       default:
-        err("no sé qué cambiar con eso. Claves: precio, señal, horas, fecha, hora, tipo, tamaño, extensiones, largo, trenzas, nombre, email, respuesta, pelo, referencia.");
+        err("no sé qué cambiar con eso. Claves: precio, señal, horas, fecha, hora, tipo, tamaño, extensiones, largo, trenzas, nombre, email, dirección, respuesta, pelo, referencia.");
     }
   }
   return { cambios, errores };
@@ -577,6 +590,7 @@ export function aplicarCambios(spec: SpecGuardada, cambios: Cambio[]): Resultado
       case "trenzas": s.servicio.numero_trenzas = c.n; break;
       case "nombre": s.nombre = c.v; break;
       case "email": s.email = c.v; break;
+      case "direccion": s.direccion = c.v; break;
       case "respuesta": s.respuesta_manual = c.v; break;
       // Las descripciones de fotos no tocan la reserva: el flujo las guarda junto a cada foto.
       case "foto_pelo":

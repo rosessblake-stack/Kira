@@ -1,4 +1,4 @@
-import { REGLAS_ESPANA, ZONA_MADRID, ZONA_MIAMI, type ReglasAgenda } from "./agenda";
+import { DIAS_LIBRES, HORARIO, REGLAS_ESPANA, ZONA_MADRID, ZONA_MIAMI, type ReglasAgenda } from "./agenda";
 import { PERFIL_MIAMI, PERFIL_POR_DEFECTO, type PerfilLegacy } from "./pricing";
 
 /**
@@ -6,8 +6,8 @@ import { PERFIL_MIAMI, PERFIL_POR_DEFECTO, type PerfilLegacy } from "./pricing";
  * dólares. La primera pregunta de ManyChat es dónde está la clienta; con ella se decide el perfil de precios de Legacy, la
  * moneda, la zona horaria de la fecha que pide, las reglas de horario y días libres.
  *
- * Lo que Blake aún no ha confirmado de Miami queda en `pendientes`: se enseña como aviso en CADA propuesta de Miami,
- * para que no pase por bueno algo que se ha supuesto.
+ * Lo que Blake aún no haya confirmado de un sitio queda en `pendientes`: se enseña como aviso en CADA propuesta de ese sitio,
+ * para que no pase por bueno algo que se ha supuesto. (Hoy no queda nada pendiente en ninguno de los dos.)
  */
 
 export const UBICACIONES = ["espana", "miami"] as const;
@@ -26,6 +26,11 @@ export type ConfigUbicacion = {
   clavePerfil: string;
   /** Paga y señal por defecto, en céntimos de la moneda de la ubicación. */
   senalCentimos: number;
+  /**
+   * Dirección del evento por defecto. Blake a veces trabaja en sitios distintos, así que se cambia en cada cita
+   * («dirección …»); null = no hay una de siempre y la propuesta pide ponerla.
+   */
+  direccionPorDefecto: string | null;
   pendientes: string[];
 };
 
@@ -38,18 +43,20 @@ export const CONFIG_UBICACION: Record<Ubicacion, ConfigUbicacion> = {
     perfilPorDefecto: PERFIL_POR_DEFECTO,
     clavePerfil: "perfil_legacy",
     senalCentimos: 2000,
+    direccionPorDefecto: "Carrer de la Duquessa de la Victòria, 16",
     pendientes: [],
   },
   miami: {
     nombre: "Miami",
     zonaHoraria: ZONA_MIAMI,
     moneda: "USD",
-    // Sin horario ni días libres definidos: no se avisa de nada hasta que Blake los diga.
-    reglas: { zona: ZONA_MIAMI, diasLibres: null, horario: null },
+    // Blake: en Miami los días libres y el horario son «exactamente los mismos» que en España, pero en la hora de Miami.
+    reglas: { zona: ZONA_MIAMI, diasLibres: DIAS_LIBRES, horario: HORARIO },
     perfilPorDefecto: PERFIL_MIAMI,
     clavePerfil: "perfil_legacy_miami",
     senalCentimos: 2000,
-    pendientes: ["Miami: la señal (20 $), el horario, los días libres, la dirección y cómo se cobra todavía no los has confirmado: revísalos."],
+    direccionPorDefecto: null,
+    pendientes: [],
   },
 };
 

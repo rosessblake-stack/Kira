@@ -437,6 +437,18 @@ describe("parsearEdicion: descripciones de fotos", () => {
     expect(p("precio: 70").cambios).toEqual([{ k: "precio", centimos: 7000 }]);
   });
 
+  it("«dirección …» (con o sin tilde y dos puntos) pone la dirección del evento y no pide recalcular el precio", () => {
+    const p = (t: string) => parsearEdicion(t, AHORA);
+    expect(p("dirección Calle 8 nº 1234, Miami").cambios).toEqual([{ k: "direccion", v: "Calle 8 nº 1234, Miami" }]);
+    expect(p("direccion: Carrer de Mallorca 1").cambios).toEqual([{ k: "direccion", v: "Carrer de Mallorca 1" }]);
+    expect(p("direccion").errores[0]).toContain("escribe la dirección");
+    const s = specReferencia({ tipo_trenzado: "pegadas" });
+    const r = aplicarCambios(s, [{ k: "direccion", v: "Calle 8" }]);
+    expect(r.spec.direccion).toBe("Calle 8");
+    expect(r.recalcular).toBe(false);
+    expect(s.direccion).toBe("Carrer de la Duquessa de la Victòria, 16"); // no modifica el original
+  });
+
   it("no tocan la reserva: aplicarCambios devuelve el mismo servicio y no pide recalcular", () => {
     const s = specReferencia({ tipo_trenzado: "pegadas" });
     const r = aplicarCambios(s, [{ k: "foto_pelo", v: "rizado" }, { k: "foto_referencia", v: "boxeadoras" }]);

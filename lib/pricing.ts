@@ -39,16 +39,19 @@ export const PERFIL_POR_DEFECTO: PerfilLegacy = {
 };
 
 /**
- * Perfil de Blake en MIAMI (dicho por él: «en Miami suelo estar en salón y zona premium»); dólares. El nivel (élite) se da por
- * el mismo que en España y el SMI (1257 $) es el que trae Legacy para Miami: por eso va marcado «sin confirmar».
+ * Perfil de Blake en MIAMI (dicho por él: «en Miami suelo estar en salón y zona premium»); dólares.
+ * SMI: el salario mínimo de Florida desde el 30-sep-2026 es 15,00 $/hora (Miami-Dade no tiene uno propio; el federal, 7,25 $,
+ * es menor y no manda). Legacy pide el mínimo MENSUAL y su suelo de EE. UU. (1256 $) sale de 7,25 $ × 173,33 h/mes (40 h × 52
+ * semanas / 12), así que con la misma cuenta: 15 × 173,33 = 2600 $/mes. Desde 2027 Florida lo ajusta cada septiembre por
+ * inflación: hay que revisarlo entonces. El nivel (élite) se da por el mismo que en España.
  */
 export const PERFIL_MIAMI: PerfilLegacy = {
   pais: "us",
   zona: "premium",
   estructura: "salon",
   nivel: "elite",
-  smi: 1257,
-  confirmado: false,
+  smi: 2600,
+  confirmado: true,
 };
 
 const ZONAS = ["premium", "media", "baja"] as const;

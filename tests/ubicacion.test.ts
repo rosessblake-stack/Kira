@@ -48,17 +48,28 @@ describe("fechas en la hora de Miami (Nueva York)", () => {
 });
 
 describe("reglas de agenda por ciudad", () => {
-  it("España: domingo y lunes libres; Miami: sin reglas definidas (no avisa de nada)", () => {
-    const dom = aUtc("2026-10-25", "22:00", ZONA_MIAMI); // domingo 22:00 en Miami = lunes 04:00 en Madrid
-    expect(esDiaLibre(dom, REGLAS_ESPANA)).toBe(true); // la regla de España mira el calendario de Madrid (lunes: libre)
-    expect(esDiaLibre(aUtc("2026-10-27", "12:00"), REGLAS_ESPANA)).toBe(false); // martes
-    expect(esDiaLibre(dom, CONFIG_UBICACION.miami.reglas)).toBe(false); // Miami: sin días libres definidos
-    expect(listaDiasLibres(CONFIG_UBICACION.miami.reglas)).toBe("");
+  it("Miami tiene los mismos días libres y horario que España (dicho por Blake)", () => {
+    expect([...(CONFIG_UBICACION.miami.reglas.diasLibres ?? [])]).toEqual([0, 1]);
+    expect(CONFIG_UBICACION.miami.reglas.horario).toEqual(CONFIG_UBICACION.espana.reglas.horario);
+    expect(listaDiasLibres(CONFIG_UBICACION.miami.reglas)).toBe("domingo y lunes");
   });
 
-  it("avisos de horario en Miami: ni día libre ni horario (a las 7:00 o el domingo, nada)", () => {
-    const i = aUtc("2026-10-25", "07:00", ZONA_MIAMI);
-    expect(avisosDeHorario(i, new Date(i.getTime() + 2 * 3_600_000), new Date("2026-10-19T12:00:00Z"), CONFIG_UBICACION.miami.reglas)).toEqual([]);
+  it("pero cada uno mira SU calendario: el mismo instante puede ser lunes en Miami y martes en Madrid", () => {
+    const i = new Date("2026-10-27T03:00:00Z"); // martes 04:00 en Madrid, lunes 23:00 en Miami
+    expect(esDiaLibre(i, REGLAS_ESPANA)).toBe(false);
+    expect(esDiaLibre(i, CONFIG_UBICACION.miami.reglas)).toBe(true);
+    const j = new Date("2026-10-26T03:00:00Z"); // lunes 04:00 en Madrid, domingo 23:00 en Miami: libre en los dos
+    expect(esDiaLibre(j, REGLAS_ESPANA)).toBe(true);
+    expect(esDiaLibre(j, CONFIG_UBICACION.miami.reglas)).toBe(true);
+  });
+
+  it("avisos de horario en Miami: el domingo y las 7:00 de la mañana avisan, como en España pero en hora de Miami", () => {
+    const i = aUtc("2026-10-25", "07:00", ZONA_MIAMI); // domingo en Miami
+    const a = avisosDeHorario(i, new Date(i.getTime() + 2 * 3_600_000), new Date("2026-10-19T12:00:00Z"), CONFIG_UBICACION.miami.reglas);
+    expect(a[0]).toBe("La cita cae en domingo, que es día libre (no trabajas: domingo y lunes).");
+    expect(a[1]).toMatch(/Empieza a las 07:00, antes del horario habitual/);
+    const bien = aUtc("2026-10-22", "12:00", ZONA_MIAMI);
+    expect(avisosDeHorario(bien, new Date(bien.getTime() + 2 * 3_600_000), new Date("2026-10-19T12:00:00Z"), CONFIG_UBICACION.miami.reglas)).toEqual([]);
   });
 
   it("pero la fecha pasada o muy lejana sigue avisando en Miami", () => {
@@ -93,22 +104,27 @@ describe("ubicación", () => {
     for (const v of [undefined, null, "", "Miami", "usa", 5, {}]) expect(interpretarUbicacion(v)).toBe("espana");
   });
 
-  it("la configuración de cada sitio: España en euros y Madrid; Miami en dólares y Nueva York, con lo pendiente a la vista", () => {
+  it("la configuración de cada sitio: España en euros y Madrid; Miami en dólares y Nueva York; señal de 20 en los dos", () => {
     expect(CONFIG_UBICACION.espana).toMatchObject({ moneda: "EUR", zonaHoraria: "Europe/Madrid", senalCentimos: 2000, pendientes: [] });
-    expect(CONFIG_UBICACION.miami).toMatchObject({ moneda: "USD", zonaHoraria: "America/New_York", senalCentimos: 2000 });
-    expect(CONFIG_UBICACION.miami.pendientes).toHaveLength(1);
+    expect(CONFIG_UBICACION.miami).toMatchObject({ moneda: "USD", zonaHoraria: "America/New_York", senalCentimos: 2000, pendientes: [] });
+  });
+
+  it("dirección por defecto: la de siempre en España; en Miami ninguna (depende del día)", () => {
+    expect(CONFIG_UBICACION.espana.direccionPorDefecto).toBe("Carrer de la Duquessa de la Victòria, 16");
+    expect(CONFIG_UBICACION.miami.direccionPorDefecto).toBeNull();
     expect(CONFIG_UBICACION.espana.clavePerfil).not.toBe(CONFIG_UBICACION.miami.clavePerfil);
   });
 });
 
 describe("perfiles de precios por ubicación", () => {
-  it("Miami: salón, zona premium, EE. UU., élite y el SMI que trae Legacy; sin confirmar", () => {
-    expect(PERFIL_MIAMI).toEqual({ pais: "us", zona: "premium", estructura: "salon", nivel: "elite", smi: 1257, confirmado: false });
+  it("Miami: salón, zona premium, EE. UU., élite y el mínimo de Florida (15 $/h × 173,33 h/mes = 2600 $); confirmado", () => {
+    expect(PERFIL_MIAMI).toEqual({ pais: "us", zona: "premium", estructura: "salon", nivel: "elite", smi: 2600, confirmado: true });
+    expect(Math.round(15 * (40 * 52) / 12)).toBe(PERFIL_MIAMI.smi); // la cuenta, a la vista
   });
 
   it("sin nada guardado: el perfil de ese lugar; roto: el mismo, marcado sin confirmar", () => {
     expect(interpretarPerfil(null, PERFIL_MIAMI)).toBe(PERFIL_MIAMI);
-    expect(interpretarPerfil("x", PERFIL_MIAMI)).toEqual({ ...PERFIL_MIAMI, confirmado: false });
+    expect(interpretarPerfil("x", PERFIL_MIAMI)).toEqual({ ...PERFIL_MIAMI, confirmado: false }); // roto: se usa pero se avisa
     expect(interpretarPerfil("x", PERFIL_POR_DEFECTO)).toEqual({ ...PERFIL_POR_DEFECTO, confirmado: false });
     expect(interpretarPerfil(null)).toBe(PERFIL_POR_DEFECTO);
   });
