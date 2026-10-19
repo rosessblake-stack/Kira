@@ -165,7 +165,7 @@ function describirServicioNatural(s: SpecGuardada): string {
 }
 
 export function resumenPerfil(p: PerfilLegacy, moneda: Moneda = "EUR"): string {
-  return `${p.nivel === "elite" ? "élite" : p.nivel} · zona ${p.zona} · ${p.estructura === "salon" ? "salón" : "casa"} · SMI ${p.smi} ${moneda === "USD" ? "$" : "€"}`;
+  return `${p.nivel === "elite" ? "élite" : p.nivel} · zona ${p.zona} · ${p.estructura === "salon" ? "salón" : "casa"} · base salarial ${p.smi} ${moneda === "USD" ? "$" : "€"}`;
 }
 
 export function componerPropuesta(

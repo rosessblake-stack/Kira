@@ -18,14 +18,18 @@ export type PerfilLegacy = {
   zona: "premium" | "media" | "baja";
   estructura: "casa" | "salon";
   nivel: "junior" | "intermedio" | "avanzado" | "profesional" | "elite";
-  /** Salario mínimo mensual en moneda local (Legacy lo usa como base de la tarifa). */
+  /** Base salarial mensual en moneda local (Legacy la usa como base de la tarifa): el salario medio (SME) o el mínimo (SMI), según elija Blake. */
   smi: number;
   /** false hasta que Blake confirme estos valores: se avisa en cada propuesta. */
   confirmado: boolean;
 };
 
 /**
- * Perfil de Blake, CONFIRMADO por él: trabaja en casa, nivel élite, zona normal (= «media» en Legacy), España, SMI 1200 €.
+ * Perfil de Blake, CONFIRMADO por él: trabaja en casa, nivel élite, zona normal (= «media» en Legacy), España.
+ * Base salarial: en Legacy Blake calcula con el SALARIO MEDIO (SME), no con el mínimo (su SMI de 1200 € no es la base que usa).
+ * Se parte del SME de Barcelona en Legacy (1500 €): con él Legacy da 75,65 € / 56,56 € en las 6 pegadas con / sin extensiones
+ * (Blake cobra 80 € / 60 €: encaja con un redondeo a los 10 €, sin confirmar). SUPUESTO: Blake no dijo la ciudad; si es otra,
+ * se cambia guardando `perfil_legacy` en app_settings o este número.
  * («Referente internacional» es una pregunta de la pantalla de Legacy que no entra en la fórmula del precio.)
  * Para cambiarlo sin tocar código basta guardar `perfil_legacy` en app_settings.
  */
@@ -34,13 +38,13 @@ export const PERFIL_POR_DEFECTO: PerfilLegacy = {
   zona: "media",
   estructura: "casa",
   nivel: "elite",
-  smi: 1200,
+  smi: 1500,
   confirmado: true,
 };
 
 /**
  * Perfil de Blake en MIAMI (dicho por él: «en Miami suelo estar en salón y zona premium»); dólares.
- * SMI: el salario mínimo de Florida desde el 30-sep-2026 es 15,00 $/hora (Miami-Dade no tiene uno propio; el federal, 7,25 $,
+ * Base salarial (en Miami Blake usa el SMI, dicho por él): el salario mínimo de Florida desde el 30-sep-2026 es 15,00 $/hora (Miami-Dade no tiene uno propio; el federal, 7,25 $,
  * es menor y no manda). Legacy pide el mínimo MENSUAL y su suelo de EE. UU. (1256 $) sale de 7,25 $ × 173,33 h/mes (40 h × 52
  * semanas / 12), así que con la misma cuenta: 15 × 173,33 = 2600 $/mes. Desde 2027 Florida lo ajusta cada septiembre por
  * inflación: hay que revisarlo entonces. El nivel (élite) se da por el mismo que en España.

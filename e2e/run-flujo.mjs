@@ -302,7 +302,7 @@ try {
   const totalLegacy = Math.round(legacy.respuestas[0].precioTotal * 100);
   check("A27. la fórmula REAL de Legacy respondió con un precio razonable", legacy.respuestas[0].precioTotal > 20 && legacy.respuestas[0].precioTotal < 300, JSON.stringify(legacy.respuestas[0]));
   check(`A28. Blake ve EXACTAMENTE el precio de Legacy (${euros(totalLegacy)})`, propuesta2.text.includes(`${euros(totalLegacy)} (Legacy)`));
-  check("A29. muestra horas, materiales y el perfil confirmado de Blake (sin avisar de perfil sin confirmar), y avisa de lo provisional (horas)", propuesta2.text.includes("3 h · materiales 5 €") && propuesta2.text.includes("perfil élite · zona media · casa · SMI 1200 €") && !propuesta2.text.includes("Perfil de precios sin confirmar") && propuesta2.text.includes("son una sugerencia: ajústalas con «horas 3»"));
+  check("A29. muestra horas, materiales y el perfil confirmado de Blake (sin avisar de perfil sin confirmar), y avisa de lo provisional (horas)", propuesta2.text.includes("3 h · materiales 5 €") && propuesta2.text.includes("perfil élite · zona media · casa · base salarial 1500 €") && !propuesta2.text.includes("Perfil de precios sin confirmar") && propuesta2.text.includes("son una sugerencia: ajústalas con «horas 3»"));
   check("A30. horario: 12:00 → 15:00 (3 h)", propuesta2.text.includes("mar 20 oct, 12:00 → 15:00 (3 h)"));
   check("A31. borrador al cliente con precio real, fecha y señal", propuesta2.text.includes(`el precio es de ${euros(totalLegacy)}`) && propuesta2.text.includes("Me pides el mar 20 oct, 12:00") && propuesta2.text.includes("señal de 20 €"));
   check("A32. ya sin ⛔ y con botón Aprobar", !propuesta2.text.includes("⛔") && JSON.stringify(botones(propuesta2)) === JSON.stringify(["✅ Aprobar", "✏️ Editar", "❌ Rechazar"]));
@@ -560,14 +560,14 @@ try {
   anota("Blake escribe", `/simular miami: ${MENSAJE_MIAMI}`);
   anota("Kira (propuesta Miami)", `${propM.text}\n[botones: ${botones(propM).join(" | ")}]`);
   const pM = legacy.recibidas.at(-1);
-  check("J1. se pide a Legacy el perfil de MIAMI: EE. UU., salón, zona premium, élite, SMI 2600 (15 $/h de Florida)", legacy.recibidas.length === legacyAntesJ + 1 && pM.pais === "us" && pM.zona === "premium" && pM.estructura === "salon" && pM.nivel === "elite" && Number(pM.smi) === 2600 && pM.tipoTrenzado === "pegadas");
+  check("J1. se pide a Legacy el perfil de MIAMI: EE. UU., salón, zona premium, élite, base salarial 2600 (15 $/h de Florida)", legacy.recibidas.length === legacyAntesJ + 1 && pM.pais === "us" && pM.zona === "premium" && pM.estructura === "salon" && pM.nivel === "elite" && Number(pM.smi) === 2600 && pM.tipoTrenzado === "pegadas");
   check("J2. a Legacy tampoco le llega ningún dato de la clienta de Miami", String(pM.email).endsWith(".invalid") && !JSON.stringify(pM).match(/Dani|dani@/i));
   const totalM = Math.round(legacy.respuestas.at(-1).precioTotal * 100);
   const dolares = (c) => `${(c / 100).toLocaleString("es-ES", { minimumFractionDigits: c % 100 ? 2 : 0 })} $`;
   check(`J3. la propuesta enseña el precio de Legacy EN DÓLARES (${dolares(totalM)}) y no hay ningún euro`, propM.text.includes(`${dolares(totalM)} (Legacy)`) && !propM.text.includes("€"));
   check("J4. señal de 20 $ y la ciudad bien visible", propM.text.includes("Señal: 20 $") && propM.text.includes("📍 Miami · dólares · hora de Miami"));
   check("J5. la hora es la de Miami: 15:00 allí = 19:00 UTC y se ve «jue 22 oct, 15:00»", reservas().at(-1).starts_at === "2026-10-22T19:00:00.000Z" && propM.text.includes("jue 22 oct, 15:00"));
-  check("J6. perfil de Miami confirmado (SMI 2600 $, sin aviso de «sin confirmar») y la dirección pendiente, a la vista", propM.text.includes("SMI 2600 $") && !propM.text.includes("Perfil de precios sin confirmar") && propM.text.includes("🏠 Dirección: sin indicar") && propM.text.includes("No hay dirección para el evento (cambia según el día)") && !propM.text.includes("🚫"));
+  check("J6. perfil de Miami confirmado (base salarial 2600 $, sin aviso de «sin confirmar») y la dirección pendiente, a la vista", propM.text.includes("base salarial 2600 $") && !propM.text.includes("Perfil de precios sin confirmar") && propM.text.includes("🏠 Dirección: sin indicar") && propM.text.includes("No hay dirección para el evento (cambia según el día)") && !propM.text.includes("🚫"));
   check("J7. el mensaje de la clienta se guardó sin el prefijo «miami:» y la reserva sabe que es de Miami", tables.messages.find((m) => m.conversation_id === convM.id)?.body === MENSAJE_MIAMI && reservas().at(-1).spec.ubicacion === "miami" && reservas().at(-1).pricing.moneda === "USD");
   const hoyMiami = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "short" });
   const hoyMiamiLibre = hoyMiami === "Sun" || hoyMiami === "Mon";
@@ -626,7 +626,7 @@ try {
   check("G5. «Lo que Kira entendió»: campos mapeados", det.toLowerCase().includes("lo que kira entendió") && /Tipo de trenzado\s+pegadas/.test(det) && /Número de trenzas\s+6/.test(det) && /Extensiones\s+con/.test(det) && /Color de extensiones\s+rojo/.test(det) && /Largo del pelo\s+nuca u hombros/.test(det) && /Largo de las trenzas\s+caderas/.test(det) && /Email\s+rosessblake@gmail.com/.test(det));
   if (SIN_CLAVE) check("G5s. el panel dice que lo interpretó la lectura básica, no Claude", /Quién lo interpretó\s+Lectura básica por reglas \(sin Claude\)/.test(det) && det.includes("Lectura básica por reglas: este mensaje NO lo ha leído Claude"));
   check("G6. lo que no se dijo aparece como «no indicado»", /Tamaño\s+no indicado/.test(det) && /Instagram\s+no indicado/.test(det));
-  check("G7. precio: origen Legacy, horas, materiales y perfil sin confirmar", det.includes("Calculado por Legacy") && /Horas usadas\s+3 h/.test(det) && /Materiales\s+5 €/.test(det) && det.includes("SMI 1200 €") && !det.includes("(sin confirmar)") && det.includes(`Total de Legacy`));
+  check("G7. precio: origen Legacy, horas, materiales y perfil sin confirmar", det.includes("Calculado por Legacy") && /Horas usadas\s+3 h/.test(det) && /Materiales\s+5 €/.test(det) && det.includes("base salarial 1500 €") && !det.includes("(sin confirmar)") && det.includes(`Total de Legacy`));
   check("G8. avisos y borrador visibles", det.includes("Disponibilidad NO comprobada") && det.toLowerCase().includes("borrador de respuesta"));
   check("G9. línea de tiempo con el recorrido completo", ["mensaje_simulado", "clasificado", "precio_calculado", "propuesta_editada", "propuesta_aprobada"].every((k) => det.includes(k)));
   await page.screenshot({ path: SHOTS + (SIN_CLAVE ? "sc-" : "") + "flujo-02-detalle.png", fullPage: true });
@@ -711,7 +711,7 @@ try {
   await page.goto(`${BASE}/panel/proceso/${convM.id}`);
   const detM = await page.locator("body").innerText();
   check("G29. el detalle de una clienta de Miami: ciudad, dólares y hora de Miami", /Ubicación\s+Miami \(dólares, hora de Miami\)/.test(detM) && /23 oct[^·\n]*11:00 · 150 \$ \(señal 25 \$\)/.test(detM), detM.slice(0, 600));
-  check("G30. el precio puesto por Blake, el perfil de Miami (confirmado, SMI 2600 $) y la dirección, todo en $ (nada en €)", /Precio puesto por ti\s+150 \$/.test(detM) && /zona premium · salon · SMI 2600 \$/.test(detM) && !/SMI 2600 \$ \(sin confirmar\)/.test(detM) && /Dirección del evento\s+1234 Collins Ave, Miami Beach/.test(detM) && !/ €/.test(detM.slice(detM.indexOf("Ubicación"), detM.indexOf("LÍNEA DE TIEMPO") > 0 ? detM.indexOf("LÍNEA DE TIEMPO") : undefined)), JSON.stringify(detM.slice(detM.indexOf("PRECIO") >= 0 ? detM.indexOf("PRECIO") : detM.indexOf("Precio"), (detM.indexOf("PRECIO") >= 0 ? detM.indexOf("PRECIO") : detM.indexOf("Precio")) + 420)));
+  check("G30. el precio puesto por Blake, el perfil de Miami (confirmado, base salarial 2600 $) y la dirección, todo en $ (nada en €)", /Precio puesto por ti\s+150 \$/.test(detM) && /zona premium · salon · base salarial 2600 \$/.test(detM) && !/base salarial 2600 \$ \(sin confirmar\)/.test(detM) && /Dirección del evento\s+1234 Collins Ave, Miami Beach/.test(detM) && !/ €/.test(detM.slice(detM.indexOf("Ubicación"), detM.indexOf("LÍNEA DE TIEMPO") > 0 ? detM.indexOf("LÍNEA DE TIEMPO") : undefined)), JSON.stringify(detM.slice(detM.indexOf("PRECIO") >= 0 ? detM.indexOf("PRECIO") : detM.indexOf("Precio"), (detM.indexOf("PRECIO") >= 0 ? detM.indexOf("PRECIO") : detM.indexOf("Precio")) + 420)));
   await page.screenshot({ path: SHOTS + (SIN_CLAVE ? "sc-" : "") + "flujo-07-miami.png", fullPage: true });
 
   // ============================================================================ H. Sin secretos en los registros

@@ -349,7 +349,7 @@ describe("filasDeMapeo y filasDePrecio (lo que se muestra de una propuesta)", ()
     expect(valor(f, "Origen del precio")).toBe("Calculado por Legacy");
     expect(valor(f, "Horas usadas")).toBe("2 h");
     expect(valor(f, "Materiales")).toBe("5 €");
-    expect(valor(f, "Perfil usado")).toBe("elite · zona media · casa · SMI 1350 € (sin confirmar)");
+    expect(valor(f, "Perfil usado")).toBe("elite · zona media · casa · base salarial 1350 € (sin confirmar)");
     expect(valor(f, "Total de Legacy")).toBe("60,15 €");
     expect(valor(f, "Tarifa por hora")).toBe("27.57 €/h");
   });
@@ -397,14 +397,14 @@ describe("Miami en el panel: dólares y hora de Miami", () => {
     const f = filasDePrecio({ origen: "legacy", moneda: "USD", horas: 2, materiales: 5, perfil: { nivel: "elite", zona: "premium", estructura: "salon", smi: 1257, confirmado: false }, legacy: { totalCentimos: 9000, tarifaHora: 40 } });
     const v = (e: string) => f.find((x) => x.etiqueta === e)?.valor;
     expect(v("Materiales")).toBe("5 $");
-    expect(v("Perfil usado")).toBe("elite · zona premium · salon · SMI 1257 $ (sin confirmar)");
+    expect(v("Perfil usado")).toBe("elite · zona premium · salon · base salarial 1257 $ (sin confirmar)");
     expect(v("Total de Legacy")).toBe("90 $");
     expect(v("Tarifa por hora")).toBe("40 $/h");
   });
 
   it("sin moneda guardada pero con perfil de EE. UU.: dólares (defensa si un precio se guardó sin moneda)", () => {
     const f = filasDePrecio({ origen: "manual", perfil: { nivel: "elite", zona: "premium", estructura: "salon", smi: 1257, pais: "us", confirmado: false } });
-    expect(f.find((x) => x.etiqueta === "Perfil usado")?.valor).toBe("elite · zona premium · salon · SMI 1257 $ (sin confirmar)");
+    expect(f.find((x) => x.etiqueta === "Perfil usado")?.valor).toBe("elite · zona premium · salon · base salarial 1257 $ (sin confirmar)");
   });
 
   it("sin moneda guardada (propuestas antiguas) sigue en euros", () => {

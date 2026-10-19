@@ -810,7 +810,7 @@ describe("Miami: otra ciudad, otro nivel de precios, dólares y hora de Nueva Yo
     expect(t).toContain("mar 20 oct, 12:00 → 15:00 (3 h)");
     expect(t).toContain("60,15 $ (Legacy) · Señal: 20 $");
     expect(t).toContain("materiales 5 $");
-    expect(t).toContain("SMI 2600 $");
+    expect(t).toContain("base salarial 2600 $");
     expect(t).not.toContain("€");
     expect(m.reserva().deposit_cents).toBe(2000);
     expect(m.reserva().warnings.join("\n")).not.toContain("Perfil de precios sin confirmar"); // el perfil de Miami ya está confirmado

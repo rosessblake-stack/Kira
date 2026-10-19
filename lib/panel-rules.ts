@@ -468,7 +468,7 @@ export function filasDePrecio(pricing: unknown): Fila[] {
   if (txt(perfil.nivel)) {
     filas.push({
       etiqueta: "Perfil usado",
-      valor: `${txt(perfil.nivel)} · zona ${txt(perfil.zona) ?? "?"} · ${txt(perfil.estructura) ?? "?"} · SMI ${numr(perfil.smi) ?? "?"} ${sim}${perfil.confirmado === true ? "" : " (sin confirmar)"}`,
+      valor: `${txt(perfil.nivel)} · zona ${txt(perfil.zona) ?? "?"} · ${txt(perfil.estructura) ?? "?"} · base salarial ${numr(perfil.smi) ?? "?"} ${sim}${perfil.confirmado === true ? "" : " (sin confirmar)"}`,
     });
   }
   if (numr(legacy.totalCentimos) !== null) filas.push({ etiqueta: "Total de Legacy", valor: dinero(numr(legacy.totalCentimos), moneda) });

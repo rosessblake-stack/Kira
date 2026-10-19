@@ -111,8 +111,8 @@ describe("interpretarPerfil", () => {
     });
   });
 
-  it("el perfil por defecto es el de Blake, confirmado: casa, élite, zona media, España, SMI 1200", () => {
-    expect(PERFIL_POR_DEFECTO).toEqual({ pais: "es", zona: "media", estructura: "casa", nivel: "elite", smi: 1200, confirmado: true });
+  it("el perfil por defecto es el de Blake, confirmado: casa, élite, zona media, España, base salarial 1500 (SME)", () => {
+    expect(PERFIL_POR_DEFECTO).toEqual({ pais: "es", zona: "media", estructura: "casa", nivel: "elite", smi: 1500, confirmado: true });
   });
 
   it("sin nada guardado se usa el perfil de Blake tal cual", () => {
