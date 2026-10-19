@@ -25,13 +25,40 @@ function defaults(table, row) {
   if (!("id" in r) && table !== "app_settings" && table !== "processed_webhooks") {
     r.id = intId.has(table) ? seq++ : randomUUID();
   }
-  if (table === "event_log") Object.assign(r, { at: r.at ?? nowIso(), level: r.level ?? "info", detail: r.detail ?? {}, conversation_id: r.conversation_id ?? null });
+  if (table === "event_log") Object.assign(r, { at: r.at ?? nowIso(), level: r.level ?? "info", detail: r.detail ?? {}, conversation_id: r.conversation_id ?? null, booking_id: r.booking_id ?? null });
   if (table === "security_events") Object.assign(r, { at: r.at ?? nowIso(), detail: r.detail ?? {}, conversation_id: r.conversation_id ?? null });
   if (table === "panel_login_tokens") Object.assign(r, { created_at: r.created_at ?? nowIso(), used_at: r.used_at ?? null });
   if (table === "panel_sessions") Object.assign(r, { created_at: r.created_at ?? nowIso(), revoked_at: r.revoked_at ?? null });
   if (table === "messages") Object.assign(r, { created_at: r.created_at ?? nowIso(), flagged: r.flagged ?? false });
-  if (table === "bookings") Object.assign(r, { created_at: r.created_at ?? nowIso(), calendar_event_id: r.calendar_event_id ?? null, payment_deadline: r.payment_deadline ?? null, approved_at: r.approved_at ?? null });
-  if (table === "conversations") Object.assign(r, { created_at: r.created_at ?? nowIso(), updated_at: r.updated_at ?? nowIso() });
+  if (table === "bookings") {
+    Object.assign(r, {
+      created_at: r.created_at ?? nowIso(),
+      status: r.status ?? "propuesta",
+      is_test: r.is_test ?? false,
+      spec: r.spec ?? {},
+      pricing: r.pricing ?? {},
+      warnings: r.warnings ?? [],
+      client_email: r.client_email ?? null,
+      reply_draft: r.reply_draft ?? null,
+      proposal_nonce: r.proposal_nonce ?? null,
+      telegram_message_id: r.telegram_message_id ?? null,
+      edit_requested_at: r.edit_requested_at ?? null,
+      approved_by_telegram_user: r.approved_by_telegram_user ?? null,
+      approved_at: r.approved_at ?? null,
+      payment_deadline: r.payment_deadline ?? null,
+      calendar_event_id: r.calendar_event_id ?? null,
+      stripe_session_id: r.stripe_session_id ?? null,
+    });
+  }
+  if (table === "conversations") {
+    Object.assign(r, {
+      created_at: r.created_at ?? nowIso(),
+      updated_at: r.updated_at ?? nowIso(),
+      intent: r.intent ?? "desconocido",
+      status: r.status ?? "abierta",
+      last_client_message_at: r.last_client_message_at ?? null,
+    });
+  }
   return r;
 }
 
@@ -43,9 +70,7 @@ function parseFilters(searchParams) {
   for (const [col, raw] of searchParams) {
     if (["select", "order", "limit", "offset", "on_conflict", "columns"].includes(col)) continue;
     const dot = raw.indexOf(".");
-    const op = raw.slice(0, dot);
-    const val = raw.slice(dot + 1);
-    filters.push({ col, op, val });
+    filters.push({ col, op: raw.slice(0, dot), val: raw.slice(dot + 1) });
   }
   return filters;
 }
@@ -61,6 +86,10 @@ function matches(row, { col, op, val }) {
     case "in": {
       const items = val.replace(/^\(|\)$/g, "").split(",").map((s) => s.replace(/^"|"$/g, ""));
       return items.includes(String(v));
+    }
+    case "not": {
+      const dot = val.indexOf(".");
+      return !matches(row, { col, op: val.slice(0, dot), val: val.slice(dot + 1) });
     }
     default: throw new Error(`operador no soportado: ${op}`);
   }
@@ -85,6 +114,15 @@ function send(res, status, body, headers = {}) {
   res.end(body === undefined ? undefined : JSON.stringify(body));
 }
 
+/** Respuesta con filas: array normal, o un único objeto si se pidió .single()/.maybeSingle() (como PostgREST). */
+function conFilas(res, status, rows, comoObjeto) {
+  if (!comoObjeto) return send(res, status, rows);
+  if (rows.length !== 1) {
+    return send(res, 406, { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" });
+  }
+  return send(res, status, rows[0]);
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
   const chunks = [];
@@ -98,6 +136,7 @@ const server = http.createServer(async (req, res) => {
   const table = m[1];
   const prefer = req.headers.prefer ?? "";
   const wantsRows = prefer.includes("return=representation");
+  const comoObjeto = String(req.headers.accept ?? "").includes("vnd.pgrst.object");
 
   try {
     if (req.method === "GET" || req.method === "HEAD") {
@@ -107,6 +146,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { "content-range": range });
         return res.end();
       }
+      if (comoObjeto) return conFilas(res, 200, rows, true);
       return send(res, 200, rows, { "content-range": range });
     }
     if (req.method === "POST") {
@@ -118,17 +158,22 @@ const server = http.createServer(async (req, res) => {
           const existing = tables[table].find((r) => r[pk] === raw[pk]);
           if (existing) { Object.assign(existing, raw); out.push(existing); continue; }
         }
+        if (table === "processed_webhooks" && tables[table].some((r) => r.provider === raw.provider && r.external_id === raw.external_id)) {
+          return send(res, 409, { code: "23505", message: "duplicate key value violates unique constraint" });
+        }
         const row = defaults(table, raw);
         tables[table].push(row);
         out.push(row);
       }
-      return send(res, 201, wantsRows ? out : undefined);
+      if (!wantsRows) return send(res, 201, undefined);
+      return conFilas(res, 201, structuredClone(out), comoObjeto);
     }
     if (req.method === "PATCH") {
       const filters = parseFilters(url.searchParams);
       const rows = tables[table].filter((r) => filters.every((f) => matches(r, f)));
       for (const r of rows) Object.assign(r, body);
-      return send(res, wantsRows ? 200 : 204, wantsRows ? rows : undefined);
+      if (!wantsRows) return send(res, 204, undefined);
+      return conFilas(res, 200, structuredClone(rows), comoObjeto);
     }
     return send(res, 405, { message: "método no soportado" });
   } catch (e) {

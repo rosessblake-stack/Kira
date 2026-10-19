@@ -5,6 +5,7 @@ import { PERFIL_POR_DEFECTO, type PrecioLegacy } from "../lib/pricing";
 import {
   aplicarCambios,
   componerPropuesta,
+  ejemploDeEdicion,
   interpretarFecha,
   interpretarHora,
   parsearEdicion,
@@ -161,6 +162,26 @@ describe("la clienta de referencia: 6 trenzas rojas, 20 oct 12:00", () => {
     expect(t).toContain("⛔ Todavía no se puede aprobar");
     expect(t).toContain("Precio: sin calcular");
     expect(t).toContain("Pulsa Editar");
+  });
+
+  it("sin nombre se dice «sin nombre», no «Cliente sin nombre»", () => {
+    const spec = specReferencia({ tipo_trenzado: "pegadas" });
+    const t = textoPropuesta(componerPropuesta(spec, legacy(60), ctx), spec, { mensajeCliente: MENSAJE, esPrueba: false, perfil: PERFIL_POR_DEFECTO });
+    expect(t).toContain("Cliente: sin nombre (rosessblake@gmail.com)");
+    expect(t).not.toContain("Cliente sin nombre");
+  });
+
+  it("el ejemplo de edición corresponde a lo que falta", () => {
+    expect(ejemploDeEdicion(["precio: falta tipo de trenzado (pegadas, sueltas o fulani)"])).toBe("tipo pegadas");
+    expect(ejemploDeEdicion(["precio: falta tamaño de las trenzas (jumbo, large, medium, small…)"])).toBe("tamaño large");
+    expect(ejemploDeEdicion(["precio: falta si lleva extensiones"])).toBe("extensiones con");
+    expect(ejemploDeEdicion(["precio (Legacy respondió 503; puedes ponerlo tú con «precio 80»)"])).toBe("precio 80");
+    expect(ejemploDeEdicion(["fecha", "hora"])).toBe("fecha 20/10 12:00");
+    expect(ejemploDeEdicion(["hora"])).toBe("hora 12:00");
+    expect(ejemploDeEdicion(["duración (horas)"])).toBe("horas 3");
+    const spec = specReferencia({ tipo_trenzado: "pegadas" });
+    const p = componerPropuesta(spec, { origen: "error", error: "Legacy respondió 503" }, ctx);
+    expect(textoPropuesta(p, spec, { mensajeCliente: MENSAJE, esPrueba: true, perfil: PERFIL_POR_DEFECTO })).toContain("por ejemplo: precio 80");
   });
 
   it("un mensaje larguísimo no desborda el límite de Telegram", () => {

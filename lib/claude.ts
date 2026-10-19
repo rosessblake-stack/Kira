@@ -16,6 +16,22 @@ export class SinClaveError extends Error {
   }
 }
 
+/** Texto para Blake y para el registro: qué pasó, sin volcar el cuerpo crudo del error de la API. */
+export function describirErrorClaude(e: unknown): string {
+  if (e instanceof SinClaveError) return e.message;
+  const status = typeof (e as { status?: unknown } | null)?.status === "number" ? (e as { status: number }).status : null;
+  if (status !== null) {
+    const causa =
+      status === 401 || status === 403 ? " (clave rechazada: revisa ANTHROPIC_API_KEY)"
+      : status === 429 ? " (demasiadas peticiones)"
+      : status >= 500 ? " (servicio sobrecargado o caído)"
+      : "";
+    return `Claude respondió con el error ${status}${causa}`;
+  }
+  if (e instanceof Error && /time(d)?\s?out|abort/i.test(`${e.name} ${e.message}`)) return "Claude no respondió a tiempo";
+  return "No se pudo conectar con Claude";
+}
+
 export type RespuestaClaude =
   | { tipo: "ok"; raw: unknown; entrada: number; salida: number }
   | { tipo: "rechazo" }

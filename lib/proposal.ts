@@ -257,7 +257,7 @@ export function textoPropuesta(
   const l: string[] = [];
   l.push(`${ctx.esPrueba ? "🧪 PRUEBA · " : ""}PROPUESTA DE CITA`);
   l.push("");
-  l.push(`👤 Cliente: ${p.nombreCliente}${p.emailCliente ? ` (${p.emailCliente})` : ""}${spec.instagram ? ` · ${spec.instagram}` : ""}`);
+  l.push(`👤 Cliente: ${spec.nombre ?? "sin nombre"}${p.emailCliente ? ` (${p.emailCliente})` : ""}${spec.instagram ? ` · ${spec.instagram}` : ""}`);
   l.push(`💬 Dijo: «${recorte(limpiarTexto(ctx.mensajeCliente, 600), 500)}»`);
   l.push("");
   l.push("🧾 Lo que he entendido");
@@ -288,7 +288,7 @@ export function textoPropuesta(
   if (p.faltan.length) {
     l.push("");
     l.push(`⛔ Todavía no se puede aprobar. Falta: ${p.faltan.join(" · ")}`);
-    l.push("Pulsa Editar y dime, por ejemplo: tipo pegadas");
+    l.push(`Pulsa Editar y dime, por ejemplo: ${ejemploDeEdicion(p.faltan)}`);
   }
   return recorte(l.join("\n"), 3900);
 }
@@ -296,6 +296,19 @@ export function textoPropuesta(
 // ---------------------------------------------------------------------------
 // Edición: Blake escribe cambios en lenguaje simple, una línea por cambio
 // ---------------------------------------------------------------------------
+
+/** Un ejemplo de edición que corresponda a lo primero que falta (no uno cualquiera). */
+export function ejemploDeEdicion(faltan: string[]): string {
+  const primero = (faltan[0] ?? "").toLowerCase();
+  if (primero.includes("tipo de trenzado")) return "tipo pegadas";
+  if (primero.includes("tamaño")) return "tamaño large";
+  if (primero.includes("extensiones")) return "extensiones con";
+  if (primero.startsWith("precio (")) return "precio 80";
+  if (primero === "fecha") return "fecha 20/10 12:00";
+  if (primero === "hora") return "hora 12:00";
+  if (primero.includes("duración")) return "horas 3";
+  return "precio 80";
+}
 
 export const AYUDA_EDICION = [
   "Dime qué cambiar, una cosa por línea. Por ejemplo:",

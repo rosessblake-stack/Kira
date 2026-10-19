@@ -386,11 +386,13 @@ describe("seguridad: manipulación y límites", () => {
   });
 
   it("si Claude falla por otra causa, deriva sin filtrar el detalle", async () => {
-    const m = mundo({ claude: async () => { throw new Error("503 upstream connect error"); } });
+    const m = mundo({ claude: async () => { throw Object.assign(new Error('529 {"type":"error","error":{"type":"overloaded_error"}}'), { status: 529 }); } });
     await m.flujo.simular(CHAT, MENSAJE);
     expect(m.ultimo().texto).toContain("Claude no respondió");
-    expect(m.ultimo().texto).not.toContain("503");
-    expect(m.w.eventos.find((e) => e.kind === "claude_error")).toMatchObject({ level: "error" });
+    expect(m.ultimo().texto).not.toContain("529");
+    const ev = m.w.eventos.find((e) => e.kind === "claude_error");
+    expect(ev).toMatchObject({ level: "error", summary: "Claude respondió con el error 529 (servicio sobrecargado o caído)" });
+    expect(JSON.stringify(ev)).not.toContain("overloaded_error"); // el cuerpo crudo de la API no llega al registro
   });
 
   it("otras intenciones no generan propuesta: se derivan", async () => {

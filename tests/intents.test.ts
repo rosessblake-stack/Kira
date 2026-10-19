@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SinClaveError, describirErrorClaude } from "../lib/claude";
 import {
   CLASIFICACION_SCHEMA,
   INTENCIONES,
@@ -229,5 +230,26 @@ describe("limpiarTexto", () => {
   it("colapsa espacios y saltos, y respeta el tope", () => {
     expect(limpiarTexto("a\n\n b\t c", 50)).toBe("a b c");
     expect(limpiarTexto("abcdef", 3)).toBe("abc");
+  });
+});
+
+describe("describirErrorClaude", () => {
+  const api = (status: number) => Object.assign(new Error(`${status} {"type":"error","error":{"message":"detalle interno"}}`), { status });
+
+  it("resume el estado HTTP sin volcar el cuerpo de la API", () => {
+    expect(describirErrorClaude(api(529))).toBe("Claude respondió con el error 529 (servicio sobrecargado o caído)");
+    expect(describirErrorClaude(api(500))).toContain("sobrecargado o caído");
+    expect(describirErrorClaude(api(429))).toBe("Claude respondió con el error 429 (demasiadas peticiones)");
+    expect(describirErrorClaude(api(401))).toContain("revisa ANTHROPIC_API_KEY");
+    expect(describirErrorClaude(api(400))).toBe("Claude respondió con el error 400");
+    for (const s of [401, 429, 500, 529, 400]) expect(describirErrorClaude(api(s))).not.toContain("detalle interno");
+  });
+
+  it("distingue la falta de clave, los tiempos agotados y los fallos de red", () => {
+    expect(describirErrorClaude(new SinClaveError())).toContain("ANTHROPIC_API_KEY");
+    expect(describirErrorClaude(Object.assign(new Error("Request timed out."), { name: "APIConnectionTimeoutError" }))).toBe("Claude no respondió a tiempo");
+    expect(describirErrorClaude(new TypeError("fetch failed: ECONNREFUSED 10.0.0.1"))).toBe("No se pudo conectar con Claude");
+    expect(describirErrorClaude("raro")).toBe("No se pudo conectar con Claude");
+    expect(describirErrorClaude(null)).toBe("No se pudo conectar con Claude");
   });
 });

@@ -10,7 +10,7 @@ import {
   type Clasificacion,
 } from "./intents";
 import type { RespuestaClaude } from "./claude";
-import { SinClaveError } from "./claude";
+import { SinClaveError, describirErrorClaude } from "./claude";
 import {
   construirPeticion,
   datosFaltantes,
@@ -203,7 +203,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
 
   const resumenDecision = (r: Reserva) =>
     [
-      `👤 ${r.client_name}${r.client_email ? ` (${r.client_email})` : ""}`,
+      `👤 ${r.spec?.nombre ?? "sin nombre"}${r.client_email ? ` (${r.client_email})` : ""}`,
       `🧾 ${r.service_description}`,
       `📅 ${r.starts_at ? fechaLarga(new Date(r.starts_at)) : "sin fecha"} · 💶 ${euros(r.price_cents)} (señal ${euros(r.deposit_cents)})`,
     ].join("\n");
@@ -300,7 +300,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       respuesta = await deps.clasificar(texto, ahora);
     } catch (e) {
       const sinClave = e instanceof SinClaveError;
-      await deps.logEvent({ source: "claude", kind: sinClave ? "sin_clave_anthropic" : "claude_error", level: "error", summary: msg(e), conversation_id: convId });
+      await deps.logEvent({ source: "claude", kind: sinClave ? "sin_clave_anthropic" : "claude_error", level: "error", summary: describirErrorClaude(e), conversation_id: convId });
       await avisarADerivar(chatId, convId, sinClave ? "Falta la clave de Claude (ANTHROPIC_API_KEY) en Vercel: no puedo clasificar." : "No he podido clasificar el mensaje (Claude no respondió).", texto);
       return;
     }
