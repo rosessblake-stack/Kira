@@ -17,9 +17,12 @@ Estas reglas son parte del diseño, no un añadido final. Cada flujo nuevo las h
 - **Telegram:** solo se aceptan aprobaciones de tu `user_id` de Telegram (guardado como variable de entorno). Cualquier otro intento se descarta y se registra (`telegram_no_autorizado`). Los botones llevan un identificador de un solo uso.
 - **Webhooks:** se verifica la firma o el secreto de cada proveedor (Stripe, Telegram, ManyChat, Typeform). Sin firma válida: se rechaza y se registra (`firma_invalida`).
 - **Idempotencia:** cada aviso se anota en `processed_webhooks`; un reintento no se procesa dos veces.
-- **Panel:** acceso protegido con inicio de sesión de administrador. Los intentos denegados se registran (`acceso_panel_denegado`).
+- **Panel:** sin contraseñas. Solo el administrador de Telegram puede pedir acceso (`/panel`): el bot le manda un enlace de un solo uso (5 minutos, sin vista previa) que se canjea pulsando un botón, para que ninguna vista previa lo gaste. La sesión dura 12 h, se guarda solo como hash y viaja en una cookie `__Host-`, `HttpOnly`, `Secure`, `SameSite=Strict`. Cada lectura de datos exige la prueba de administrador que solo entrega la comprobación de sesión. Sin sesión o con una cookie falsa se redirige al login (y la cookie falsa se registra). Enlaces ya usados, caducados o con formato inválido se rechazan y se registran (`acceso_panel_denegado`). Cabeceras: `no-store` y CSP restrictiva. Todo texto de clientes se muestra como texto plano.
+- **Pausa:** el interruptor «Pausar Kira» falla hacia el silencio: si no se puede leer el ajuste, Kira se considera pausada.
+- **Simulación (`/simular`):** solo el administrador; crea conversaciones del canal `prueba`, nunca envía nada a un cliente y sus reservas (`is_test`) no bloquean huecos reales.
+- **Legacy:** Kira nunca envía a Legacy datos de una clienta (email interno de marcador y sin Instagram). Si Legacy falla o faltan datos, no se calcula precio.
 - **Base de datos:** RLS activada y sin políticas. Solo el servidor, con la clave `service_role`, puede leer o escribir.
-- **Límite de peticiones:** tope por contacto y por minuto para frenar abusos y evitar gasto descontrolado de API.
+- **Límite de peticiones:** tope por contacto y por hora (10) y tope diario de llamadas a Claude (300) para frenar abusos y evitar gasto descontrolado de API. Al superarlo: silencio, evento `limite_de_peticiones` y aviso a Blake. El tope diario ya está activo; el de ritmo por contacto está implementado y probado y se conectará con ManyChat.
 
 ## 4. Secretos
 - Tokens y claves (Stripe, Telegram, ManyChat, Anthropic, Google, `service_role`) viven **solo** en variables de entorno de Vercel. Las pones tú en el panel de Vercel; no se pegan en ningún chat.
