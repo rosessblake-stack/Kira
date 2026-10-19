@@ -210,20 +210,20 @@ describe("recorrido de la clienta de referencia (6 trenzas rojas, 20 oct 12:00)"
     expect(consumido).toBe(true);
     expect(m.w.llamadasLegacy).toHaveLength(1);
     const peticion = m.w.llamadasLegacy[0];
-    expect(peticion).toMatchObject({ tipoTrenzado: "pegadas", extensionesPegadas: "con", largoExtensiones: "caderas", largoCabello: "nuca_hombros", horas: 2, materiales: 5, nivel: "elite", estructura: "casa" });
+    expect(peticion).toMatchObject({ tipoTrenzado: "pegadas", extensionesPegadas: "con", largoExtensiones: "caderas", largoCabello: "nuca_hombros", horas: 3, materiales: 5, nivel: "elite", estructura: "casa" });
     expect(String(peticion.email)).toMatch(/\.invalid$/);
     expect(JSON.stringify(peticion)).not.toMatch(/rosessblake|gmail/i); // ni rastro de la clienta en Legacy
 
     const t = m.ultimo();
     expect(t.texto).toContain("✏️ Cambios aplicados: tipo.");
     expect(t.texto).toContain("60,15 € (Legacy)");
-    expect(t.texto).toContain("2 h · materiales 5 €");
-    expect(t.texto).toContain("mar 20 oct, 12:00 → 14:00 (2 h)");
+    expect(t.texto).toContain("3 h · materiales 5 €");
+    expect(t.texto).toContain("mar 20 oct, 12:00 → 15:00 (3 h)");
     expect(t.texto).not.toContain("Perfil de precios sin confirmar"); // el perfil de Blake ya está confirmado
     expect(t.texto).not.toContain("⛔");
     expect(m.botones(t)).toEqual(["✅ Aprobar", "✏️ Editar", "❌ Rechazar"]);
-    expect(m.reserva()).toMatchObject({ price_cents: 6015, duration_minutes: 120, ends_at: "2026-10-20T12:00:00.000Z", edit_requested_at: null });
-    expect(m.reserva().pricing).toMatchObject({ origen: "legacy", horas: 2, materiales: 5 });
+    expect(m.reserva()).toMatchObject({ price_cents: 6015, duration_minutes: 180, ends_at: "2026-10-20T13:00:00.000Z", edit_requested_at: null });
+    expect(m.reserva().pricing).toMatchObject({ origen: "legacy", horas: 3, materiales: 5 });
     expect(m.tipos()).toEqual(expect.arrayContaining(["precio_calculado", "propuesta_editada"]));
   });
 
@@ -807,7 +807,7 @@ describe("Miami: otra ciudad, otro nivel de precios, dólares y hora de Nueva Yo
     expect(m.reserva().starts_at).toBe("2026-10-20T16:00:00.000Z");
     const t = m.ultimo().texto;
     expect(t).toContain("📍 Miami · dólares · hora de Miami");
-    expect(t).toContain("mar 20 oct, 12:00 → 14:00 (2 h)");
+    expect(t).toContain("mar 20 oct, 12:00 → 15:00 (3 h)");
     expect(t).toContain("60,15 $ (Legacy) · Señal: 20 $");
     expect(t).toContain("materiales 5 $");
     expect(t).toContain("SMI 2600 $");

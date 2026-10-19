@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { comprobarClaude } from "../../../lib/claude-check";
 import { getDb } from "../../../lib/db";
 import { getMe, getWebhookInfo } from "../../../lib/telegram";
 
@@ -57,9 +58,12 @@ export async function GET() {
     /* se refleja en telegram:false */
   }
 
+  // Claude: de qué tipo parece la clave y si Anthropic la acepta (sin enseñarla). No cuenta para «ok»: sin clave Kira sigue vivo.
+  const claude = await comprobarClaude();
+
   const ok = supabase && telegram;
   return NextResponse.json(
-    { ok, supabase, supabaseError, telegram, bot, telegramError, webhook, env },
+    { ok, supabase, supabaseError, telegram, bot, telegramError, webhook, env, claude },
     { status: ok ? 200 : 503 },
   );
 }

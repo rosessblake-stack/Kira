@@ -82,6 +82,8 @@ function clasificacionSimulada(texto) {
 
 const servidorClaude = http.createServer(async (req, res) => {
   const body = await leerCuerpo(req);
+  // Lista de modelos: la usa la comprobación de estado (/api/health) para saber si Anthropic acepta la clave.
+  if (req.method === "GET" && req.url.startsWith("/v1/models")) return json(res, 200, { data: [], has_more: false, first_id: null, last_id: null });
   if (req.method === "POST" && req.url.startsWith("/v1/messages")) {
     claude.llamadas.push(body);
     claude.cabeceras.push(req.headers);
@@ -295,17 +297,17 @@ try {
 
   check("A24. ahora SÍ se llamó a Legacy (una vez)", legacy.recibidas.length === 1);
   const pLegacy = legacy.recibidas[0];
-  check("A25. petición a Legacy: pegadas, con extensiones, largos, 2 h, 5 € de materiales, perfil de Blake", pLegacy.tipoTrenzado === "pegadas" && pLegacy.extensionesPegadas === "con" && pLegacy.largoExtensiones === "caderas" && pLegacy.largoCabello === "nuca_hombros" && pLegacy.horas === 2 && pLegacy.materiales === 5 && pLegacy.nivel === "elite" && pLegacy.zona === "media" && pLegacy.estructura === "casa" && pLegacy.pais === "es");
+  check("A25. petición a Legacy: pegadas, con extensiones, largos, 3 h (dato real de Blake), 5 € de materiales, perfil de Blake", pLegacy.tipoTrenzado === "pegadas" && pLegacy.extensionesPegadas === "con" && pLegacy.largoExtensiones === "caderas" && pLegacy.largoCabello === "nuca_hombros" && pLegacy.horas === 3 && pLegacy.materiales === 5 && pLegacy.nivel === "elite" && pLegacy.zona === "media" && pLegacy.estructura === "casa" && pLegacy.pais === "es");
   check("A26. a Legacy NO le llega ningún dato de la clienta (email interno, sin instagram)", String(pLegacy.email).endsWith(".invalid") && pLegacy.instagram === "" && !JSON.stringify(legacy.recibidas).match(/rosessblake|gmail/i));
   const totalLegacy = Math.round(legacy.respuestas[0].precioTotal * 100);
   check("A27. la fórmula REAL de Legacy respondió con un precio razonable", legacy.respuestas[0].precioTotal > 20 && legacy.respuestas[0].precioTotal < 300, JSON.stringify(legacy.respuestas[0]));
   check(`A28. Blake ve EXACTAMENTE el precio de Legacy (${euros(totalLegacy)})`, propuesta2.text.includes(`${euros(totalLegacy)} (Legacy)`));
-  check("A29. muestra horas, materiales y el perfil confirmado de Blake (sin avisar de perfil sin confirmar), y avisa de lo provisional (horas)", propuesta2.text.includes("2 h · materiales 5 €") && propuesta2.text.includes("perfil élite · zona media · casa · SMI 1200 €") && !propuesta2.text.includes("Perfil de precios sin confirmar") && propuesta2.text.includes("son una sugerencia: ajústalas con «horas 3»"));
-  check("A30. horario: 12:00 → 14:00 (2 h)", propuesta2.text.includes("mar 20 oct, 12:00 → 14:00 (2 h)"));
+  check("A29. muestra horas, materiales y el perfil confirmado de Blake (sin avisar de perfil sin confirmar), y avisa de lo provisional (horas)", propuesta2.text.includes("3 h · materiales 5 €") && propuesta2.text.includes("perfil élite · zona media · casa · SMI 1200 €") && !propuesta2.text.includes("Perfil de precios sin confirmar") && propuesta2.text.includes("son una sugerencia: ajústalas con «horas 3»"));
+  check("A30. horario: 12:00 → 15:00 (3 h)", propuesta2.text.includes("mar 20 oct, 12:00 → 15:00 (3 h)"));
   check("A31. borrador al cliente con precio real, fecha y señal", propuesta2.text.includes(`el precio es de ${euros(totalLegacy)}`) && propuesta2.text.includes("Me pides el mar 20 oct, 12:00") && propuesta2.text.includes("señal de 20 €"));
   check("A32. ya sin ⛔ y con botón Aprobar", !propuesta2.text.includes("⛔") && JSON.stringify(botones(propuesta2)) === JSON.stringify(["✅ Aprobar", "✏️ Editar", "❌ Rechazar"]));
   r = reservas()[0];
-  check("A33. la reserva guarda precio, duración y fin", r.price_cents === totalLegacy && r.duration_minutes === 120 && r.ends_at === "2026-10-20T12:00:00.000Z" && r.pricing.origen === "legacy");
+  check("A33. la reserva guarda precio, duración y fin", r.price_cents === totalLegacy && r.duration_minutes === 180 && r.ends_at === "2026-10-20T13:00:00.000Z" && r.pricing.origen === "legacy");
 
   // --- Aprobar
   anota("Blake pulsa", "✅ Aprobar");
@@ -320,6 +322,14 @@ try {
   await pulsa(dato(propuesta2, "Aprobar"), propuesta2.message_id);
   check("A38. pulsar Aprobar otra vez no repite nada", eventos("propuesta_aprobada").length === 1);
 
+  // --- Estado: la comprobación de salud dice de qué tipo parece la clave y si Anthropic la acepta (nunca la clave)
+  const salud = await (await fetch(`${BASE}/api/health`)).json();
+  if (!SIN_CLAVE) {
+    check("A40. /api/health: hay clave y Anthropic la acepta, sin enseñar ni un carácter de ella", salud.env.ANTHROPIC_API_KEY === true && salud.claude.presente === true && salud.claude.aceptada === true && salud.claude.estado === 200 && !JSON.stringify(salud).includes("clave-falsa"));
+  } else {
+    check("A40s. /api/health sin clave: lo dice (no hay clave y no se pregunta a Anthropic)", salud.env.ANTHROPIC_API_KEY === false && salud.claude.presente === false && salud.claude.aceptada === null);
+  }
+
   // ============================================================================ B. RECHAZO (propuesta completa a la primera)
   console.log("\n=== B. Rechazo: mensaje con todos los datos ===");
   const antesB = legacy.recibidas.length;
@@ -327,7 +337,7 @@ try {
   const propB = conBotones();
   anota("Kira (propuesta B, completa)", `${propB.text}\n[botones: ${botones(propB).join(" | ")}]`);
   check("B1. con datos completos la propuesta sale ya con precio de Legacy y botón Aprobar", legacy.recibidas.length === antesB + 1 && propB.text.includes("(Legacy)") && botones(propB).includes("✅ Aprobar"));
-  check("B2. sueltas large: 4 h por defecto y horario 17:00 → 21:00", propB.text.includes("4 h") && propB.text.includes("17:00 → 21:00"));
+  check("B2. sueltas large: 3,5 h (dato real de Blake) y horario 17:00 → 20:30", propB.text.includes("3,5 h") && propB.text.includes("17:00 → 20:30"));
   check("B3. conoce nombre y email", propB.text.includes("Cliente: Marta (marta@correo.com)"));
   await pulsa(dato(propB, "Rechazar"), propB.message_id);
   const resB = reservas()[1];
@@ -381,7 +391,7 @@ try {
     const antesFallo = claude.llamadas.length;
     await escribe("/simular FALLO CLAUDE quiero cita");
     check("E2. si Claude falla, deriva a Blake sin filtrar el detalle y registra el error", ultimo().text.includes("Claude no respondió") && !ultimo().text.includes("529") && eventos("claude_error").length === 1 && claude.llamadas.length === antesFallo + 2 /* 1 intento + 1 reintento del SDK */);
-    check("E2b. el registro dice qué pasó, sin volcar el cuerpo crudo de la API", eventos("claude_error")[0].summary === "Claude respondió con el error 529 (servicio sobrecargado o caído)");
+    check("E2b. el registro dice qué pasó (error 529 y su tipo), sin volcar el cuerpo crudo de la API", eventos("claude_error")[0].summary === "Claude respondió con el error 529 (servicio sobrecargado o caído) · overloaded_error");
   }
 
   legacy.caido = true;
@@ -616,7 +626,7 @@ try {
   check("G5. «Lo que Kira entendió»: campos mapeados", det.toLowerCase().includes("lo que kira entendió") && /Tipo de trenzado\s+pegadas/.test(det) && /Número de trenzas\s+6/.test(det) && /Extensiones\s+con/.test(det) && /Color de extensiones\s+rojo/.test(det) && /Largo del pelo\s+nuca u hombros/.test(det) && /Largo de las trenzas\s+caderas/.test(det) && /Email\s+rosessblake@gmail.com/.test(det));
   if (SIN_CLAVE) check("G5s. el panel dice que lo interpretó la lectura básica, no Claude", /Quién lo interpretó\s+Lectura básica por reglas \(sin Claude\)/.test(det) && det.includes("Lectura básica por reglas: este mensaje NO lo ha leído Claude"));
   check("G6. lo que no se dijo aparece como «no indicado»", /Tamaño\s+no indicado/.test(det) && /Instagram\s+no indicado/.test(det));
-  check("G7. precio: origen Legacy, horas, materiales y perfil sin confirmar", det.includes("Calculado por Legacy") && /Horas usadas\s+2 h/.test(det) && /Materiales\s+5 €/.test(det) && det.includes("SMI 1200 €") && !det.includes("(sin confirmar)") && det.includes(`Total de Legacy`));
+  check("G7. precio: origen Legacy, horas, materiales y perfil sin confirmar", det.includes("Calculado por Legacy") && /Horas usadas\s+3 h/.test(det) && /Materiales\s+5 €/.test(det) && det.includes("SMI 1200 €") && !det.includes("(sin confirmar)") && det.includes(`Total de Legacy`));
   check("G8. avisos y borrador visibles", det.includes("Disponibilidad NO comprobada") && det.toLowerCase().includes("borrador de respuesta"));
   check("G9. línea de tiempo con el recorrido completo", ["mensaje_simulado", "clasificado", "precio_calculado", "propuesta_editada", "propuesta_aprobada"].every((k) => det.includes(k)));
   await page.screenshot({ path: SHOTS + (SIN_CLAVE ? "sc-" : "") + "flujo-02-detalle.png", fullPage: true });

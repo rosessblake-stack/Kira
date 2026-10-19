@@ -16,6 +16,34 @@ export class SinClaveError extends Error {
   }
 }
 
+/** Quita de un texto cualquier cosa con forma de clave y lo deja corto y de una línea. */
+export function limpiarMensajeDeApi(t: string, max = 140): string {
+  return t
+    .replace(/sk-ant-[A-Za-z0-9_\-]+/g, "[clave]")
+    .replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
+/**
+ * Lo útil del cuerpo del error de la API para saber qué falló, sin volcarlo entero: el tipo (authentication_error,
+ * rate_limit_error…), el mensaje corto solo en los errores de petición/clave/crédito (400, 401, 403, 404; el texto de Anthropic
+ * no lleva la clave y aun así se limpia) y el identificador de la petición, que es lo que pide el soporte de Anthropic.
+ */
+function detalleDeApi(e: unknown, status: number): string {
+  const o = e as { error?: { error?: { type?: unknown; message?: unknown } } | null; requestID?: unknown } | null;
+  const tipo = o?.error?.error?.type;
+  const mensaje = o?.error?.error?.message;
+  const partes: string[] = [];
+  if (typeof tipo === "string" && /^[a-z_]{3,40}$/.test(tipo)) {
+    const conMensaje = [400, 401, 403, 404].includes(status) && typeof mensaje === "string" && mensaje.trim();
+    partes.push(conMensaje ? `${tipo}: ${limpiarMensajeDeApi(mensaje as string)}` : tipo);
+  }
+  if (typeof o?.requestID === "string" && /^req_[A-Za-z0-9]{8,60}$/.test(o.requestID)) partes.push(o.requestID);
+  return partes.length ? ` · ${partes.join(" · ")}` : "";
+}
+
 /** Texto para Blake y para el registro: qué pasó, sin volcar el cuerpo crudo del error de la API. */
 export function describirErrorClaude(e: unknown): string {
   if (e instanceof SinClaveError) return e.message;
@@ -26,7 +54,7 @@ export function describirErrorClaude(e: unknown): string {
       : status === 429 ? " (demasiadas peticiones)"
       : status >= 500 ? " (servicio sobrecargado o caído)"
       : "";
-    return `Claude respondió con el error ${status}${causa}`;
+    return `Claude respondió con el error ${status}${causa}${detalleDeApi(e, status)}`;
   }
   if (e instanceof Error && /time(d)?\s?out|abort/i.test(`${e.name} ${e.message}`)) return "Claude no respondió a tiempo";
   return "No se pudo conectar con Claude";

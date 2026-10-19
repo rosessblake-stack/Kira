@@ -54,6 +54,7 @@ describe("horas y materiales por defecto (provisionales)", () => {
 
   it("sueltas y fulani dependen del tamaño", () => {
     expect(horasPorDefecto(servicio({ tipo_trenzado: "sueltas", tamano: "jumbo" }))).toBe(3);
+    expect(horasPorDefecto(servicio({ tipo_trenzado: "sueltas", tamano: "large", extensiones: "con" }))).toBe(3.5); // dato real de Blake
     expect(horasPorDefecto(servicio({ tipo_trenzado: "fulani", tamano: "xs_small" }))).toBe(10);
     expect(horasPorDefecto(servicio({ tipo_trenzado: "sueltas" }))).toBe(0);
     expect(horasPorDefecto(servicio())).toBe(0);
@@ -195,5 +196,33 @@ describe("consultarLegacy", () => {
     const e2 = await consultarLegacy({}, agotada).catch((e) => e);
     expect(e2).toBeInstanceOf(LegacyError);
     expect(e2.message).toBe("Legacy no respondió a tiempo");
+  });
+});
+
+describe("horas sugeridas con los datos reales de Blake", () => {
+  const pegadas = (n: number | null, extensiones: "con" | "sin" | "feedin" | null) => servicio({ tipo_trenzado: "pegadas", numero_trenzas: n, extensiones });
+
+  it("6 trenzas pegadas: 2 h sin extensiones y 3 h con extensiones", () => {
+    expect(horasPorDefecto(pegadas(6, "sin"))).toBe(2);
+    expect(horasPorDefecto(pegadas(6, "con"))).toBe(3);
+  });
+
+  it("feed-in también añade extensiones; si no se sabe si lleva, se cuenta como sin", () => {
+    expect(horasPorDefecto(pegadas(6, "feedin"))).toBe(3);
+    expect(horasPorDefecto(pegadas(6, null))).toBe(2);
+  });
+
+  it("otros números de trenzas se escalan (estimación): 0,5 h + 15 min por trenza y ×1,5 con extensiones", () => {
+    expect(horasPorDefecto(pegadas(2, "sin"))).toBe(1);
+    expect(horasPorDefecto(pegadas(2, "con"))).toBe(1.5);
+    expect(horasPorDefecto(pegadas(4, "sin"))).toBe(1.5);
+    expect(horasPorDefecto(pegadas(4, "con"))).toBe(2.5);
+    expect(horasPorDefecto(pegadas(null, "con"))).toBe(3);
+    expect(horasPorDefecto(pegadas(null, "sin"))).toBe(2);
+  });
+
+  it("nunca pasa de 8 h ni baja de 1 h", () => {
+    expect(horasPorDefecto(pegadas(100, "con"))).toBe(8);
+    expect(horasPorDefecto(pegadas(1, "sin"))).toBe(1);
   });
 });

@@ -72,6 +72,9 @@ export function fechaLarga(instante: Date, zona: string = ZONA_MADRID): string {
   return `${DIAS[p.diaSemana]} ${dia} ${MESES[mes - 1]}, ${p.hora}`;
 }
 
+/** Horas con coma decimal, como se escribe en español: 3,5 (y 3 sin decimales). */
+export const horasTexto = (h: number) => String(h).replace(".", ",");
+
 /** "3 h", "1 h 30 min", "45 min" */
 export function duracionLegible(minutos: number): string {
   const m = Math.round(minutos);

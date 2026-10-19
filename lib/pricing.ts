@@ -81,7 +81,7 @@ export function interpretarPerfil(raw: unknown, porDefecto: PerfilLegacy = PERFI
 // ---------------------------------------------------------------------------
 
 const HORAS_SUELTAS: Record<(typeof TAMANOS)[number], number> = {
-  jumbo: 3, large: 4, lardium: 5, medium: 6, smedium: 7, small: 8, xs_small: 10,
+  jumbo: 3, large: 3.5, lardium: 5, medium: 6, smedium: 7, small: 8, xs_small: 10,
 };
 const MATERIALES_POR_DEFECTO = { pegadas: 5, sueltas: 10, fulani: 10 } as const;
 
@@ -92,10 +92,17 @@ export type ServicioParaPrecio = Pick<
   "tipo_trenzado" | "numero_trenzas" | "tamano" | "estilo_pegadas" | "extensiones" | "boho" | "largo_cabello" | "largo_extensiones"
 >;
 
+/**
+ * Horas sugeridas (Blake las afina con «horas N»). Datos reales de Blake: 6 trenzas pegadas sin extensiones ≈ 2 h, con
+ * extensiones ≈ 3 h y sueltas large ≈ 3,5 h. Para otros números de trenzas se escala: 0,5 h + 15 min por trenza y, con
+ * extensiones, ×1,5 (con un solo dato de 6 trenzas, esto último es una estimación). Los otros tamaños de sueltas y las fulani
+ * siguen siendo valores provisionales.
+ */
 export function horasPorDefecto(s: ServicioParaPrecio): number {
   if (s.tipo_trenzado === "pegadas") {
-    // 2 trenzas ≈ 1 h (como las "Boxeadoras" que Blake calculó): 0,5 h + 15 min por trenza.
-    return s.numero_trenzas ? Math.min(8, Math.max(1, aMediaHora(0.5 + 0.25 * s.numero_trenzas))) : 2;
+    const base = s.numero_trenzas ? Math.max(1, aMediaHora(0.5 + 0.25 * s.numero_trenzas)) : 2;
+    const conExtensiones = s.extensiones === "con" || s.extensiones === "feedin";
+    return Math.min(8, Math.max(1, conExtensiones ? aMediaHora(base * 1.5) : base));
   }
   if ((s.tipo_trenzado === "sueltas" || s.tipo_trenzado === "fulani") && s.tamano) return HORAS_SUELTAS[s.tamano];
   return 0;

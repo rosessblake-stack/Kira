@@ -1,4 +1,4 @@
-import { ZONA_MADRID, aUtc, avisosDeHorario, duracionLegible, fechaLarga, partesEn } from "./agenda";
+import { ZONA_MADRID, aUtc, avisosDeHorario, duracionLegible, fechaLarga, horasTexto, partesEn } from "./agenda";
 import {
   EXTENSIONES,
   LARGOS_EXTENSIONES,
@@ -215,7 +215,7 @@ export function componerPropuesta(
   if (precio.origen === "legacy") {
     if (!ctx.perfil.confirmado) avisos.push(`Perfil de precios sin confirmar (${resumenPerfil(ctx.perfil, lugar.moneda)}).`);
     if (spec.horas === null) {
-      avisos.push(`Horas (${horasUsadas} h) y materiales (${materialesUsados} ${lugar.moneda === "USD" ? "$" : "€"}) son una sugerencia: ajústalas con «horas 3».`);
+      avisos.push(`Horas (${horasTexto(horasUsadas)} h) y materiales (${materialesUsados} ${lugar.moneda === "USD" ? "$" : "€"}) son una sugerencia: ajústalas con «horas 3».`);
     }
   }
   const s = spec.servicio;
@@ -325,7 +325,7 @@ export function textoPropuesta(
   if (p.precioCentimos !== null) {
     const origen = p.precioOrigen === "manual" ? "puesto por ti" : "Legacy";
     l.push(`💶 Precio: ${dinero(p.precioCentimos, lugar.moneda)} (${origen}) · Señal: ${dinero(p.senalCentimos, lugar.moneda)}`);
-    if (p.precioOrigen === "legacy") l.push(`   ${p.horasUsadas} h · materiales ${p.materialesUsados} ${lugar.moneda === "USD" ? "$" : "€"} · perfil ${resumenPerfil(ctx.perfil, lugar.moneda)}`);
+    if (p.precioOrigen === "legacy") l.push(`   ${horasTexto(p.horasUsadas)} h · materiales ${p.materialesUsados} ${lugar.moneda === "USD" ? "$" : "€"} · perfil ${resumenPerfil(ctx.perfil, lugar.moneda)}`);
   } else {
     l.push(`💶 Precio: sin calcular · Señal: ${dinero(p.senalCentimos, lugar.moneda)}`);
   }

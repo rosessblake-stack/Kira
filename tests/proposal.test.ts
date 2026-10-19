@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DIAS_LIBRES, avisosDeHorario, duracionLegible, esDiaLibre, fechaLarga, listaDiasLibres, madridAUtc, nombreDia, partesMadrid } from "../lib/agenda";
+import { DIAS_LIBRES, avisosDeHorario, duracionLegible, esDiaLibre, fechaLarga, horasTexto, listaDiasLibres, madridAUtc, nombreDia, partesMadrid } from "../lib/agenda";
 import { validarClasificacion } from "../lib/intents";
 import { PERFIL_POR_DEFECTO, type PrecioLegacy } from "../lib/pricing";
 import {
@@ -143,12 +143,12 @@ describe("la clienta de referencia: 6 trenzas rojas, 20 oct 12:00", () => {
     const p = componerPropuesta(spec, legacy(60.15), ctx);
     expect(p.faltan).toEqual([]);
     expect(p.precioCentimos).toBe(6015);
-    expect(p.horasUsadas).toBe(2);
-    expect(p.duracionMinutos).toBe(120);
+    expect(p.horasUsadas).toBe(3); // 6 trenzas pegadas con extensiones: 3 h (dato real de Blake)
+    expect(p.duracionMinutos).toBe(180);
     expect(p.inicio!.toISOString()).toBe("2026-10-20T10:00:00.000Z");
-    expect(p.fin!.toISOString()).toBe("2026-10-20T12:00:00.000Z");
+    expect(p.fin!.toISOString()).toBe("2026-10-20T13:00:00.000Z");
     expect(p.descripcion).toBe("6 trenzas · pegadas · con extensiones rojo");
-    expect(p.borrador).toContain("Para 6 trenzas pegadas con extensiones (rojo), el precio es de 60,15 € y dura aproximadamente 2 h.");
+    expect(p.borrador).toContain("Para 6 trenzas pegadas con extensiones (rojo), el precio es de 60,15 € y dura aproximadamente 3 h.");
     expect(p.borrador).toContain("mar 20 oct, 12:00");
     expect(p.borrador).toContain("señal de 20 €"); // la paga y señal de Blake
   });
@@ -173,7 +173,7 @@ describe("la clienta de referencia: 6 trenzas rojas, 20 oct 12:00", () => {
     const spec = specReferencia({ tipo_trenzado: "pegadas" });
     const p = componerPropuesta(spec, legacy(60.15), ctx);
     const t = textoPropuesta(p, spec, { mensajeCliente: MENSAJE, esPrueba: true, perfil: PERFIL_POR_DEFECTO });
-    for (const trozo of ["🧪 PRUEBA", "PROPUESTA DE CITA", "rosessblake@gmail.com", "6 trenzas · pegadas · con extensiones rojo", "hasta la nuca o los hombros", "hasta las caderas", "mar 20 oct, 12:00 → 14:00 (2 h)", "60,15 € (Legacy)", "Señal: 20 €", "Disponibilidad NO comprobada", "Borrador de respuesta"]) {
+    for (const trozo of ["🧪 PRUEBA", "PROPUESTA DE CITA", "rosessblake@gmail.com", "6 trenzas · pegadas · con extensiones rojo", "hasta la nuca o los hombros", "hasta las caderas", "mar 20 oct, 12:00 → 15:00 (3 h)", "60,15 € (Legacy)", "Señal: 20 €", "Disponibilidad NO comprobada", "Borrador de respuesta"]) {
       expect(t, trozo).toContain(trozo);
     }
     expect(t).not.toContain("⛔");
@@ -454,5 +454,13 @@ describe("parsearEdicion: descripciones de fotos", () => {
     const r = aplicarCambios(s, [{ k: "foto_pelo", v: "rizado" }, { k: "foto_referencia", v: "boxeadoras" }]);
     expect(r.spec).toEqual(s);
     expect(r.recalcular).toBe(false);
+  });
+});
+
+describe("horas en español", () => {
+  it("coma decimal: 3,5 y 3", () => {
+    expect(horasTexto(3.5)).toBe("3,5");
+    expect(horasTexto(3)).toBe("3");
+    expect(horasTexto(0.5)).toBe("0,5");
   });
 });

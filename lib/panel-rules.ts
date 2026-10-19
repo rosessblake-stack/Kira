@@ -3,6 +3,7 @@
  * fallo y cómo se muestran fechas. Sin acceso a datos, para poder probarlas.
  */
 
+import { horasTexto } from "./agenda";
 import { CONFIG_UBICACION, SIMBOLO, dinero, interpretarUbicacion, type Moneda } from "./ubicacion";
 
 export const UMBRALES = {
@@ -439,7 +440,7 @@ export function filasDeMapeo(spec: unknown): Fila[] {
   ];
   if (s.clasificador === "claude") filas.push({ etiqueta: "Quién lo interpretó", valor: "Claude" });
   if (s.clasificador === "basica") filas.push({ etiqueta: "Quién lo interpretó", valor: "Lectura básica por reglas (sin Claude)" });
-  if (numr(s.horas) !== null) filas.push({ etiqueta: "Horas fijadas por ti", valor: `${numr(s.horas)} h` });
+  if (numr(s.horas) !== null) filas.push({ etiqueta: "Horas fijadas por ti", valor: `${horasTexto(numr(s.horas)!)} h` });
   if (numr(s.precio_manual_centimos) !== null) filas.push({ etiqueta: "Precio puesto por ti", valor: dinero(numr(s.precio_manual_centimos), lugar.moneda) });
   return filas;
 }
@@ -462,7 +463,7 @@ export function filasDePrecio(pricing: unknown): Fila[] {
   const perfil = obj(p.perfil);
   const legacy = obj(p.legacy);
   const filas: Fila[] = [{ etiqueta: "Origen del precio", valor: ORIGENES_PRECIO[origen] ?? origen }];
-  if (numr(p.horas) !== null) filas.push({ etiqueta: "Horas usadas", valor: `${numr(p.horas)} h` });
+  if (numr(p.horas) !== null) filas.push({ etiqueta: "Horas usadas", valor: `${horasTexto(numr(p.horas)!)} h` });
   if (numr(p.materiales) !== null) filas.push({ etiqueta: "Materiales", valor: `${numr(p.materiales)} ${sim}` });
   if (txt(perfil.nivel)) {
     filas.push({
