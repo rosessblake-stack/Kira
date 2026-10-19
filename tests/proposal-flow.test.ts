@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RespuestaClaude } from "../lib/claude";
 import { SinClaveError } from "../lib/claude";
+import type { Estancia } from "../lib/estancias";
 import type { ResumenFoto } from "../lib/fotos";
 import { LIMITES } from "../lib/intents";
 import { leerBasico } from "../lib/lectura-basica";
@@ -35,6 +36,9 @@ type Opciones = {
   fotosIniciales?: ResumenFoto[];
   fallaLecturaFotos?: boolean;
   fallaEnvioFotos?: boolean;
+  /** Viajes de Blake a Miami (de qué fecha a qué fecha). Por defecto, ninguno. */
+  estancias?: Estancia[];
+  fallaLecturaViajes?: boolean;
   /** Instante «de hoy». Por defecto un martes (los lunes y domingos son días libres de Blake). */
   ahora?: string;
 };
@@ -109,6 +113,10 @@ function mundo(op: Opciones = {}) {
     async reservaEnEdicion() {
       const r = [...w.reservas.values()].filter((x) => x.status === "propuesta" && x.edit_requested_at).sort((a, b) => b.edit_requested_at!.localeCompare(a.edit_requested_at!))[0];
       return r ? structuredClone(r) : null;
+    },
+    async estancias() {
+      if (op.fallaLecturaViajes) throw new Error("fallo leyendo app_settings");
+      return structuredClone(op.estancias ?? []);
     },
     async fotosDe(conv) {
       if (op.fallaLecturaFotos) throw new Error("fallo leyendo attachments");
@@ -893,5 +901,58 @@ describe("Miami: otra ciudad, otro nivel de precios, dólares y hora de Nueva Yo
     await m.flujo.simular(CHAT, `miami: ${MENSAJE_MIAMI}`);
     await m.flujo.simular(CHAT, MENSAJE_MIAMI);
     expect(m.w.zonasClasificar).toEqual(["America/New_York", "Europe/Madrid"]);
+  });
+});
+
+describe("viajes de Blake: la propuesta avisa si la fecha no cuadra con dónde está", () => {
+  const MENSAJE_MIAMI = "Hi! quiero 6 trenzas pegadas con extensiones rojas, para el 20 de octubre a las 12pm. dani@correo.com";
+  const raw = (o: Record<string, unknown> = {}) => ({ tipo: "ok" as const, raw: salidaClaude({ tipo_trenzado: "pegadas", ...o }), entrada: 1, salida: 1 });
+
+  it("Miami sin ningún viaje apuntado: avisa y dice cómo apuntarlo, pero deja aprobar (decide Blake)", async () => {
+    const m = mundo({ claude: async () => raw() });
+    await m.flujo.simular(CHAT, `miami: ${MENSAJE_MIAMI}`);
+    expect(m.reserva().warnings.join("\n")).toContain("No tienes ninguna estancia en Miami apuntada");
+    expect(m.ultimo().texto).toContain("/viaje miami 3/11 al 20/11");
+    expect(m.botones()).toContain("✅ Aprobar");
+  });
+
+  it("Miami dentro de un viaje: sin aviso", async () => {
+    const m = mundo({ estancias: [{ ubicacion: "miami", desde: "2026-10-15", hasta: "2026-10-25" }], claude: async () => raw() });
+    await m.flujo.simular(CHAT, `miami: ${MENSAJE_MIAMI}`);
+    expect(m.reserva().warnings.join("\n")).not.toContain("estancia");
+    expect(m.reserva().warnings.join("\n")).not.toContain("🚫");
+  });
+
+  it("Miami fuera de sus viajes: avisa con las fechas de los viajes", async () => {
+    const m = mundo({ estancias: [{ ubicacion: "miami", desde: "2026-11-03", hasta: "2026-11-20" }], claude: async () => raw() });
+    await m.flujo.simular(CHAT, `miami: ${MENSAJE_MIAMI}`);
+    expect(m.reserva().warnings.join("\n")).toContain("🚫 Ese día no estás en Miami (tus estancias en Miami: del 3 nov 2026 al 20 nov 2026).");
+  });
+
+  it("España mientras estás en Miami: avisa; fuera del viaje, no", async () => {
+    const viaje = [{ ubicacion: "miami" as const, desde: "2026-10-15", hasta: "2026-10-25" }];
+    const dentro = mundo({ estancias: viaje, claude: async () => raw() });
+    await dentro.flujo.simular(CHAT, MENSAJE_MIAMI);
+    expect(dentro.reserva().warnings.join("\n")).toContain("🚫 Ese día estás en Miami (del 15 oct 2026 al 25 oct 2026): no estás en España.");
+    const fuera = mundo({ estancias: viaje, claude: async () => raw({ fecha: "2026-10-28" }) });
+    await fuera.flujo.simular(CHAT, MENSAJE_MIAMI);
+    expect(fuera.reserva().warnings.join("\n")).not.toContain("🚫");
+  });
+
+  it("al editar la fecha el aviso se recalcula con los viajes de ese momento", async () => {
+    const m = mundo({ estancias: [{ ubicacion: "miami", desde: "2026-11-03", hasta: "2026-11-20" }], claude: async () => raw() });
+    await m.flujo.simular(CHAT, `miami: ${MENSAJE_MIAMI}`);
+    expect(m.reserva().warnings.join("\n")).toContain("🚫");
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "fecha 10/11 12:00");
+    expect(m.reserva().warnings.join("\n")).not.toContain("🚫");
+  });
+
+  it("si no se pueden leer los viajes, la propuesta sale igual sin ese aviso y se registra", async () => {
+    const m = mundo({ fallaLecturaViajes: true, claude: async () => raw() });
+    await m.flujo.simular(CHAT, `miami: ${MENSAJE_MIAMI}`);
+    expect(m.w.reservas.size).toBe(1);
+    expect(m.reserva().warnings.join("\n")).not.toContain("🚫");
+    expect(m.w.eventos.find((e) => e.kind === "viajes_lectura_fallo")).toMatchObject({ level: "warn" });
   });
 });

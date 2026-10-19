@@ -8,6 +8,7 @@ import {
   type Clasificacion,
 } from "./intents";
 import { ETIQUETA_FOTO, limpiarDescripcion, type ResumenFoto } from "./fotos";
+import { avisoDeEstancia, type Estancia } from "./estancias";
 import { CONFIG_UBICACION, dinero, interpretarUbicacion, type Moneda, type Ubicacion } from "./ubicacion";
 import {
   datosFaltantes,
@@ -170,7 +171,7 @@ export function resumenPerfil(p: PerfilLegacy, moneda: Moneda = "EUR"): string {
 export function componerPropuesta(
   spec: SpecGuardada,
   precio: ResultadoPrecio,
-  ctx: { ahora: Date; perfil: PerfilLegacy; calendarioConectado: boolean; fotos?: ResumenFoto[] },
+  ctx: { ahora: Date; perfil: PerfilLegacy; calendarioConectado: boolean; fotos?: ResumenFoto[]; estancias?: Estancia[] },
 ): Propuesta {
   const lugar = contextoDe(spec);
   const horasUsadas = spec.horas ?? horasPorDefecto(spec.servicio);
@@ -205,6 +206,9 @@ export function componerPropuesta(
     avisos.push("Disponibilidad NO comprobada: el calendario todavía no está conectado. Mira tu agenda antes de aprobar.");
   }
   avisos.push(...avisosDeHorario(inicio, fin, ctx.ahora, lugar.reglas));
+  // Dónde está Blake ese día (sus viajes a Miami): blando, la propuesta avisa y decide él.
+  const avisoViaje = ctx.estancias ? avisoDeEstancia(lugar.ubicacion, spec.fecha, ctx.estancias) : null;
+  if (avisoViaje) avisos.push(avisoViaje);
   avisos.push(...lugar.pendientes);
   if (!spec.direccion) avisos.push("No hay dirección para el evento (cambia según el día): ponla con «dirección …» antes de aprobar.");
   if (precio.origen === "manual") avisos.push("El precio lo has puesto tú: no lo ha calculado Legacy.");

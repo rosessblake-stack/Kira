@@ -1,6 +1,7 @@
 import { euros } from "./panel-rules";
 import { esDiaLibre, fechaLarga, listaDiasLibres, nombreDia, partesEn } from "./agenda";
 import { CONFIG_UBICACION, dinero, separarUbicacion, SIMBOLO, type Moneda, type Ubicacion } from "./ubicacion";
+import type { Estancia } from "./estancias";
 import type { ResumenFoto } from "./fotos";
 import {
   INTENCION_EN_BD,
@@ -113,6 +114,8 @@ export interface FlowDeps {
   tomarNonce(nonce: string): Promise<Reserva | null>;
   reservaEnEdicion(): Promise<Reserva | null>;
 
+  /** Los viajes de Blake a Miami (de qué fecha a qué fecha): la propuesta avisa si la fecha pedida no cuadra. */
+  estancias(): Promise<Estancia[]>;
   /** Fotos que siguen guardadas de una conversación (resumen para la propuesta). */
   fotosDe(conversationId: string): Promise<ResumenFoto[]>;
   /** Guarda lo que Blake ve en la última foto de ese tipo. false si todavía no hay foto de ese tipo. */
@@ -269,12 +272,23 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     }
   }
 
+  /** Si no se pueden leer los viajes, la propuesta sale igual (sin ese aviso) y el fallo queda registrado. */
+  async function estanciasParaPropuesta(convId: string | null): Promise<Estancia[] | undefined> {
+    try {
+      return await deps.estancias();
+    } catch (e) {
+      await deps.logEvent({ source: "system", kind: "viajes_lectura_fallo", level: "warn", summary: msg(e), conversation_id: convId });
+      return undefined;
+    }
+  }
+
   async function enviarPropuesta(chatId: number, r: Reserva, prefijo = ""): Promise<void> {
     const spec = r.spec;
     const guardado = resultadoGuardado(r);
     const perfil = r.pricing.perfil ?? (await deps.perfil(contextoDe(spec).ubicacion));
     const fotos = await fotosParaPropuesta(r.conversation_id);
-    const prop = componerPropuesta(spec, guardado, { ahora: deps.now(), perfil, calendarioConectado: false, fotos });
+    const estancias = await estanciasParaPropuesta(r.conversation_id);
+    const prop = componerPropuesta(spec, guardado, { ahora: deps.now(), perfil, calendarioConectado: false, fotos, estancias });
     const nonce = deps.newNonce();
     // Primero el nonce vigente en la base de datos y luego el mensaje: el botón siempre encuentra su registro.
     const actualizada = await deps.actualizarReserva(r.id, {
@@ -433,7 +447,8 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const perfil = await deps.perfil(ubicacion);
     const { resultado, guardado } = await calcularPrecio(spec, perfil, { conversation_id: convId });
     const fotos = await fotosParaPropuesta(convId);
-    const prop = componerPropuesta(spec, resultado, { ahora: deps.now(), perfil, calendarioConectado: false, fotos });
+    const estancias = await estanciasParaPropuesta(convId);
+    const prop = componerPropuesta(spec, resultado, { ahora: deps.now(), perfil, calendarioConectado: false, fotos, estancias });
     const nonce = deps.newNonce();
     const reserva = await deps.crearReserva(filaDeReserva(prop, spec, guardado, nonce, convId));
     await deps.actualizarConversacion(convId, { status: "esperando_aprobacion" });

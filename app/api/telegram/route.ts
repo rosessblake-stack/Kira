@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { handleTelegramRequest, type Config, type Deps } from "../../../lib/telegram-handler";
 import { clasificarConClaude } from "../../../lib/claude";
+import { leerEstancias, guardarEstancias } from "../../../lib/estancias-store";
 import * as fotoStore from "../../../lib/foto-store";
 import { crearFlujoFotos, resumenDeFotos, type PhotoDeps, type PhotoPort } from "../../../lib/photo-flow";
 import { leerBasico } from "../../../lib/lectura-basica";
@@ -12,6 +13,7 @@ import { consultarLegacy } from "../../../lib/pricing";
 import { crearFlujoPropuestas, type FlowDeps } from "../../../lib/proposal-flow";
 import * as store from "../../../lib/proposal-store";
 import { isPaused } from "../../../lib/settings";
+import { crearFlujoViajes } from "../../../lib/trip-flow";
 import * as tg from "../../../lib/telegram";
 
 export const dynamic = "force-dynamic";
@@ -73,6 +75,7 @@ function makeFlowDeps(photos: PhotoPort): FlowDeps {
     verReservaPorNonce: store.verReservaPorNonce,
     tomarNonce: store.tomarNonce,
     reservaEnEdicion: store.reservaEnEdicion,
+    estancias: leerEstancias,
     fotosDe: async (conversationId) => resumenDeFotos(await fotoStore.listarFotos(conversationId)),
     describirFoto: (conversationId, tipo, texto) => fotoStore.describirUltima(conversationId, tipo, texto, new Date()),
     enviarFotos: (chatId, conversationId) => photos.reenviar(chatId, conversationId, { silencioso: true }),
@@ -104,6 +107,13 @@ function makeDeps(host: string | null): Deps {
     },
     proposals: crearFlujoPropuestas(makeFlowDeps(photos)),
     photos,
+    trips: crearFlujoViajes({
+      now: () => new Date(),
+      leer: leerEstancias,
+      guardar: guardarEstancias,
+      enviar: tg.sendMessage,
+      logEvent: (e) => db.logEvent("telegram", e),
+    }),
   };
 }
 

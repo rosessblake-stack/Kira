@@ -17,6 +17,7 @@ type Calls = {
     libres: string[];
     cancelar: number;
   };
+  trips: { k: string; chatId: number; texto?: string }[];
   fotos: { recibir: { chatId: number; fileId: string; tamano: number | null; conversationId: string | null; pie: string }[]; reenviar: { chatId: number; conversationId: string | null }[] };
   edited: { chatId: number; messageId: number; text: string }[];
   answered: { id: string; text?: string }[];
@@ -25,7 +26,7 @@ type Calls = {
 };
 
 function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } = {}) {
-  const calls: Calls = { sent: [], links: 0, prop: { simular: [], botones: [], libres: [], cancelar: 0 }, fotos: { recibir: [], reenviar: [] }, edited: [], answered: [], events: [], security: [] };
+  const calls: Calls = { sent: [], links: 0, prop: { simular: [], botones: [], libres: [], cancelar: 0 }, trips: [], fotos: { recibir: [], reenviar: [] }, edited: [], answered: [], events: [], security: [] };
   const seen = new Set<string>(opts.seen ?? []);
   const issued = new Set<string>(opts.issued ?? []);
   let counter = 0;
@@ -70,6 +71,11 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       async boton(b) { calls.prop.botones.push(b); },
       async textoLibre(_chatId, texto) { calls.prop.libres.push(texto); return opts.edicion ?? false; },
       async cancelarEdicion() { calls.prop.cancelar++; return opts.edicion ?? false; },
+    },
+    trips: {
+      async viaje(chatId, texto) { calls.trips.push({ k: "viaje", chatId, texto }); },
+      async viajes(chatId) { calls.trips.push({ k: "viajes", chatId }); },
+      async borrarViaje(chatId, texto) { calls.trips.push({ k: "borrar", chatId, texto }); },
     },
     photos: {
       async recibir(chatId, media, conversationId, pie) { calls.fotos.recibir.push({ chatId, fileId: media.fileId, tamano: media.tamano, conversationId, pie }); },
@@ -518,5 +524,35 @@ describe("fotos que envía Blake", () => {
     await handleTelegramRequest(SECRET, foto(), admin(null), deps);
     expect(calls.fotos.recibir).toHaveLength(0);
     expect(calls.sent).toHaveLength(0);
+  });
+});
+
+describe("viajes a Miami: comandos", () => {
+  it("/viaje, /viajes y /borrarviaje pasan al flujo de viajes SOLO con el texto que sigue al comando", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/viaje miami 3/11 al 20/11"), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, msg("/viajes"), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, msg("/borrarviaje 2"), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, msg("/viaje@KiracitasBot miami 1/12 al 5/12"), admin(ADMIN), deps);
+    expect(calls.trips).toEqual([
+      { k: "viaje", chatId: ADMIN, texto: "miami 3/11 al 20/11" },
+      { k: "viajes", chatId: ADMIN },
+      { k: "borrar", chatId: ADMIN, texto: "2" },
+      { k: "viaje", chatId: ADMIN, texto: "miami 1/12 al 5/12" },
+    ]);
+  });
+
+  it("nadie más puede apuntar viajes: se descarta y queda en seguridad", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/viaje miami 3/11 al 20/11", OTHER), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, msg("/borrarviaje 1", OTHER), admin(ADMIN), deps);
+    expect(calls.trips).toEqual([]);
+    expect(calls.security.map((x) => x.kind)).toEqual(["telegram_no_autorizado", "telegram_no_autorizado"]);
+  });
+
+  it("en un grupo tampoco", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/viaje miami 3/11 al 20/11", ADMIN, "supergroup"), admin(ADMIN), deps);
+    expect(calls.trips).toEqual([]);
   });
 });

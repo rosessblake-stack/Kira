@@ -537,6 +537,10 @@ try {
   // ============================================================================ J. MIAMI: otro nivel de precios, dólares y hora de Miami
   console.log("\n=== J. Miami: salón, zona premium, dólares y hora de Nueva York ===");
   const MENSAJE_MIAMI = "Hi! quiero 6 trenzas pegadas con extensiones negras, por las caderas y el pelo por los hombros, para el 22 de octubre a las 3pm, soy Dani, dani@correo.com";
+  const estanciasGuardadas = () => tables.app_settings.find((a) => a.key === "estancias")?.value;
+  anota("Blake escribe", "/viaje miami 20/10 al 30/10");
+  await escribe("/viaje miami 20/10 al 30/10");
+  check("J0. /viaje apunta que estás en Miami del 20 al 30 de octubre y lo confirma", JSON.stringify(estanciasGuardadas()) === JSON.stringify([{ ubicacion: "miami", desde: "2026-10-20", hasta: "2026-10-30" }]) && ultimo().text.includes("✅ Apuntado: estás en Miami del 20 oct 2026 al 30 oct 2026") && eventos("viaje_apuntado").length === 1);
   const legacyAntesJ = legacy.recibidas.length;
   const notasDiaLibreAntes = tg.enviados.filter((m) => m.text.startsWith("ℹ️ Hoy es")).length;
   const claudeAntesJ = claude.llamadas.length;
@@ -553,7 +557,7 @@ try {
   check(`J3. la propuesta enseña el precio de Legacy EN DÓLARES (${dolares(totalM)}) y no hay ningún euro`, propM.text.includes(`${dolares(totalM)} (Legacy)`) && !propM.text.includes("€"));
   check("J4. señal de 20 $ y la ciudad bien visible", propM.text.includes("Señal: 20 $") && propM.text.includes("📍 Miami · dólares · hora de Miami"));
   check("J5. la hora es la de Miami: 15:00 allí = 19:00 UTC y se ve «jue 22 oct, 15:00»", reservas().at(-1).starts_at === "2026-10-22T19:00:00.000Z" && propM.text.includes("jue 22 oct, 15:00"));
-  check("J6. perfil de Miami confirmado (SMI 2600 $, sin aviso de «sin confirmar») y la dirección pendiente, a la vista", propM.text.includes("SMI 2600 $") && !propM.text.includes("Perfil de precios sin confirmar") && propM.text.includes("🏠 Dirección: sin indicar") && propM.text.includes("No hay dirección para el evento (cambia según el día)"));
+  check("J6. perfil de Miami confirmado (SMI 2600 $, sin aviso de «sin confirmar») y la dirección pendiente, a la vista", propM.text.includes("SMI 2600 $") && !propM.text.includes("Perfil de precios sin confirmar") && propM.text.includes("🏠 Dirección: sin indicar") && propM.text.includes("No hay dirección para el evento (cambia según el día)") && !propM.text.includes("🚫"));
   check("J7. el mensaje de la clienta se guardó sin el prefijo «miami:» y la reserva sabe que es de Miami", tables.messages.find((m) => m.conversation_id === convM.id)?.body === MENSAJE_MIAMI && reservas().at(-1).spec.ubicacion === "miami" && reservas().at(-1).pricing.moneda === "USD");
   const hoyMiami = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "short" });
   const hoyMiamiLibre = hoyMiami === "Sun" || hoyMiami === "Mon";
@@ -570,6 +574,23 @@ try {
   check("J11. aprobar en Miami: el resumen dice Miami, en dólares y hora de Miami", tg.editados.at(-1).text.includes("✅ APROBADA") && tg.editados.at(-1).text.includes("📍 Miami") && tg.editados.at(-1).text.includes("vie 23 oct, 11:00 · 💶 150 $ (señal 25 $)"));
   await escribe("/simular Miami es mi ciudad. Hola! tengo el pelo por el hombro, quiero 6 trenzas con extensiones rojas, por las caderas, para el 20 de octubre a las 12pm");
   check("J12. «Miami» sin dos puntos dentro de un mensaje normal NO cambia de ciudad (sigue España)", reservas().at(-1).spec.ubicacion === "espana" && conBotones().text.includes("📍 España · euros · hora de Madrid"));
+  check("J13. y como pide el 20 de octubre, que cae en tu viaje a Miami, la propuesta de España te AVISA (sin bloquear: sigue el botón Aprobar si hay precio)", conBotones().text.includes("🚫 Ese día estás en Miami (del 20 oct 2026 al 30 oct 2026): no estás en España."));
+
+  // Viajes: listar, borrar y el aviso contrario (cita de Miami fuera de tus fechas)
+  await escribe("/viajes");
+  check("J14. /viajes lista el viaje numerado", ultimo().text.includes("1. del 20 oct 2026 al 30 oct 2026 (11 días)"));
+  await escribe("/viaje miami 25/10 al 5/11");
+  check("J15. un viaje que se toca con otro se une en uno solo (20 oct – 5 nov)", JSON.stringify(estanciasGuardadas()) === JSON.stringify([{ ubicacion: "miami", desde: "2026-10-20", hasta: "2026-11-05" }]) && ultimo().text.includes("Se ha unido"));
+  await escribe("/viaje miami 1/9/2026 al 5/9/2026");
+  check("J16. un viaje ya pasado no se apunta", ultimo().text.includes("ya ha pasado") && estanciasGuardadas().length === 1);
+  await escribe("/borrarviaje 1");
+  check("J17. /borrarviaje 1 lo quita y vuelves a estar en España esos días", estanciasGuardadas().length === 0 && ultimo().text.includes("Quitado"));
+  await escribe(`/simular miami: ${MENSAJE_MIAMI}`);
+  check("J18. sin viajes apuntados, una cita de Miami avisa y explica cómo apuntarlos", conBotones().text.includes("No tienes ninguna estancia en Miami apuntada") && conBotones().text.includes("/viaje miami 3/11 al 20/11"));
+  await escribe("/viaje miami 1/12 al 10/12");
+  const extrano = tg.enviados.length;
+  await escribe("/viaje miami 1/1 al 5/1", EXTRANO);
+  check("J19. un extraño no puede apuntar ni cambiar tus viajes", tables.app_settings.find((a) => a.key === "estancias").value.length === 1 && tg.enviados.length === extrano);
 
   // ============================================================================ G. PAUSA (con el panel)
   console.log("\n=== G. Panel: login, mapeo, pausa, fallos y seguridad ===");

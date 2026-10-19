@@ -27,6 +27,7 @@ Cualquier otra cosa que Claude devuelva se descarta y se trata como `derivar_a_b
 - Abrir enlaces, ejecutar nada que venga en un mensaje, ni enviar enlaces que no estén en su lista (Stripe generado por el sistema, página del curso, Typeform).
 - Reembolsos, disputas, quejas: siempre a ti.
 - Contestar en día libre (**domingo y lunes**) o fuera del horario configurado.
+- Dar por buena una cita de Miami fuera de las fechas que Blake apuntó de viaje (o una de España mientras está en Miami): lo marca como aviso 🚫 y decide él.
 
 ## 3. Se deriva siempre a Blake (Kira solo te avisa)
 
