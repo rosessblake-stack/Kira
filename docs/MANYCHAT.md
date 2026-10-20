@@ -4,6 +4,29 @@ Decisión de Blake (opción **C**): los datos que se pueden elegir se piden **co
 
 > Estado: este documento es el diseño. Hoy ManyChat **no está conectado**; lo que ya funciona es el lado de Kira (validación, fotos, propuesta). Los límites de ManyChat de abajo salen de fuentes de la comunidad, no de documentación oficial: **se comprueban con una prueba real** al conectarlo.
 
+## 0. Cómo sabe cada conversación de qué va: botones primero, palabras clave solo como puerta, Claude para el texto libre
+
+**Recomendación: un sistema mixto.** Ni todo palabras clave ni todo inteligencia artificial: cada herramienta para lo que hace bien.
+
+| | Palabras clave de ManyChat | Botones | Claude (Kira) |
+|---|---|---|---|
+| Coste | Gratis | Gratis | ~0,01–0,02 € por mensaje |
+| Entiende faltas, «q kiero cita», inglés y español, frases largas | **No**: busca palabras sueltas, sin contexto («curso» dentro de «recurso») | No hace falta entender: la clienta toca | **Sí** |
+| Datos que llegan | Ninguno (solo «se dijo X») | Limpios y de lista cerrada | Se validan igual que los de botones |
+| Riesgo de equivocarse | Medio | Casi nulo | Bajo, y nunca actúa sin tu Aprobar |
+
+**Cómo encaja (de fuera a dentro):**
+
+1. **Puertas de entrada** (las controlas tú): *Ice breakers* (las preguntas que ve quien abre el chat por primera vez: «Quiero una cita», «Formación online», «Formación presencial», «Otra cosa»), el *menú persistente*, los comentarios con palabra clave en tus posts/reels («escribe TRENZAS»), las respuestas a historias y los anuncios de «enviar mensaje». Cada puerta **arranca el flujo de botones correspondiente**; la palabra clave no responde sola ni decide nada. Todo lo que no encaje cae en la *respuesta por defecto*, que enseña el mismo menú de botones.
+2. **Los botones deciden la intención**: primero «¿Miami o España?» y luego «¿Qué te interesa?» (sección 1). ManyChat guarda la elección en campos (`ubicacion`, `intencion_boton`) y se la manda a Kira en cada llamada. Esto es lo fiable: no hay que adivinar.
+3. **Texto libre → Kira**: si la clienta escribe en vez de pulsar (o tras el último paso), ManyChat reenvía su mensaje a Kira junto con esos campos y el paso en que iba. Claude lo clasifica con la lista cerrada de `docs/POLITICA.md` y rellena solo lo que el mensaje dice. **Si la intención de Claude contradice al botón, Kira no decide: te lo deriva.** Un mensaje que no encaja en nada se deriva a ti igualmente.
+4. **Palabras clave, solo para atajos seguros**: p. ej. «PRECIOS» o «CURSO» pueden abrir el menú o el flujo de información. **Ninguna palabra clave crea una cita, genera un enlace de pago ni envía datos personales**: eso solo ocurre tras recoger los datos y tu Aprobar.
+5. **Lo que no depende de nada de esto, lo hace siempre el servidor**: silencio en domingo y lunes (con aviso a ti), tope de mensajes por clienta y por día, filtro de manipulación y la ventana de 24 h de Instagram.
+
+Para decidir contigo: qué puertas de entrada usas hoy con Make (palabras clave de comentarios, historias, anuncios), cuáles quieres mantener, y los textos del menú en español y en inglés (para Miami).
+
+Notas sobre ManyChat (de fuentes de la comunidad y del propio ManyChat, a confirmar al conectarlo): los *ice breakers* se configuran por la API de Instagram (hasta 4 preguntas) y, como el menú persistente, solo se ven en la app del móvil; el primer mensaje privado que responde a un comentario solo admite un bloque de contenido y una respuesta por comentario en 7 días.
+
 ## 1. Orden de las preguntas
 
 0. **¿Dónde estás: Miami o España?** (botones). Es lo primero, porque en Miami Blake cobra al nivel de Miami y **en dólares**; en España, en euros. Decide el perfil de precios (Miami: salón y zona premium), la moneda, la zona horaria de la fecha que pida la clienta, los días libres, la dirección y cómo se paga la señal. **Kira ya lo entiende** (`ubicacion` = `espana` | `miami`; se prueba con `/simular miami: …`); el botón de ManyChat solo tendrá que mandar ese valor. Datos de Miami ya definidos: salón y zona premium, SMI de Florida, señal de 20 $, mismos días libres y horario que en España (en hora de Miami), cobro por Stripe y dirección que se pone en cada cita (ver `CLAUDE.md`).
