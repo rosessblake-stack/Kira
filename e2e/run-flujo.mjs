@@ -1216,6 +1216,11 @@ try {
   const ig = tables.conversations.find((c) => c.id === rCron.conversation_id);
   check("M26. los mensajes a la clienta de las pruebas quedan en su conversación (entrantes y salientes)", tables.messages.some((m) => m.conversation_id === tables.bookings.find((x) => x.id === idPago).conversation_id && m.direction === "in" && m.body === "vale") && Boolean(ig));
 
+  await escribe("/manychat");
+  check("M27. /manychat sin clave puesta explica dónde conseguirla y que no se pegue por chat (y no rompe nada)", ultimo().text.includes("MANYCHAT_API_KEY") && ultimo().text.includes("nunca por aquí"));
+  const saludMc = await (await fetch(`${BASE}/api/health`)).json();
+  check("M28. /api/health dice solo sí o no de la clave de ManyChat", saludMc.env.MANYCHAT_API_KEY === false);
+
   // ============================================================================ H. Sin secretos en los registros
   const volcado = JSON.stringify({ e: tables.event_log, s: tables.security_events });
   check("H1. ninguna clave ni token en los registros", !/clave-falsa|token-falso|000000:|secreto-falso/.test(volcado));

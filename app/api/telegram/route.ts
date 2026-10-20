@@ -14,6 +14,8 @@ import { issueLoginToken } from "../../../lib/panel-auth";
 import { authStore } from "../../../lib/panel-store";
 import { consultarLegacy } from "../../../lib/pricing";
 import { crearClienteReal } from "../../../lib/cliente-real";
+import { claveManychat, crearClienteManychat } from "../../../lib/manychat";
+import { crearFlujoManychat } from "../../../lib/manychat-flow";
 import { crearFlujoPropuestas, type FlowDeps } from "../../../lib/proposal-flow";
 import * as store from "../../../lib/proposal-store";
 import { crearFlujoRegistro } from "../../../lib/registro-flow";
@@ -119,6 +121,14 @@ function makeDeps(host: string | null): Deps {
     },
     proposals: crearFlujoPropuestas(makeFlowDeps(photos, client)),
     client,
+    manychat: crearFlujoManychat({
+      cliente: () => {
+        const clave = claveManychat();
+        return clave ? crearClienteManychat(clave) : null;
+      },
+      enviar: tg.sendMessage,
+      logEvent: (e) => db.logEvent("manychat", e),
+    }),
     async calendarioEstado() {
       const configurado = configGoogle() !== null;
       try {

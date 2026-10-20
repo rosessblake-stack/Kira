@@ -21,6 +21,8 @@ export async function GET() {
     TELEGRAM_ADMIN_USER_ID: Boolean(process.env.TELEGRAM_ADMIN_USER_ID),
     // Sin ella /simular usa la lectura básica por reglas y un canal real derivaría todo a Blake. Solo sí o no, nunca el valor.
     ANTHROPIC_API_KEY: Boolean(process.env.ANTHROPIC_API_KEY),
+    // La conexión con ManyChat (solo lectura por ahora). Solo sí o no.
+    MANYCHAT_API_KEY: Boolean(process.env.MANYCHAT_API_KEY),
   };
 
   let supabase = false;

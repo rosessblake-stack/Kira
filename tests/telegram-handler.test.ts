@@ -94,6 +94,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       async vencerYa(chatId) { calls.client.push({ k: "vencer", chatId }); },
       async bizum(chatId, texto) { calls.client.push({ k: "bizum", chatId, texto }); },
     },
+    manychat: { async estado(chatId) { calls.client.push({ k: "manychat", chatId }); } },
     async calendarioEstado() { return "📅 Calendario de prueba"; },
     records: {
       async real(chatId, texto) { calls.records.push({ k: "real", chatId, texto }); },
@@ -699,5 +700,16 @@ describe("la conversación con la clienta: /clienta, /bizum, /vencer y el botón
     await handleTelegramRequest(SECRET, cb(`c:${NONCE}:del`), admin(ADMIN), deps);
     expect(calls.prop.citas.map((c) => c.accion)).toEqual(["pay", "del"]);
     expect(calls.client).toEqual([]);
+  });
+});
+
+describe("/manychat", () => {
+  it("solo Blake lo puede usar", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/manychat"), admin(ADMIN), deps);
+    expect(calls.client).toEqual([{ k: "manychat", chatId: ADMIN }]);
+    const otro = setup();
+    await handleTelegramRequest(SECRET, msg("/manychat", OTHER), admin(ADMIN), otro.deps);
+    expect(otro.calls.client).toEqual([]);
   });
 });

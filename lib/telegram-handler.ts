@@ -1,6 +1,7 @@
 import { MAX_BYTES_FOTO } from "./fotos";
 import type { MediaTelegram, PhotoPort } from "./photo-flow";
 import type { ClientePort } from "./cliente-flow";
+import type { ManychatPort } from "./manychat-flow";
 import type { ProposalPort } from "./proposal-flow";
 import type { RegistroPort } from "./registro-flow";
 import type { TripPort } from "./trip-flow";
@@ -63,6 +64,8 @@ export interface Deps {
   proposals: ProposalPort;
   /** La conversación con la clienta tras el Aprobar (precio, «vale», Bizum, «confirmado»): /clienta, /bizum, /vencer y el botón de revertir. */
   client: ClientePort;
+  /** Estado de la conexión con ManyChat (/manychat): solo lectura. */
+  manychat: ManychatPort;
   /** Fotos que Blake envía (pelo, trenzas de referencia): se guardan en privado y se adjuntan a la prueba. */
   photos: PhotoPort;
   /** Viajes de Blake a Miami (de qué fecha a qué fecha): las propuestas avisan si la fecha pedida no cuadra. */
@@ -231,7 +234,7 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   if (cmd === "/start") {
     await deps.sendMessage(
       chatId,
-      "Kira activa. Te he identificado como administrador.\n\n/simular <mensaje> → simula el mensaje de un cliente (España) y te manda la propuesta\n/simular miami: <mensaje> → igual, pero una clienta de Miami (dólares y hora de Miami)\nFotos → mándame la foto del pelo y la de las trenzas; si quieres, con un pie («pelo: rizado, fino…» o «referencia: boxeadoras largas»)\n/fotos → te devuelvo las fotos de la última prueba\n/viaje miami 3/11 al 20/11 → apunta de qué día a qué día estás en Miami (/viajes los lista, /borrarviaje 1 quita uno)\n/calendario → estado de la conexión con tu Google Calendar\n/pendientes → te vuelvo a mandar los botones de las reservas que esperan tu señal o decisión (por si se perdieron)\n/clienta vale → contestas como si fueras la clienta de la última prueba aprobada (también /clienta confirmado)\n/bizum 662018425 → el número al que las clientas hacen la señal (/bizum solo lo muestra)\n/vencer → agota el plazo de la última prueba para ver qué pasa cuando no responde\n/real → las últimas citas aprobadas; /real 12 horas 3,5; materiales 9; precio 80 anota lo que de verdad tardó y gastó\n/datos → lo que de verdad pasa en cada tipo de servicio\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
+      "Kira activa. Te he identificado como administrador.\n\n/simular <mensaje> → simula el mensaje de un cliente (España) y te manda la propuesta\n/simular miami: <mensaje> → igual, pero una clienta de Miami (dólares y hora de Miami)\nFotos → mándame la foto del pelo y la de las trenzas; si quieres, con un pie («pelo: rizado, fino…» o «referencia: boxeadoras largas»)\n/fotos → te devuelvo las fotos de la última prueba\n/viaje miami 3/11 al 20/11 → apunta de qué día a qué día estás en Miami (/viajes los lista, /borrarviaje 1 quita uno)\n/calendario → estado de la conexión con tu Google Calendar\n/manychat → comprueba la conexión con ManyChat y lista tus flujos, etiquetas y campos (solo lectura)\n/pendientes → te vuelvo a mandar los botones de las reservas que esperan tu señal o decisión (por si se perdieron)\n/clienta vale → contestas como si fueras la clienta de la última prueba aprobada (también /clienta confirmado)\n/bizum 662018425 → el número al que las clientas hacen la señal (/bizum solo lo muestra)\n/vencer → agota el plazo de la última prueba para ver qué pasa cuando no responde\n/real → las últimas citas aprobadas; /real 12 horas 3,5; materiales 9; precio 80 anota lo que de verdad tardó y gastó\n/datos → lo que de verdad pasa en cada tipo de servicio\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
     );
     return;
   }
@@ -270,6 +273,11 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   }
   if (cmd === "/vencer") {
     await deps.client.vencerYa(chatId);
+    return;
+  }
+
+  if (cmd === "/manychat") {
+    await deps.manychat.estado(chatId);
     return;
   }
 
@@ -343,7 +351,7 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   // Texto libre: solo se atiende si hay una edición abierta (tras pulsar Editar en una propuesta).
   if (text && !text.startsWith("/") && (await deps.proposals.textoLibre(chatId, text))) return;
 
-  await deps.sendMessage(chatId, "No conozco ese comando. Prueba con /simular, /fotos, /viaje, /calendario, /pendientes, /clienta, /bizum, /real, /datos, /panel o /prueba.");
+  await deps.sendMessage(chatId, "No conozco ese comando. Prueba con /simular, /fotos, /viaje, /calendario, /pendientes, /clienta, /bizum, /manychat, /real, /datos, /panel o /prueba.");
 }
 
 async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {

@@ -4,6 +4,17 @@ Decisión de Blake (opción **C**): los datos que se pueden elegir se piden **co
 
 > Estado: este documento es el diseño. Hoy ManyChat **no está conectado**; lo que ya funciona es el lado de Kira (validación, fotos, propuesta). Los límites de ManyChat de abajo salen de fuentes de la comunidad, no de documentación oficial: **se comprueban con una prueba real** al conectarlo.
 
+## Conectar la API de ManyChat (paso a paso)
+
+Hoy la conexión es **solo de lectura**: Kira comprueba la clave y te lista los nombres de tus flujos, etiquetas y campos. No envía mensajes ni cambia nada en ManyChat.
+
+1. En ManyChat (plan Pro) entra en **Configuración → API** y pulsa **Generar clave de API** (el nombre y la ubicación exacta pueden variar un poco).
+2. **No la pegues en ningún chat.** Cópiala directamente a Vercel: proyecto **kira** → *Settings → Environment Variables* → nombre `MANYCHAT_API_KEY`, tipo *Sensitive*, entornos Production y Preview.
+3. Dime «ya está» y redespliego (las variables nuevas solo se leen en un despliegue nuevo).
+4. En Telegram escribe `/manychat`: debe decir «ManyChat conectado» y listar tus flujos, etiquetas y campos. Si falla, el mensaje dice por qué (clave rechazada, demasiadas peticiones, sin respuesta…).
+
+La clave da control total sobre tu cuenta de ManyChat: si alguna vez se pega por error en un chat, se genera otra en ManyChat (la anterior deja de valer).
+
 ## 0. Cómo sabe cada conversación de qué va: botones primero, palabras clave solo como puerta, Claude para el texto libre
 
 **Recomendación: un sistema mixto.** Ni todo palabras clave ni todo inteligencia artificial: cada herramienta para lo que hace bien.
