@@ -390,8 +390,7 @@ try {
   check("A9. «6 trenzas» sin decir el tipo → la regla de Blake asume pegadas y se calcula con Legacy (una llamada)", legacy.recibidas.length === 1 && legacy.recibidas[0].tipoTrenzado === "pegadas");
   check("A10. propuesta a Blake en su chat", propuesta1.chat_id === ADMIN);
   const hoyMadrid = new Date().toLocaleDateString("en-US", { timeZone: "Europe/Madrid", weekday: "short" });
-  const hoyEsLibre = hoyMadrid === "Sun" || hoyMadrid === "Mon";
-  check(`A10a. día libre (domingo y lunes): hoy es ${hoyMadrid}, así que ${hoyEsLibre ? "Blake recibe la nota «con una clienta real Kira no contestaría»" : "no hay nota"}`, tg.enviados.some((m) => m.text.startsWith("ℹ️ Hoy es") && m.text.includes("día libre")) === hoyEsLibre && eventos("mensaje_en_dia_libre").length === (hoyEsLibre ? 1 : 0));
+  check(`A10a. hoy es ${hoyMadrid}: se atiende igual (domingo y lunes Blake no peina pero sí contesta), sin nota de «día libre»`, !tg.enviados.some((m) => m.text.startsWith("ℹ️ Hoy es") && m.text.includes("día libre")) && eventos("mensaje_en_dia_libre").length === 0);
   check("A10c. la señal por defecto es la paga y señal de Blake: 20 €", propuesta1.text.includes("Señal: 20 €") && reservas()[0].deposit_cents === 2000);
   check("A10b. sin nombre se lee «sin nombre»", propuesta1.text.includes("Cliente: sin nombre (rosessblake@gmail.com)"));
   check("A11. marcada como PRUEBA y con lo entendido", propuesta1.text.includes("🧪 PRUEBA · PROPUESTA DE CITA") && propuesta1.text.includes("6 trenzas · pegadas · con extensiones rojo") && propuesta1.text.includes("hasta la nuca o los hombros") && propuesta1.text.includes("hasta las caderas"));

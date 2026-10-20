@@ -1,5 +1,5 @@
 import { euros } from "./panel-rules";
-import { esDiaLibre, fechaLarga, listaDiasLibres, nombreDia, partesEn } from "./agenda";
+import { fechaLarga, partesEn } from "./agenda";
 import { evaluarHueco, textoChoques, type ResultadoAgenda } from "./agenda-eventos";
 import { eventoDeReserva, type AgendaPort } from "./evento";
 import { idDeEvento } from "./google-calendar";
@@ -415,12 +415,8 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       return;
     }
 
-    // Día libre: con una clienta real Kira no contestaría (docs/POLITICA.md). Esto es una prueba de Blake, así que sigue, pero se lo dice.
-    if (esDiaLibre(ahora, lugar.reglas)) {
-      const hoy = nombreDia(partesEn(ahora, lugar.zonaHoraria).diaSemana);
-      await deps.logEvent({ source: "system", kind: "mensaje_en_dia_libre", summary: `Mensaje simulado en día libre (${hoy}, ${lugar.nombre})`, conversation_id: convId });
-      await deps.enviar(chatId, `ℹ️ Hoy es ${hoy}, día libre (no trabajas: ${listaDiasLibres(lugar.reglas)}). Con una clienta real Kira no contestaría. Como esto es una prueba, sigo.`);
-    }
+    // Domingo y lunes Blake no peina, pero SÍ contesta para dar citas (dicho por él): no hay silencio por día libre.
+    // Solo importa el día de la CITA pedida, y eso lo avisa la propuesta (blando).
 
     // 2. Señales de manipulación: sin gastar una llamada a Claude y sin contestar.
     const senales = detectarInyeccion(texto);

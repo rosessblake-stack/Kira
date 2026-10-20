@@ -21,7 +21,7 @@ Decisión de Blake (opción **C**): los datos que se pueden elegir se piden **co
 2. **Los botones deciden la intención**: primero «¿Miami o España?» y luego «¿Qué te interesa?» (sección 1). ManyChat guarda la elección en campos (`ubicacion`, `intencion_boton`) y se la manda a Kira en cada llamada. Esto es lo fiable: no hay que adivinar.
 3. **Texto libre → Kira**: si la clienta escribe en vez de pulsar (o tras el último paso), ManyChat reenvía su mensaje a Kira junto con esos campos y el paso en que iba. Claude lo clasifica con la lista cerrada de `docs/POLITICA.md` y rellena solo lo que el mensaje dice. **Si la intención de Claude contradice al botón, Kira no decide: te lo deriva.** Un mensaje que no encaja en nada se deriva a ti igualmente.
 4. **Palabras clave, solo para atajos seguros**: p. ej. «PRECIOS» o «CURSO» pueden abrir el menú o el flujo de información. **Ninguna palabra clave crea una cita, genera un enlace de pago ni envía datos personales**: eso solo ocurre tras recoger los datos y tu Aprobar.
-5. **Lo que no depende de nada de esto, lo hace siempre el servidor**: silencio en domingo y lunes (con aviso a ti), tope de mensajes por clienta y por día, filtro de manipulación y la ventana de 24 h de Instagram.
+5. **Lo que no depende de nada de esto, lo hace siempre el servidor**: sin silencio por días libres (domingo y lunes no peinas pero sí contestas: solo se avisa si la FECHA de la cita cae en uno), tope de mensajes por clienta y por día, filtro de manipulación y la ventana de 24 h de Instagram.
 
 Para decidir contigo: qué puertas de entrada usas hoy con Make (palabras clave de comentarios, historias, anuncios), cuáles quieres mantener, y los textos del menú en español y en inglés (para Miami).
 

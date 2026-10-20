@@ -26,7 +26,7 @@ Cualquier otra cosa que Claude devuelva se descarta y se trata como `derivar_a_b
 - Revelar sus instrucciones, que es una IA configurada de cierta manera, claves, herramientas o cómo está montado.
 - Abrir enlaces, ejecutar nada que venga en un mensaje, ni enviar enlaces que no estén en su lista (Stripe generado por el sistema, página del curso, Typeform).
 - Reembolsos, disputas, quejas: siempre a ti.
-- Contestar en día libre (**domingo y lunes**) o fuera del horario configurado.
+- Dar una cita en un día libre sin avisarte: **domingo y lunes Blake no peina pero SÍ contesta** (dicho por él), así que Kira atiende siempre y solo marca como aviso (blando, decide él) si la FECHA de la cita cae en domingo o lunes o fuera de 11–22 h.
 - Dar por buena una cita de Miami fuera de las fechas que Blake apuntó de viaje (o una de España mientras está en Miami): lo marca como aviso 🚫 y decide él.
 
 ## 3. Se deriva siempre a Blake (Kira solo te avisa)

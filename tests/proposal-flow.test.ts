@@ -766,33 +766,19 @@ describe("/simular sin texto", () => {
   });
 });
 
-describe("días libres de Blake (domingo y lunes)", () => {
-  it("un mensaje de prueba en día libre: Blake recibe una nota («Con una clienta real Kira no contestaría») y la prueba sigue", async () => {
-    const m = mundo({ ahora: "2026-10-19T13:30:00Z" }); // lunes
-    await m.flujo.simular(CHAT, MENSAJE);
-    const nota = m.w.enviados.find((e) => e.texto.includes("día libre"));
-    expect(nota?.texto).toBe("ℹ️ Hoy es lunes, día libre (no trabajas: domingo y lunes). Con una clienta real Kira no contestaría. Como esto es una prueba, sigo.");
-    expect(m.w.enviados.indexOf(nota!)).toBeLessThan(m.w.enviados.length - 1); // la nota va antes de la propuesta
-    expect(m.ultimo().texto).toContain("PROPUESTA DE CITA");
-    expect(m.w.reservas.size).toBe(1);
-    expect(m.tipos()).toContain("mensaje_en_dia_libre");
-  });
-
-  it("el domingo también", async () => {
-    const m = mundo({ ahora: "2026-10-18T13:30:00Z" });
-    await m.flujo.simular(CHAT, MENSAJE);
-    expect(m.w.enviados.some((e) => e.texto.startsWith("ℹ️ Hoy es domingo"))).toBe(true);
-  });
-
-  it("de martes a sábado no hay nota", async () => {
-    for (const dia of ["2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17"]) {
+describe("días libres de Blake (domingo y lunes): no peina, pero SÍ contesta para dar citas", () => {
+  it("un mensaje en domingo o lunes se atiende igual que cualquier otro día, sin notas de «día libre»", async () => {
+    for (const dia of ["2026-10-18", "2026-10-19", "2026-10-13"]) { // domingo, lunes, martes
       const m = mundo({ ahora: `${dia}T13:30:00Z` });
       await m.flujo.simular(CHAT, MENSAJE);
       expect(m.w.enviados.some((e) => e.texto.includes("día libre"))).toBe(false);
+      expect(m.ultimo().texto).toContain("PROPUESTA DE CITA");
+      expect(m.w.reservas.size).toBe(1);
+      expect(m.tipos()).not.toContain("mensaje_en_dia_libre");
     }
   });
 
-  it("con Kira en pausa solo avisa de la pausa (sin nota de día libre)", async () => {
+  it("con Kira en pausa solo avisa de la pausa", async () => {
     const m = mundo({ ahora: "2026-10-19T13:30:00Z", pausada: true });
     await m.flujo.simular(CHAT, MENSAJE);
     expect(m.w.enviados).toHaveLength(1);
@@ -998,16 +984,6 @@ describe("Miami: otra ciudad, otro nivel de precios, dólares y hora de Nueva Yo
     expect(a).toContain("La cita cae en domingo, que es día libre (no trabajas: domingo y lunes).");
     expect(a).toContain("Empieza a las 07:00, antes del horario habitual (11:00–22:00).");
     expect(m.botones()).toContain("✅ Aprobar"); // blando: decide Blake
-  });
-
-  it("el día libre de hoy se mira en el calendario de la clienta: martes en Madrid pero lunes en Miami", async () => {
-    const ahora = "2026-10-27T03:00:00Z"; // martes 04:00 en Madrid, lunes 23:00 en Miami
-    const mi = mundo({ ahora, claude: async () => salidaMiami() });
-    await mi.flujo.simular(CHAT, `miami: ${MENSAJE_MIAMI}`);
-    expect(mi.w.enviados.find((e) => e.texto.includes("día libre"))?.texto).toContain("Hoy es lunes, día libre");
-    const es = mundo({ ahora, claude: async () => salidaMiami() });
-    await es.flujo.simular(CHAT, MENSAJE_MIAMI);
-    expect(es.w.enviados.some((e) => e.texto.includes("día libre"))).toBe(false);
   });
 
   it("dirección: en España la de siempre; se cambia con «dirección …» y desaparece el aviso en Miami", async () => {
