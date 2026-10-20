@@ -5,7 +5,7 @@ import { crearClienteReal } from "../../../lib/cliente-real";
 import * as db from "../../../lib/db";
 import { descargarImagenSegura } from "../../../lib/descarga-segura";
 import { crearEntradaManychat } from "../../../lib/manychat-entrada-flow";
-import { leerSolicitud } from "../../../lib/manychat-entrada";
+import { clavesRecibidas, leerSolicitud } from "../../../lib/manychat-entrada";
 import { crearFlujoFotos } from "../../../lib/photo-flow";
 import { crearFlujoPropuestas } from "../../../lib/proposal-flow";
 import { safeEqual } from "../../../lib/safe-equal";
@@ -63,7 +63,7 @@ export async function POST(req: Request) {
   }
   const leida = leerSolicitud(json);
   if (!leida.ok) {
-    await anotarSeguridad("payload_inesperado", { reason: leida.motivo });
+    await anotarSeguridad("payload_inesperado", { reason: leida.motivo, claves: clavesRecibidas(json) });
     return NextResponse.json({ ok: false }, { status: 400 });
   }
   const s = leida.solicitud;

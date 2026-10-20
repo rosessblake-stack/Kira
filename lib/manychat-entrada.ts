@@ -129,11 +129,16 @@ export function componerMensaje(s: Pick<SolicitudManychat, "nombre" | "instagram
   return l.join("\n");
 }
 
+/** Solo los NOMBRES de los campos recibidos (nunca los valores): para saber qué manda ManyChat cuando algo no cuadra. */
+export function clavesRecibidas(raw: unknown): string[] {
+  return [...aplanar(raw).keys()].slice(0, 40).map((k) => k.slice(0, 40));
+}
+
 export function leerSolicitud(raw: unknown): ResultadoEntrada {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, motivo: "cuerpo_no_es_objeto" };
   const m = aplanar(raw);
 
-  const id = primero(m, ["id", "subscriberid", "contactid", "userid"]);
+  const id = primero(m, ["id", "subscriberid", "contactid", "userid", "igid"]);
   if (!id || !ID_RE.test(id)) return { ok: false, motivo: "sin_id_de_contacto" };
 
   const igRaw = texto(primero(m, ["igusername", "instagram", "instagramusername", "username"]), 60)?.replace(/^@/, "") ?? null;
