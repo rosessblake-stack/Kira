@@ -116,6 +116,32 @@ function fechaValida(s: string): boolean {
 
 const horaValida = (s: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
 
+/** Prefijo del aviso de «tipo asumido»: la edición `tipo …` lo quita, porque entonces ya lo ha decidido Blake. */
+export const AVISO_TIPO_ASUMIDO = "Tipo asumido";
+/** Más trenzas que esto ya no es la forma de pedir pegadas (las sueltas son decenas): no se asume nada. */
+export const MAX_TRENZAS_PEGADAS = 12;
+
+/**
+ * Regla de Blake (dicha el 20-oct): quien pide un número concreto de trenzas («6 trenzas», «8», «2», «4 boxeadoras») quiere
+ * PEGADAS; «trenzas» a secas, sin número ni tipo, suelen ser SUELTAS. Solo se aplica cuando el mensaje NO dice el tipo y siempre
+ * con un aviso visible (Blake corrige con «tipo sueltas» / «tipo pegadas»). Lo aplica el código, no Claude: Claude solo anota
+ * lo que el mensaje dice.
+ */
+export function asumirTipoTrenzado(numero: number | null, textoCliente: string): { tipo: "pegadas" | "sueltas"; aviso: string } | null {
+  const t = textoCliente.toLowerCase();
+  const corregir = (otro: string) => `Si no es así, escribe «tipo ${otro}».`;
+  if (/boxeadora|boxer|boxing/.test(t)) {
+    return { tipo: "pegadas", aviso: `${AVISO_TIPO_ASUMIDO}: pegadas (pide trenzas boxeadoras sin decir el tipo; para ti son pegadas). ${corregir("sueltas")}` };
+  }
+  if (numero !== null && numero >= 1 && numero <= MAX_TRENZAS_PEGADAS) {
+    return { tipo: "pegadas", aviso: `${AVISO_TIPO_ASUMIDO}: pegadas (pide ${numero} trenza${numero === 1 ? "" : "s"} sin decir el tipo; para ti, con un número son pegadas). ${corregir("sueltas")}` };
+  }
+  if (numero === null && /trenza|braid/.test(t)) {
+    return { tipo: "sueltas", aviso: `${AVISO_TIPO_ASUMIDO}: sueltas (pide «trenzas» sin número ni tipo; para ti suelen ser sueltas). ${corregir("pegadas")}` };
+  }
+  return null;
+}
+
 export function validarClasificacion(raw: unknown, textoCliente: string): ResultadoValidacion {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, motivo: "no_es_objeto" };
   const o = raw as Record<string, unknown>;
@@ -192,14 +218,25 @@ export function validarClasificacion(raw: unknown, textoCliente: string): Result
 
   const texto = (k: string, max: number) => limpiarTexto(o[k] as string, max) || null;
 
+  // Regla de Blake: si el mensaje no dice el tipo, se asume por el número de trenzas (con aviso visible).
+  const numeroTrenzas = n === 0 ? null : n;
+  let tipoFinal = tipo ?? null;
+  if (tipoFinal === null && (intencion === "cita_salon" || intencion === "precio_servicio")) {
+    const asumido = asumirTipoTrenzado(numeroTrenzas, textoCliente);
+    if (asumido) {
+      tipoFinal = asumido.tipo;
+      avisos.push(asumido.aviso);
+    }
+  }
+
   return {
     ok: true,
     value: {
       intencion,
       confianza,
       manipulacion: o.manipulacion,
-      tipo_trenzado: tipo ?? null,
-      numero_trenzas: n === 0 ? null : n,
+      tipo_trenzado: tipoFinal,
+      numero_trenzas: numeroTrenzas,
       tamano: tamano ?? null,
       estilo_pegadas: estilo ?? null,
       extensiones: ext ?? null,

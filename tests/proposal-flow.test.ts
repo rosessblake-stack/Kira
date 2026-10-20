@@ -15,13 +15,17 @@ import type { NuevoEvento } from "../lib/google-calendar";
 
 const CHAT = 111;
 const ADMIN = 111;
+/** Mensaje en el que NO se dice el tipo y la regla de Blake (número de trenzas → pegadas) no decide nada: sin «trenzas» ni número. */
 const MENSAJE =
+  "Hola! tengo el pelo por el hombro, quiero un peinado con extensiones rojas, por las caderas, para el 20 de octubre a las 12pm. Mi correo es rosessblake@gmail.com";
+/** El mensaje de la clienta de referencia: pide «6 trenzas» sin decir el tipo → la regla de Blake asume pegadas (con aviso). */
+const MENSAJE_6_TRENZAS =
   "Hola! tengo el pelo por el hombro, quiero 6 trenzas con extensiones rojas, por las caderas, para el 20 de octubre a las 12pm. Mi correo es rosessblake@gmail.com";
 
-/** Lo que devolvería el modelo para el mensaje de referencia (el tipo de trenzado no está claro). */
+/** Lo que devolvería el modelo para MENSAJE (el tipo de trenzado no está claro y no dice cuántas trenzas). */
 const salidaClaude = (o: Record<string, unknown> = {}) => ({
   intencion: "cita_salon", confianza: "media", manipulacion: false,
-  tipo_trenzado: "no_indicado", numero_trenzas: 6, tamano: "no_indicado", estilo_pegadas: "no_indicado",
+  tipo_trenzado: "no_indicado", numero_trenzas: 0, tamano: "no_indicado", estilo_pegadas: "no_indicado",
   extensiones: "con", color_extensiones: "rojo", boho: "no_indicado", largo_cabello: "nuca_hombros", largo_extensiones: "caderas",
   fecha: "2026-10-20", hora: "12:00", nombre: "", email: "rosessblake@gmail.com", instagram: "", notas: "",
   ...o,
@@ -270,7 +274,7 @@ describe("recorrido de la clienta de referencia (6 trenzas rojas, 20 oct 12:00)"
     const t = m.ultimo();
     expect(t.chat).toBe(CHAT);
     expect(t.texto).toContain("🧪 PRUEBA · PROPUESTA DE CITA");
-    expect(t.texto).toContain("6 trenzas · tipo sin concretar · con extensiones rojo");
+    expect(t.texto).toContain("Trenzas · tipo sin concretar · con extensiones rojo");
     expect(t.texto).toContain("Precio: sin calcular");
     expect(t.texto).toContain("⛔ Todavía no se puede aprobar");
     expect(t.texto).toContain("Disponibilidad NO comprobada");
@@ -357,6 +361,59 @@ describe("recorrido de la clienta de referencia (6 trenzas rojas, 20 oct 12:00)"
     expect(m.w.editados.at(-1)!.texto).toContain("❌ RECHAZADA");
     expect(m.w.msgs.filter((x) => x.dir === "out")).toEqual([]);
     expect(m.tipos()).toContain("propuesta_rechazada");
+  });
+});
+
+describe("regla de Blake: «6 trenzas» sin decir el tipo se asume pegadas (con aviso) y se puede corregir", () => {
+  const trenzas6 = () => mundo({ claude: async () => ({ tipo: "ok", raw: salidaClaude({ numero_trenzas: 6 }), entrada: 900, salida: 220 }) });
+
+  it("la propuesta sale ya con precio de Legacy, el aviso «Tipo asumido» y botón Aprobar", async () => {
+    const m = trenzas6();
+    await m.flujo.simular(CHAT, MENSAJE_6_TRENZAS);
+
+    expect(m.w.llamadasLegacy).toHaveLength(1);
+    expect(m.w.llamadasLegacy[0]).toMatchObject({ tipoTrenzado: "pegadas", extensionesPegadas: "con", horas: 3 });
+    const t = m.ultimo();
+    expect(t.texto).toContain("6 trenzas · pegadas · con extensiones rojo");
+    expect(t.texto).toContain("60,15 € (Legacy)");
+    expect(t.texto).toContain("Tipo asumido: pegadas (pide 6 trenzas sin decir el tipo");
+    expect(t.texto).not.toContain("⛔");
+    expect(m.botones(t)).toEqual(["✅ Aprobar", "✏️ Editar", "❌ Rechazar"]);
+    expect(m.reserva().spec.servicio.tipo_trenzado).toBe("pegadas");
+  });
+
+  it("Blake lo corrige con «tipo sueltas»: el aviso desaparece y se recalcula con el nuevo tipo", async () => {
+    const m = trenzas6();
+    await m.flujo.simular(CHAT, MENSAJE_6_TRENZAS);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo sueltas\ntamaño large");
+
+    const t = m.ultimo();
+    expect(t.texto).not.toContain("Tipo asumido");
+    expect(m.reserva().spec.servicio.tipo_trenzado).toBe("sueltas");
+    expect(m.reserva().spec.avisos_validacion.some((a: string) => a.startsWith("Tipo asumido"))).toBe(false);
+    expect(m.w.llamadasLegacy).toHaveLength(2);
+    expect(m.w.llamadasLegacy[1]).toMatchObject({ tipoTrenzado: "sueltas" });
+  });
+
+  it("si Blake confirma «tipo pegadas», el aviso también sobra", async () => {
+    const m = trenzas6();
+    await m.flujo.simular(CHAT, MENSAJE_6_TRENZAS);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo pegadas");
+    expect(m.ultimo().texto).not.toContain("Tipo asumido");
+  });
+
+  it("«trenzas» a secas (sin número) se asumen sueltas: avisa y pide el tamaño, sin precio ni Aprobar", async () => {
+    const m = mundo({ claude: async () => ({ tipo: "ok", raw: salidaClaude({ numero_trenzas: 0 }), entrada: 900, salida: 220 }) });
+    await m.flujo.simular(CHAT, "Hola! quiero trenzas con extensiones rojas, por las caderas, para el 20 de octubre a las 12pm. Mi correo es rosessblake@gmail.com");
+
+    const t = m.ultimo();
+    expect(t.texto).toContain("Tipo asumido: sueltas (pide «trenzas» sin número ni tipo");
+    expect(t.texto).toContain("Precio: sin calcular");
+    expect(t.texto).toContain("falta tamaño");
+    expect(m.botones(t)).toEqual(["✏️ Editar", "❌ Rechazar"]);
+    expect(m.w.llamadasLegacy).toHaveLength(0);
   });
 });
 
@@ -565,7 +622,7 @@ describe("Legacy falla o faltan datos", () => {
   });
 
   it("si el mensaje trae ya todos los datos, la primera propuesta sale completa y aprobable", async () => {
-    const m = mundo({ claude: async () => ({ tipo: "ok", raw: salidaClaude({ tipo_trenzado: "pegadas", nombre: "Ana" }), entrada: 1, salida: 1 }) });
+    const m = mundo({ claude: async () => ({ tipo: "ok", raw: salidaClaude({ tipo_trenzado: "pegadas", numero_trenzas: 6, nombre: "Ana" }), entrada: 1, salida: 1 }) });
     await m.flujo.simular(CHAT, MENSAJE);
     expect(m.reserva()).toMatchObject({ price_cents: 6015, client_name: "Ana" });
     expect(m.botones()).toEqual(["✅ Aprobar", "✏️ Editar", "❌ Rechazar"]);
@@ -628,7 +685,7 @@ describe("prueba sin clave de Claude: lectura básica por reglas", () => {
     const t = m.ultimo();
     expect(t.texto).toContain("🧪 PRUEBA · PROPUESTA DE CITA");
     expect(t.texto).toContain("Lectura básica por reglas: este mensaje NO lo ha leído Claude");
-    expect(t.texto).toContain("6 trenzas · tipo sin concretar · con extensiones rojo");
+    expect(t.texto).toContain("Trenzas · tipo sin concretar · con extensiones rojo");
     expect(t.texto).toContain("hasta la nuca o los hombros");
     expect(t.texto).toContain("mar 20 oct, 12:00");
     expect(m.botones(t)).toEqual(["✏️ Editar", "❌ Rechazar"]);
@@ -1260,7 +1317,7 @@ describe("calendario conectado: Aprobar crea la reserva provisional", () => {
     const m = mundo(op);
     await m.flujo.simular(CHAT, MENSAJE);
     await m.boton(m.nonceDe(), "ed", m.ultimo().id);
-    await m.flujo.textoLibre(CHAT, "tipo pegadas\nnombre Michael\nhoras 2,5\nmateriales 10");
+    await m.flujo.textoLibre(CHAT, "tipo pegadas\ntrenzas 6\nnombre Michael\nhoras 2,5\nmateriales 10");
     return m;
   }
 

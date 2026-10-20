@@ -384,24 +384,24 @@ try {
   } else {
     check("A2s. sin clave: no se llamó a Claude", claude.llamadas.length === 0);
     check("A3s. la propuesta avisa, en primer lugar, de que NO la leyó Claude", propuesta1.text.includes("Lectura básica por reglas: este mensaje NO lo ha leído Claude") && !propuesta1.text.includes("ANTHROPIC_API_KEY"));
-    check("A4s. el resumen es el mismo que con Claude (6 trenzas, rojo, largos, 20 oct 12:00, email)", propuesta1.text.includes("6 trenzas · tipo sin concretar · con extensiones rojo") && propuesta1.text.includes("hasta la nuca o los hombros") && propuesta1.text.includes("hasta las caderas") && propuesta1.text.includes("mar 20 oct, 12:00") && propuesta1.text.includes("rosessblake@gmail.com"));
+    check("A4s. el resumen es el mismo que con Claude (6 trenzas, rojo, largos, 20 oct 12:00, email)", propuesta1.text.includes("6 trenzas · pegadas · con extensiones rojo") && propuesta1.text.includes("hasta la nuca o los hombros") && propuesta1.text.includes("hasta las caderas") && propuesta1.text.includes("mar 20 oct, 12:00") && propuesta1.text.includes("rosessblake@gmail.com"));
     check("A5s. queda constancia de que se usó la lectura básica y no cuenta como llamada a Claude", eventos("lectura_basica").length === 1 && eventos("claude_llamada").length === 0 && eventos("sin_clave_anthropic").length === 0);
   }
-  check("A9. tipo sin concretar → NO se llamó a Legacy (no se inventa precio)", legacy.recibidas.length === 0);
+  check("A9. «6 trenzas» sin decir el tipo → la regla de Blake asume pegadas y se calcula con Legacy (una llamada)", legacy.recibidas.length === 1 && legacy.recibidas[0].tipoTrenzado === "pegadas");
   check("A10. propuesta a Blake en su chat", propuesta1.chat_id === ADMIN);
   const hoyMadrid = new Date().toLocaleDateString("en-US", { timeZone: "Europe/Madrid", weekday: "short" });
   const hoyEsLibre = hoyMadrid === "Sun" || hoyMadrid === "Mon";
   check(`A10a. día libre (domingo y lunes): hoy es ${hoyMadrid}, así que ${hoyEsLibre ? "Blake recibe la nota «con una clienta real Kira no contestaría»" : "no hay nota"}`, tg.enviados.some((m) => m.text.startsWith("ℹ️ Hoy es") && m.text.includes("día libre")) === hoyEsLibre && eventos("mensaje_en_dia_libre").length === (hoyEsLibre ? 1 : 0));
   check("A10c. la señal por defecto es la paga y señal de Blake: 20 €", propuesta1.text.includes("Señal: 20 €") && reservas()[0].deposit_cents === 2000);
   check("A10b. sin nombre se lee «sin nombre»", propuesta1.text.includes("Cliente: sin nombre (rosessblake@gmail.com)"));
-  check("A11. marcada como PRUEBA y con lo entendido", propuesta1.text.includes("🧪 PRUEBA · PROPUESTA DE CITA") && propuesta1.text.includes("6 trenzas · tipo sin concretar · con extensiones rojo") && propuesta1.text.includes("hasta la nuca o los hombros") && propuesta1.text.includes("hasta las caderas"));
+  check("A11. marcada como PRUEBA y con lo entendido", propuesta1.text.includes("🧪 PRUEBA · PROPUESTA DE CITA") && propuesta1.text.includes("6 trenzas · pegadas · con extensiones rojo") && propuesta1.text.includes("hasta la nuca o los hombros") && propuesta1.text.includes("hasta las caderas"));
   check("A12. fecha pedida: martes 20 oct 12:00", propuesta1.text.includes("mar 20 oct, 12:00"));
-  check("A13. precio sin calcular y se explica qué falta", propuesta1.text.includes("Precio: sin calcular") && propuesta1.text.includes("falta tipo de trenzado") && propuesta1.text.includes("por ejemplo: tipo pegadas"));
+  check("A13. sale con precio de Legacy y el aviso visible «Tipo asumido» (cómo corregirlo)", propuesta1.text.includes("(Legacy)") && propuesta1.text.includes("Tipo asumido: pegadas (pide 6 trenzas sin decir el tipo") && propuesta1.text.includes("escribe «tipo sueltas»"));
   check("A14. avisa de que la disponibilidad NO está comprobada", propuesta1.text.includes("Disponibilidad NO comprobada"));
-  check("A15. sin botón Aprobar (no se puede aprobar sin precio)", JSON.stringify(botones(propuesta1)) === JSON.stringify(["✏️ Editar", "❌ Rechazar"]));
+  check("A15. con precio y todos los datos, ya hay botón Aprobar", JSON.stringify(botones(propuesta1)) === JSON.stringify(["✅ Aprobar", "✏️ Editar", "❌ Rechazar"]));
 
   let r = reservas()[0];
-  check("A16. reserva en estado propuesta, de prueba, con el email de la clienta", r.status === "propuesta" && r.is_test === true && r.client_email === "rosessblake@gmail.com" && r.price_cents === null);
+  check("A16. reserva en estado propuesta, de prueba, con el email de la clienta", r.status === "propuesta" && r.is_test === true && r.client_email === "rosessblake@gmail.com" && r.price_cents !== null);
   check("A17. fecha guardada en UTC: 12:00 de Madrid = 10:00Z", r.starts_at === "2026-10-20T10:00:00.000Z");
   check("A18. conversación en el canal de prueba, intención cita_salon", tables.conversations[0].channel === "prueba" && tables.conversations[0].intent === "cita_salon" && tables.conversations[0].status === "esperando_aprobacion");
   check("A19. el mensaje del cliente quedó guardado tal cual", tables.messages[0]?.body === MENSAJE_REFERENCIA && tables.messages[0]?.direction === "in" && tables.messages[0]?.flagged === false);
@@ -422,7 +422,7 @@ try {
   const propuesta2 = conBotones();
   anota("Kira (propuesta 2)", `${propuesta2.text}\n[botones: ${botones(propuesta2).join(" | ")}]`);
 
-  check("A24. ahora SÍ se llamó a Legacy (una vez)", legacy.recibidas.length === 1);
+  check("A24. al confirmar «tipo pegadas» se recalcula (2.ª llamada a Legacy) y el aviso de «tipo asumido» desaparece", legacy.recibidas.length === 2 && !propuesta2.text.includes("Tipo asumido"));
   const pLegacy = legacy.recibidas[0];
   check("A25. petición a Legacy: pegadas, con extensiones, largos, 3 h (dato real de Blake), 5 € de materiales, perfil de Blake", pLegacy.tipoTrenzado === "pegadas" && pLegacy.extensionesPegadas === "con" && pLegacy.largoExtensiones === "caderas" && pLegacy.largoCabello === "nuca_hombros" && pLegacy.horas === 3 && pLegacy.materiales === 5 && pLegacy.nivel === "elite" && pLegacy.zona === "media" && pLegacy.estructura === "casa" && pLegacy.pais === "es");
   check("A26. a Legacy NO le llega ningún dato de la clienta (email interno, sin instagram)", String(pLegacy.email).endsWith(".invalid") && pLegacy.instagram === "" && !JSON.stringify(legacy.recibidas).match(/rosessblake|gmail/i));
@@ -942,9 +942,9 @@ try {
   await escribe(`/simular ${MSG_MICHAEL}`);
   const pM1 = conBotones();
   anota("Kira (propuesta Michael)", `${pM1.text}\n[botones: ${botones(pM1).join(" | ")}]`);
-  check("L14. Michael, primera propuesta: con el calendario conectado ya no dice «NO comprobada»; como aún no se sabe cuánto dura (falta el tipo) avisa de que la agenda se mirará en cuanto esté", !pM1.text.includes("Disponibilidad NO comprobada") && pM1.text.includes("Todavía no he mirado tu agenda: falta la fecha, la hora o la duración"));
+  check("L14. Michael, primera propuesta: con el calendario conectado ya no dice «NO comprobada» y, como «6 trenzas» se asume pegadas (regla de Blake), ya sabe cuánto dura y mira la agenda de ese día", !pM1.text.includes("Disponibilidad NO comprobada") && pM1.text.includes("📅 Tu agenda ese día") && pM1.text.includes("Tipo asumido: pegadas (pide 6 trenzas sin decir el tipo"));
   check("L15. entendido: Michael, pelo corto, trenzas hasta la nuca, 6 con extensiones, España", pM1.text.includes("Cliente: Michael (michal@gmail.com)") && pM1.text.includes("Pelo de la clienta: muy corto".replace("muy ", "")) && pM1.text.includes("Largo de las trenzas: hasta la nuca") && pM1.text.includes("6 trenzas") && pM1.text.includes("📍 España"));
-  check("L16. sin tipo de trenzado todavía no hay precio ni botón Aprobar", pM1.text.includes("Precio: sin calcular") && botones(pM1).join("|") === "✏️ Editar|❌ Rechazar");
+  check("L16. ya sale con precio de Legacy (3 h y 5 € sugeridos) y botón Aprobar; Blake solo tiene que afinar horas y materiales", pM1.text.includes("(Legacy)") && pM1.text.includes("son una sugerencia") && botones(pM1).join("|") === "✅ Aprobar|✏️ Editar|❌ Rechazar");
   await pulsa(dato(pM1, "Editar"), pM1.message_id);
   const antesLegacyM = legacy.recibidas.length;
   await escribe("tipo pegadas\nhoras 2,5\nmateriales 10");
@@ -953,7 +953,7 @@ try {
   check("L17. Legacy recibe: pegadas, con extensiones, pelo corto, trenzas por la nuca, 2,5 h y 10 € de material (España, casa, élite, zona media, base 1500)", legacy.recibidas.length === antesLegacyM + 1 && petM.tipoTrenzado === "pegadas" && petM.extensionesPegadas === "con" && petM.largoCabello === "corto" && petM.largoExtensiones === "nuca" && petM.horas === 2.5 && petM.materiales === 10 && petM.pais === "es" && petM.estructura === "casa" && petM.zona === "media" && petM.nivel === "elite" && petM.smi === 1500);
   const totalM2 = Math.round(legacy.respuestas.at(-1).precioTotal * 100);
   check("L18a. con la duración ya conocida, la propuesta mira tu agenda de verdad y te enseña ese día con la cita nueva en su sitio", !pM2.text.includes("Disponibilidad NO comprobada") && pM2.text.includes("📅 Tu agenda ese día") && pM2.text.includes("17:00–19:30 ◀ esta cita") && pM2.text.includes("Sin otras citas ese día"));
-  check(`L18. la propuesta muestra 2,5 h, materiales 10 €, ${euros(totalM2)} de Legacy y el horario ${"17:00 → 19:30"} (2 h 30 min)`, pM2.text.includes("2,5 h · materiales 10 €") && pM2.text.includes(`${euros(totalM2)} (Legacy)`) && pM2.text.includes("17:00 → 19:30 (2 h 30 min)") && !pM2.text.includes("son una sugerencia: ajústalas con «horas") && botones(pM2).includes("✅ Aprobar"));
+  check(`L18. la propuesta muestra 2,5 h, materiales 10 €, ${euros(totalM2)} de Legacy y el horario ${"17:00 → 19:30"} (2 h 30 min)`, pM2.text.includes("2,5 h · materiales 10 €") && pM2.text.includes(`${euros(totalM2)} (Legacy)`) && pM2.text.includes("17:00 → 19:30 (2 h 30 min)") && !pM2.text.includes("son una sugerencia: ajústalas con «horas") && !pM2.text.includes("Tipo asumido") && botones(pM2).includes("✅ Aprobar"));
   const llamadasAntesAprobar = g.llamadas.length;
   await pulsa(dato(pM2, "Aprobar"), pM2.message_id);
   const evM = eventoDe("Michael");

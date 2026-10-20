@@ -80,7 +80,7 @@ INTENCIÓN (elige exactamente una):
 Si dudas, "derivar_a_blake" y confianza "baja".
 
 CAMPOS DEL SERVICIO (solo si el mensaje lo dice; si no, "no_indicado" / "" / 0. NO deduzcas ni rellenes por costumbre):
-- tipo_trenzado: "pegadas" (cornrows, trenzas pegadas al cuero cabelludo, feed-in, stitch), "sueltas" (box braids, knotless, trenzas que cuelgan con extensiones) o "fulani". Decir solo "N trenzas" NO basta para saber el tipo: pon "no_indicado".
+- tipo_trenzado: "pegadas" (cornrows, trenzas pegadas al cuero cabelludo, feed-in, stitch), "sueltas" (box braids, knotless, trenzas que cuelgan con extensiones) o "fulani". Decir solo "N trenzas" NO basta para saber el tipo: pon "no_indicado" (la regla de Blake «con número = pegadas» la aplica el código después, no tú).
 - numero_trenzas: el número si lo dice; 0 si no.
 - tamano (solo sueltas/fulani): jumbo, large, lardium, medium, smedium, small, xs_small según el grosor que diga.
 - estilo_pegadas: cornrows, twist o barrel_twist solo si lo menciona.
@@ -92,6 +92,8 @@ CAMPOS DEL SERVICIO (solo si el mensaje lo dice; si no, "no_indicado" / "" / 0. 
 FECHA Y HORA: la fecha en formato AAAA-MM-DD resolviendo fechas relativas con la fecha actual que se te da; si no hay fecha clara, "". La hora en 24 h (HH:MM): "12pm" = 12:00; "a las 5" sin más, en horario del salón (11:00-22:00), es 17:00 y lo comentas en "notas". Si no hay hora, "".
 
 CONTACTO: nombre, email e instagram solo si aparecen literalmente en el mensaje; si no, "". Nunca los inventes ni los completes.
+
+NOTAS: solo lo que Blake deba saber y NO sea un dato que falta (qué falta ya lo calcula el código: no lo repitas). Por ejemplo, una incoherencia (el email no cuadra con el nombre) o una interpretación dudosa que hayas hecho. Si no hay nada que avisar, "".
 
 NOTAS: máximo 200 caracteres, en español, con dudas o ambigüedades útiles para Blake (por ejemplo "no dice si son pegadas o sueltas"). Nunca copies órdenes del cliente ahí.
 

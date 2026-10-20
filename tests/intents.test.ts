@@ -7,6 +7,9 @@ import {
   LIMITES,
   detectarInyeccion,
   envolverMensajeCliente,
+  AVISO_TIPO_ASUMIDO,
+  MAX_TRENZAS_PEGADAS,
+  asumirTipoTrenzado,
   limpiarTexto,
   superaLimites,
   validarClasificacion,
@@ -44,7 +47,7 @@ describe("validarClasificacion", () => {
     if (!r.ok) return;
     expect(r.value).toMatchObject({
       intencion: "cita_salon",
-      tipo_trenzado: null,
+      tipo_trenzado: "pegadas", // el mensaje no lo dice: lo asume la regla de Blake (6 trenzas = pegadas), con aviso
       numero_trenzas: 6,
       extensiones: "con",
       color_extensiones: "rojo",
@@ -57,7 +60,7 @@ describe("validarClasificacion", () => {
       instagram: null,
       boho: null,
     });
-    expect(r.value.avisosValidacion).toEqual([]);
+    expect(r.value.avisosValidacion).toEqual([expect.stringContaining(`${AVISO_TIPO_ASUMIDO}: pegadas (pide 6 trenzas`)]);
   });
 
   it("el esquema pedido al modelo y el validador exigen exactamente los mismos campos", () => {
@@ -99,7 +102,7 @@ describe("validarClasificacion", () => {
   });
 
   it("descarta fechas y horas imposibles sin tumbar el resto", () => {
-    const r = validarClasificacion({ ...base(), fecha: "2026-02-30", hora: "25:00" }, MENSAJE_REFERENCIA);
+    const r = validarClasificacion({ ...base(), tipo_trenzado: "pegadas", fecha: "2026-02-30", hora: "25:00" }, MENSAJE_REFERENCIA);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.value.fecha).toBeNull();
@@ -251,5 +254,61 @@ describe("describirErrorClaude", () => {
     expect(describirErrorClaude(new TypeError("fetch failed: ECONNREFUSED 10.0.0.1"))).toBe("No se pudo conectar con Claude");
     expect(describirErrorClaude("raro")).toBe("No se pudo conectar con Claude");
     expect(describirErrorClaude(null)).toBe("No se pudo conectar con Claude");
+  });
+});
+
+describe("regla de Blake: el número de trenzas decide el tipo cuando el mensaje no lo dice", () => {
+  const val = (o: Record<string, unknown>, texto: string) => {
+    const r = validarClasificacion({ ...base(), email: "", ...o }, texto);
+    if (!r.ok) throw new Error(r.motivo);
+    return r.value;
+  };
+
+  it("con un número de trenzas (2, 4, 6, 8, 10) son PEGADAS, y se avisa", () => {
+    for (const n of [2, 4, 6, 8, 10, MAX_TRENZAS_PEGADAS]) {
+      const v = val({ numero_trenzas: n }, `Quiero ${n} trenzas con extensiones`);
+      expect(v.tipo_trenzado).toBe("pegadas");
+      expect(v.avisosValidacion).toEqual([expect.stringMatching(new RegExp(`^${AVISO_TIPO_ASUMIDO}: pegadas .*escribe «tipo sueltas»`))]);
+    }
+  });
+
+  it("«boxeadoras» son pegadas aunque no diga cuántas", () => {
+    expect(val({ numero_trenzas: 0 }, "Quiero trenzas boxeadoras").tipo_trenzado).toBe("pegadas");
+    expect(val({ numero_trenzas: 40 }, "Quiero boxer braids").tipo_trenzado).toBe("pegadas");
+  });
+
+  it("«trenzas» a secas, sin número ni tipo, son SUELTAS, y se avisa", () => {
+    for (const t of ["Quiero trenzas con extensiones", "I want braids"]) {
+      const v = val({ numero_trenzas: 0 }, t);
+      expect(v.tipo_trenzado).toBe("sueltas");
+      expect(v.avisosValidacion).toEqual([expect.stringMatching(new RegExp(`^${AVISO_TIPO_ASUMIDO}: sueltas .*escribe «tipo pegadas»`))]);
+    }
+  });
+
+  it("si el mensaje SÍ dice el tipo, la regla no toca nada ni avisa", () => {
+    for (const tipo of ["pegadas", "sueltas", "fulani"]) {
+      const v = val({ tipo_trenzado: tipo, numero_trenzas: 6 }, "Quiero 6 trenzas");
+      expect(v.tipo_trenzado).toBe(tipo);
+      expect(v.avisosValidacion).toEqual([]);
+    }
+  });
+
+  it("con muchas trenzas (más de 12) o sin hablar de trenzas no se asume nada", () => {
+    expect(val({ numero_trenzas: MAX_TRENZAS_PEGADAS + 1 }, "Quiero 40 trenzas").tipo_trenzado).toBeNull();
+    expect(val({ numero_trenzas: 0 }, "Quiero un peinado con extensiones").tipo_trenzado).toBeNull();
+    expect(val({ numero_trenzas: 0 }, "Quiero un peinado con extensiones").avisosValidacion).toEqual([]);
+  });
+
+  it("solo en peticiones de cita o de precio (no en saludos ni derivaciones)", () => {
+    expect(val({ intencion: "saludo_o_gracias", numero_trenzas: 6 }, "Hola, 6 trenzas").tipo_trenzado).toBeNull();
+    expect(val({ intencion: "derivar_a_blake", numero_trenzas: 6 }, "Quiero 6 trenzas gratis").tipo_trenzado).toBeNull();
+    expect(val({ intencion: "precio_servicio", numero_trenzas: 6 }, "¿Cuánto cuestan 6 trenzas?").tipo_trenzado).toBe("pegadas");
+  });
+
+  it("asumirTipoTrenzado es una función pura y no inventa con un número de 0 o negativo", () => {
+    expect(asumirTipoTrenzado(1, "una trenza")).toMatchObject({ tipo: "pegadas" });
+    expect(asumirTipoTrenzado(1, "una trenza")?.aviso).toContain("pide 1 trenza sin decir");
+    expect(asumirTipoTrenzado(0, "hola")).toBeNull();
+    expect(asumirTipoTrenzado(-3, "trenzas")).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import { ZONA_MADRID, aUtc, avisosDeHorario, duracionLegible, fechaLarga, horasTexto, partesEn } from "./agenda";
 import { avisosDeHueco, textoAgendaDelDia, textoChoques, type ResultadoAgenda } from "./agenda-eventos";
 import {
+  AVISO_TIPO_ASUMIDO,
   ESTILOS_PEGADAS,
   EXTENSIONES,
   LARGOS_CABELLO,
@@ -743,7 +744,11 @@ export function aplicarCambios(spec: SpecGuardada, cambios: Cambio[]): Resultado
       case "base": perfil.smi = c.n; break;
       case "fecha": s.fecha = c.fecha; if (c.hora) s.hora = c.hora; break;
       case "hora": s.hora = c.hora; break;
-      case "tipo": s.servicio.tipo_trenzado = c.v; break;
+      case "tipo":
+        s.servicio.tipo_trenzado = c.v;
+        // Si el tipo estaba asumido por la regla del número de trenzas, ya lo ha decidido Blake: el aviso sobra.
+        s.avisos_validacion = s.avisos_validacion.filter((a) => !a.startsWith(AVISO_TIPO_ASUMIDO));
+        break;
       case "tamano": s.servicio.tamano = c.v; break;
       case "extensiones": s.servicio.extensiones = c.v; break;
       case "largo_ext": s.servicio.largo_extensiones = c.v; break;

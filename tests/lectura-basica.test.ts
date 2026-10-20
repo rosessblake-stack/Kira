@@ -37,7 +37,9 @@ describe("la clienta de referencia", () => {
     const r = validarClasificacion(lee(MENSAJE), MENSAJE);
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.value.avisosValidacion).toEqual([]);
+      // La lectura no deduce el tipo («6 trenzas» a secas); lo asume después la regla de Blake, con aviso visible.
+      expect(r.value.tipo_trenzado).toBe("pegadas");
+      expect(r.value.avisosValidacion).toEqual([expect.stringContaining("Tipo asumido: pegadas (pide 6 trenzas")]);
       expect(r.value.email).toBe("rosessblake@gmail.com");
     }
   });
