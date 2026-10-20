@@ -69,6 +69,10 @@ body:has(.panel) {
   padding: 10px 16px;
   min-height: 44px;
 }
+.panel a.boton {
+  display: inline-block; text-decoration: none; font: inherit; cursor: pointer;
+  background: var(--accent); color: var(--accent-fg); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 16px; min-height: 44px; line-height: 1.5;
+}
 .panel button.enlace { background: none; color: var(--muted); border-color: transparent; text-decoration: underline; padding: 6px 8px; min-height: 0; }
 
 .estado {

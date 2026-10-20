@@ -66,6 +66,8 @@ export interface Deps {
   trips: TripPort;
   /** Lo que de verdad pasa en cada servicio (horas, materiales, precio): /real y /datos. */
   records: RegistroPort;
+  /** Texto con el estado de la conexión con Google Calendar (/calendario). */
+  calendarioEstado(): Promise<string>;
 }
 
 export type HandlerResult = { status: number; body: Record<string, unknown> };
@@ -90,6 +92,8 @@ type TgUpdate = { update_id?: number; message?: TgMessage; callback_query?: TgCa
 
 const CALLBACK_RE = /^t:([0-9a-f]{32}):(ok|ed|no)$/;
 const PROPOSAL_CB_RE = /^p:([0-9a-f]{32}):(ok|ed|no)$/;
+/** Botones de una cita con reserva provisional en el calendario: señal recibida / cancelar. */
+const CITA_CB_RE = /^c:([0-9a-f]{32}):(pay|del)$/;
 
 const LABELS: Record<string, string> = {
   ok: "✅ Aprobado",
@@ -224,7 +228,7 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   if (cmd === "/start") {
     await deps.sendMessage(
       chatId,
-      "Kira activa. Te he identificado como administrador.\n\n/simular <mensaje> → simula el mensaje de un cliente (España) y te manda la propuesta\n/simular miami: <mensaje> → igual, pero una clienta de Miami (dólares y hora de Miami)\nFotos → mándame la foto del pelo y la de las trenzas; si quieres, con un pie («pelo: rizado, fino…» o «referencia: boxeadoras largas»)\n/fotos → te devuelvo las fotos de la última prueba\n/viaje miami 3/11 al 20/11 → apunta de qué día a qué día estás en Miami (/viajes los lista, /borrarviaje 1 quita uno)\n/real → las últimas citas aprobadas; /real 12 horas 3,5; materiales 9; precio 80 anota lo que de verdad tardó y gastó\n/datos → lo que de verdad pasa en cada tipo de servicio\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
+      "Kira activa. Te he identificado como administrador.\n\n/simular <mensaje> → simula el mensaje de un cliente (España) y te manda la propuesta\n/simular miami: <mensaje> → igual, pero una clienta de Miami (dólares y hora de Miami)\nFotos → mándame la foto del pelo y la de las trenzas; si quieres, con un pie («pelo: rizado, fino…» o «referencia: boxeadoras largas»)\n/fotos → te devuelvo las fotos de la última prueba\n/viaje miami 3/11 al 20/11 → apunta de qué día a qué día estás en Miami (/viajes los lista, /borrarviaje 1 quita uno)\n/calendario → estado de la conexión con tu Google Calendar\n/real → las últimas citas aprobadas; /real 12 horas 3,5; materiales 9; precio 80 anota lo que de verdad tardó y gastó\n/datos → lo que de verdad pasa en cada tipo de servicio\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
     );
     return;
   }
@@ -244,6 +248,11 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   }
   if (cmd === "/borrarviaje") {
     await deps.trips.borrarViaje(chatId, text.replace(/^\S+\s*/, ""));
+    return;
+  }
+
+  if (cmd === "/calendario") {
+    await deps.sendMessage(chatId, await deps.calendarioEstado());
     return;
   }
 
@@ -312,7 +321,7 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   // Texto libre: solo se atiende si hay una edición abierta (tras pulsar Editar en una propuesta).
   if (text && !text.startsWith("/") && (await deps.proposals.textoLibre(chatId, text))) return;
 
-  await deps.sendMessage(chatId, "No conozco ese comando. Prueba con /simular, /fotos, /viaje, /real, /datos, /panel o /prueba.");
+  await deps.sendMessage(chatId, "No conozco ese comando. Prueba con /simular, /fotos, /viaje, /calendario, /real, /datos, /panel o /prueba.");
 }
 
 async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {
@@ -340,6 +349,19 @@ async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {
       fromId,
       nonce: propuesta[1],
       accion: propuesta[2] as "ok" | "ed" | "no",
+    });
+    return;
+  }
+
+  const cita = CITA_CB_RE.exec(cq.data ?? "");
+  if (cita) {
+    await deps.proposals.botonCita({
+      callbackId,
+      chatId: cq.message?.chat?.id ?? fromId,
+      messageId: typeof cq.message?.message_id === "number" ? cq.message.message_id : null,
+      fromId,
+      nonce: cita[1],
+      accion: cita[2] as "pay" | "del",
     });
     return;
   }

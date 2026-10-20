@@ -8,6 +8,9 @@ import { leerBasico } from "../lib/lectura-basica";
 import { LegacyError, type PeticionLegacy, type PrecioLegacy } from "../lib/pricing";
 import { CONFIG_UBICACION } from "../lib/ubicacion";
 import { crearFlujoPropuestas, EDICION_CADUCA_MIN, type FlowDeps, type NuevaReserva, type Reserva } from "../lib/proposal-flow";
+import type { EventoAgenda } from "../lib/agenda-eventos";
+import type { AgendaPort } from "../lib/evento";
+import type { NuevoEvento } from "../lib/google-calendar";
 
 const CHAT = 111;
 const ADMIN = 111;
@@ -25,7 +28,24 @@ const salidaClaude = (o: Record<string, unknown> = {}) => ({
 
 const legacy6015: PrecioLegacy = { totalCentimos: 6015, manoObra: 55.15, materiales: 5, tarifaHora: 27.57, valorConocimiento: 50, costeTiempo: 5.15 };
 
+/** Cómo se comporta el calendario falso de Blake. */
+type OpcionesCalendario = {
+  conectado?: boolean;
+  /** Eventos que ya hay en su agenda. */
+  eventos?: EventoAgenda[];
+  cuenta?: string | null;
+  fallaEstado?: boolean;
+  fallaLeer?: boolean;
+  fallaCrear?: boolean;
+  fallaPagar?: boolean;
+  fallaBorrar?: boolean;
+};
+
 type Opciones = {
+  /** Si se pasa, hay calendario (conectado o no); si no, Kira no tiene calendario (como antes de esta función). */
+  calendario?: OpcionesCalendario;
+  /** La base de datos rechaza reservar el hueco (bookings_no_overlap). */
+  fallaReservarHueco?: boolean;
   claude?: (texto: string) => Promise<RespuestaClaude>;
   legacy?: (p: PeticionLegacy) => Promise<PrecioLegacy>;
   pausada?: boolean;
@@ -48,6 +68,7 @@ type Opciones = {
 function mundo(op: Opciones = {}) {
   let reloj = new Date(op.ahora ?? "2026-10-13T13:30:00Z"); // martes 13 oct 2026, 15:30 Madrid
   let n = 0;
+  const oc0 = op.calendario;
   const w = {
     avanza: (min: number) => { reloj = new Date(reloj.getTime() + min * 60_000); },
     convs: new Map<string, { id: string; canal: string; ref: string; intent?: string; status?: string }>(),
@@ -65,9 +86,52 @@ function mundo(op: Opciones = {}) {
     fotos: new Map<string, ResumenFoto[]>(),
     albumes: [] as { chat: number; conv: string; antesDeLosMensajes: number }[],
     registros: [] as Reserva[],
+    cal: {
+      eventos: structuredClone(op.calendario?.eventos ?? []) as EventoAgenda[],
+      lecturas: 0,
+      /** Fallos del calendario; se pueden cambiar a mitad de una prueba. */
+      fallas: { estado: oc0?.fallaEstado ?? false, leer: oc0?.fallaLeer ?? false, crear: oc0?.fallaCrear ?? false, pagar: oc0?.fallaPagar ?? false, borrar: oc0?.fallaBorrar ?? false },
+      creados: [] as NuevoEvento[],
+      pagados: [] as { id: string; bookingId: string; email: string | null; esPrueba: boolean; invitado: boolean }[],
+      borrados: [] as string[],
+    },
   };
+  const oc = op.calendario;
+  const agenda: AgendaPort | undefined = oc
+    ? {
+        async estado() {
+          if (w.cal.fallas.estado) throw new Error("fallo leyendo la conexión con Google");
+          return { conectado: oc.conectado ?? true, cuenta: oc.cuenta === undefined ? "info@blakebraider.com" : oc.cuenta };
+        },
+        async eventosEntre() {
+          w.cal.lecturas++;
+          // Si ni se puede leer la conexión, tampoco la agenda (es lo mismo que pasa en la realidad).
+          if (w.cal.fallas.leer || w.cal.fallas.estado) throw new Error("Google Calendar respondió 500 al leer la agenda (INTERNAL)");
+          return structuredClone(w.cal.eventos);
+        },
+        async crearProvisional(e) {
+          if (w.cal.fallas.crear) throw new Error("Google Calendar respondió 403 al crear el evento (forbidden)");
+          w.cal.creados.push(e);
+          w.cal.eventos.push({ id: e.id, titulo: e.titulo, inicio: e.inicio, fin: e.fin, dias: null, libre: false, esDeKira: true, esPrueba: e.prueba, bookingId: e.bookingId });
+        },
+        async pasarAPagada(id, bookingId, o) {
+          if (w.cal.fallas.pagar) throw new Error("Google Calendar respondió 500 al actualizar el evento");
+          const propia = Boolean(o.email && oc.cuenta && o.email.toLowerCase() === oc.cuenta.toLowerCase());
+          const invitado = Boolean(o.email) && (!o.esPrueba || propia);
+          w.cal.pagados.push({ id, bookingId, email: o.email, esPrueba: o.esPrueba, invitado });
+          return { invitado };
+        },
+        async borrar(id) {
+          if (w.cal.fallas.borrar) throw new Error("Google Calendar respondió 500 al borrar el evento");
+          w.cal.borrados.push(id);
+          w.cal.eventos = w.cal.eventos.filter((x) => x.id !== id);
+          return "borrado";
+        },
+      }
+    : undefined;
   if (op.fotosIniciales) w.fotos.set("conv-1", structuredClone(op.fotosIniciales));
   const deps: FlowDeps = {
+    agenda,
     now: () => reloj,
     newNonce: () => (++n).toString(16).padStart(32, "0"),
     async clasificar(texto, _ahora, zona) {
@@ -96,6 +160,7 @@ function mundo(op: Opciones = {}) {
       return structuredClone(fila);
     },
     async actualizarReserva(id, patch) {
+      if (op.fallaReservarHueco && patch.status === "pendiente_pago") throw new Error('conflicting key value violates exclusion constraint "bookings_no_overlap"');
       const fila = w.reservas.get(id)!;
       Object.assign(fila, structuredClone(patch));
       return structuredClone(fila);
@@ -106,9 +171,9 @@ function mundo(op: Opciones = {}) {
       const r = [...w.reservas.values()].find((x) => x.proposal_nonce === nonce);
       return r ? structuredClone(r) : null;
     },
-    async tomarNonce(nonce) {
-      // Atómico, como el UPDATE ... WHERE proposal_nonce = ... AND status = 'propuesta' de la base real.
-      const r = [...w.reservas.values()].find((x) => x.proposal_nonce === nonce && x.status === "propuesta");
+    async tomarNonce(nonce, estado = "propuesta") {
+      // Atómico, como el UPDATE ... WHERE proposal_nonce = ... AND status = ... de la base real.
+      const r = [...w.reservas.values()].find((x) => x.proposal_nonce === nonce && x.status === estado);
       if (!r) return null;
       r.proposal_nonce = null;
       return structuredClone(r);
@@ -155,12 +220,15 @@ function mundo(op: Opciones = {}) {
   const flujo = crearFlujoPropuestas(deps);
   const boton = (nonce: string, accion: "ok" | "ed" | "no", messageId: number | null = 1001) =>
     flujo.boton({ callbackId: `cb${w.respuestas.length}`, chatId: CHAT, messageId, fromId: ADMIN, nonce, accion });
+  const botonCita = (nonce: string, accion: "pay" | "del", messageId: number | null = 1001) =>
+    flujo.botonCita({ callbackId: `cb${w.respuestas.length}`, chatId: CHAT, messageId, fromId: ADMIN, nonce, accion });
+  const nonceCita = (e = ultimo()) => /c:([0-9a-f]{32}):/.exec(JSON.stringify(e.markup))![1];
   const ultimo = () => w.enviados.at(-1)!;
   const nonceDe = (e = ultimo()) => /p:([0-9a-f]{32}):/.exec(JSON.stringify(e.markup))![1];
   const botones = (e = ultimo()) => (e.markup.inline_keyboard[0] as { text: string }[]).map((b) => b.text);
   const reserva = () => [...w.reservas.values()][0];
   const tipos = () => w.eventos.map((e) => e.kind);
-  return { w, flujo, boton, ultimo, nonceDe, botones, reserva, tipos };
+  return { w, flujo, boton, botonCita, ultimo, nonceDe, nonceCita, botones, reserva, tipos };
 }
 
 describe("recorrido de la clienta de referencia (6 trenzas rojas, 20 oct 12:00)", () => {
@@ -901,7 +969,7 @@ describe("Miami: otra ciudad, otro nivel de precios, dólares y hora de Nueva Yo
     const t = m.w.editados.at(-1)!.texto;
     expect(t).toContain("✅ APROBADA");
     expect(t).toContain("📍 Miami");
-    expect(t).toContain("mar 20 oct, 12:00 · 💶 60,15 $ (señal 20 $)");
+    expect(t).toContain("mar 20 oct, 12:00 → 15:00 · 💶 60,15 $ (señal 20 $)");
   });
 
   it("Claude recibe la zona de la clienta para resolver «el sábado» o «mañana» en SU calendario", async () => {
@@ -1073,5 +1141,358 @@ describe("registro del servicio al aprobar", () => {
     await m.flujo.simular(CHAT, MENSAJE);
     await m.boton(m.nonceDe(), "no", m.ultimo().id);
     expect(m.w.registros).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Calendario de Blake (Google Calendar) conectado
+// ---------------------------------------------------------------------------
+
+const ocupa = (id: string, titulo: string, ini: string, fin: string, extra: Partial<EventoAgenda> = {}): EventoAgenda => ({
+  id, titulo, inicio: new Date(ini), fin: new Date(fin), dias: null, libre: false, esDeKira: false, esPrueba: false, bookingId: null, ...extra,
+});
+/** Martes 20 oct 2026: la cita pedida es de 12:00 a 15:00 en Madrid (10:00–13:00 UTC). */
+const MANANA = ocupa("e1", "Trenzas Cata", "2026-10-20T08:00:00Z", "2026-10-20T09:00:00Z"); // 10:00–11:00 Madrid: 1 h de margen
+const LUX_LIBRE = ocupa("e2", "Trenzas Lux", "2026-10-20T11:00:00Z", "2026-10-20T14:00:00Z", { libre: true }); // 13:00–16:00, marcada «libre»
+
+describe("calendario conectado: la propuesta mira la agenda", () => {
+  async function conEdicion(op: Opciones) {
+    const m = mundo(op);
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo pegadas\nnombre Michael");
+    return m;
+  }
+
+  it("hueco libre: ya no dice «NO comprobada», enseña la agenda del día y deja aprobar", async () => {
+    const m = await conEdicion({ calendario: { eventos: [MANANA] } });
+    const t = m.ultimo().texto;
+    expect(t).not.toContain("Disponibilidad NO comprobada");
+    expect(t).toContain("📅 Tu agenda ese día (mar 20 oct)");
+    expect(t).toContain("• 10:00–11:00 Trenzas Cata");
+    expect(t).toContain("• 12:00–15:00 ◀ esta cita");
+    expect(t).toContain("Margen con la anterior: 1 h");
+    expect(m.botones()).toEqual(["✅ Aprobar", "✏️ Editar", "❌ Rechazar"]);
+    expect(m.w.cal.lecturas).toBeGreaterThan(0);
+  });
+
+  it("margen corto con la cita de antes: avisa pero NO bloquea (decide Blake)", async () => {
+    const pegada = ocupa("e3", "Asesoría Dani", "2026-10-20T08:30:00Z", "2026-10-20T09:40:00Z"); // acaba 11:40, margen 20 min
+    const m = await conEdicion({ calendario: { eventos: [pegada] } });
+    expect(m.ultimo().texto).toContain("Margen de 20 min con la cita anterior («Asesoría Dani» 10:30–11:40); lo habitual es 1 h.");
+    expect(m.botones()).toContain("✅ Aprobar");
+  });
+
+  it("choca con una cita marcada «libre» (el caso Lux): bloquea, lo explica y no hay botón Aprobar", async () => {
+    const m = await conEdicion({ calendario: { eventos: [LUX_LIBRE] } });
+    const t = m.ultimo().texto;
+    expect(t).toContain("⛔ Todavía no se puede aprobar. Falta: hueco ocupado por «Trenzas Lux» 13:00–16:00 (marcado «libre» en tu calendario, pero cuenta)");
+    expect(t).toContain("por ejemplo: fecha 20/10 12:00");
+    expect(t).toContain("⛔ CHOCA");
+    expect(m.botones()).toEqual(["✏️ Editar", "❌ Rechazar"]);
+  });
+
+  it("cambiar la fecha a un hueco libre quita el bloqueo", async () => {
+    const m = await conEdicion({ calendario: { eventos: [LUX_LIBRE] } });
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "hora 17:00");
+    expect(m.ultimo().texto).not.toContain("⛔ Todavía");
+    expect(m.botones()).toContain("✅ Aprobar");
+  });
+
+  it("calendario conectado pero ilegible: NO se da por libre; sin Aprobar hasta comprobarlo", async () => {
+    const m = await conEdicion({ calendario: { fallaLeer: true } });
+    const t = m.ultimo().texto;
+    expect(t).toContain("Falta: comprobar la agenda (Google Calendar respondió 500 al leer la agenda (INTERNAL))");
+    expect(t).toContain("no sé si ese hueco está libre");
+    expect(t).not.toContain("Disponibilidad NO comprobada: el calendario todavía no está conectado");
+    expect(m.botones()).toEqual(["✏️ Editar", "❌ Rechazar"]);
+    expect(m.w.eventos.find((e) => e.kind === "agenda_lectura_fallo")).toMatchObject({ source: "calendar", level: "error" });
+  });
+
+  it("sin conectar (configurado pero sin cuenta): igual que antes, avisa y deja aprobar", async () => {
+    const m = await conEdicion({ calendario: { conectado: false } });
+    expect(m.ultimo().texto).toContain("Disponibilidad NO comprobada: el calendario todavía no está conectado");
+    expect(m.botones()).toContain("✅ Aprobar");
+    expect(m.w.cal.lecturas).toBe(0);
+  });
+
+  it("sin fecha todavía: no se mira la agenda (no hay nada que comprobar)", async () => {
+    const m = mundo({ calendario: { eventos: [LUX_LIBRE] }, claude: async () => ({ tipo: "ok", raw: salidaClaude({ fecha: "", hora: "" }), entrada: 1, salida: 1 }) });
+    await m.flujo.simular(CHAT, MENSAJE);
+    expect(m.w.cal.lecturas).toBe(0);
+    expect(m.ultimo().texto).not.toContain("Disponibilidad NO comprobada");
+    expect(m.ultimo().texto).toContain("Todavía no he mirado tu agenda: falta la fecha, la hora o la duración");
+  });
+
+  it("las pruebas de Kira y los eventos de todo el día no bloquean; el de todo el día se avisa", async () => {
+    const prueba = ocupa("kiraprueba", "🧪 PRUEBA · Trenzas X", "2026-10-20T10:00:00Z", "2026-10-20T13:00:00Z", { esDeKira: true, esPrueba: true, bookingId: "otra" });
+    const viaje: EventoAgenda = { id: "v", titulo: "ALICANTE", inicio: null, fin: null, dias: { desde: "2026-10-19", hasta: "2026-10-22" }, libre: true, esDeKira: false, esPrueba: false, bookingId: null };
+    const m = await conEdicion({ calendario: { eventos: [prueba, viaje] } });
+    expect(m.ultimo().texto).toContain("Ese día tienes un evento de todo el día: «ALICANTE».");
+    expect(m.botones()).toContain("✅ Aprobar");
+  });
+});
+
+describe("calendario conectado: Aprobar crea la reserva provisional", () => {
+  async function listaParaAprobar(op: Opciones = { calendario: {} }) {
+    const m = mundo(op);
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo pegadas\nnombre Michael\nhoras 2,5\nmateriales 10");
+    return m;
+  }
+
+  it("crea UN evento amarillo con las convenciones de Blake y deja los botones de señal y cancelar", async () => {
+    const m = await listaParaAprobar();
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+
+    expect(m.w.cal.creados).toHaveLength(1);
+    const e = m.w.cal.creados[0];
+    expect(e).toMatchObject({
+      id: "kirares1",
+      bookingId: "res-1",
+      titulo: "🧪 PRUEBA · Trenzas Michael",
+      ubicacion: "Carrer de la Duquessa de la Victòria, 16",
+      zona: "Europe/Madrid",
+      prueba: true,
+    });
+    expect(e.descripcion).toBe("6 Trenzas\nCon extensiones (rojo)\n\n" + `${(m.reserva().price_cents! / 100).toLocaleString("es-ES", { minimumFractionDigits: m.reserva().price_cents! % 100 ? 2 : 0, useGrouping: false })}€`);
+    expect(e.inicio.toISOString()).toBe("2026-10-20T10:00:00.000Z");
+    expect(e.fin.toISOString()).toBe("2026-10-20T12:30:00.000Z"); // 2,5 h
+    expect(m.reserva()).toMatchObject({ status: "pendiente_pago", calendar_event_id: e.id, approved_by_telegram_user: ADMIN });
+    expect(m.reserva().proposal_nonce).toMatch(/^[0-9a-f]{32}$/);
+
+    expect(m.w.editados.at(-1)!.texto).toContain("✅ APROBADA");
+    const t = m.ultimo();
+    expect(t.texto).toContain("🧪 PRUEBA · 📅 RESERVA PROVISIONAL (amarilla)");
+    expect(t.texto).toContain("«Señal recibida»");
+    expect(t.texto).toContain("No se ha enviado nada al cliente");
+    expect(m.botones(t)).toEqual(["💜 Señal recibida", "🗑 Cancelar cita"]);
+    expect(m.reserva().telegram_message_id).toBe(t.id);
+    expect([...m.w.convs.values()][0].status).toBe("esperando_cliente");
+    expect(m.w.registros).toHaveLength(1);
+    expect(m.tipos()).toEqual(expect.arrayContaining(["propuesta_aprobada", "evento_provisional_creado"]));
+  });
+
+  it("lee la agenda OTRA VEZ al aprobar: si apareció un choque entre tanto, no crea nada y vuelve a la propuesta", async () => {
+    const m = await listaParaAprobar();
+    m.w.cal.eventos.push(LUX_LIBRE); // Blake (o su Google) añadió una cita después de la propuesta
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+
+    expect(m.w.cal.creados).toHaveLength(0);
+    expect(m.reserva().status).toBe("propuesta");
+    expect(m.reserva().calendar_event_id ?? null).toBeNull();
+    expect(m.w.respuestas.at(-1)!.texto).toBe("Ese hueco está ocupado");
+    expect(m.w.editados.at(-1)!.texto).toContain("No se ha aprobado");
+    const t = m.ultimo().texto;
+    expect(t).toContain("⛔ No he aprobado nada ni he creado ningún evento: hueco ocupado por «Trenzas Lux»");
+    expect(m.botones()).toEqual(["✏️ Editar", "❌ Rechazar"]); // sin Aprobar mientras choque
+    expect(m.tipos()).toContain("agenda_choque");
+    expect(m.w.registros).toHaveLength(0);
+  });
+
+  it("si no puede leer la agenda al aprobar, no crea nada (nunca sin mirar)", async () => {
+    const m = await listaParaAprobar();
+    m.w.cal.fallas.leer = true; // Google deja de responder justo después de preparar la propuesta
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    expect(m.w.cal.creados).toHaveLength(0);
+    expect(m.reserva().status).toBe("propuesta");
+    expect(m.w.respuestas.at(-1)!.texto).toBe("No puedo mirar tu agenda");
+    expect(m.ultimo().texto).toContain("no he podido mirar tu calendario");
+    expect(m.botones()).toEqual(["✏️ Editar", "❌ Rechazar"]); // y la nueva propuesta no deja aprobar a ciegas
+    m.w.cal.fallas.leer = false;
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "hora 12:00");
+    expect(m.botones()).toContain("✅ Aprobar"); // al volver Google, se puede
+  });
+
+  it("si Google rechaza crear el evento, se deshace todo y vuelve la propuesta con botones nuevos", async () => {
+    const m = await listaParaAprobar({ calendario: { fallaCrear: true } });
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    expect(m.w.cal.creados).toHaveLength(0);
+    expect(m.reserva()).toMatchObject({ status: "propuesta", approved_by_telegram_user: null, approved_at: null });
+    expect(m.reserva().calendar_event_id ?? null).toBeNull();
+    expect(m.ultimo().texto).toContain("Google Calendar no me ha dejado crear el evento");
+    expect(m.botones()).toContain("✅ Aprobar"); // se puede reintentar
+    expect(m.tipos()).toContain("evento_provisional_fallo");
+    expect(m.w.registros).toHaveLength(0);
+  });
+
+  it("si la base de datos rechaza el hueco (segundo cerrojo), no se llega a crear ningún evento", async () => {
+    const m = await listaParaAprobar({ calendario: {}, fallaReservarHueco: true });
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    expect(m.w.cal.creados).toHaveLength(0);
+    expect(m.reserva().status).toBe("propuesta");
+    expect(m.ultimo().texto).toContain("la base de datos no deja reservar ese hueco");
+    expect(m.tipos()).toContain("reserva_hueco_fallo");
+  });
+
+  it("dos pulsaciones de Aprobar: solo se crea un evento", async () => {
+    const m = await listaParaAprobar();
+    const nonce = m.nonceDe();
+    await Promise.all([m.boton(nonce, "ok", m.ultimo().id), m.boton(nonce, "ok", m.ultimo().id)]);
+    expect(m.w.cal.creados).toHaveLength(1);
+    expect(m.tipos().filter((k) => k === "evento_provisional_creado")).toHaveLength(1);
+  });
+
+  it("si el calendario está desconectado, Aprobar se queda como antes: aprobada, sin evento", async () => {
+    const m = await listaParaAprobar({ calendario: { conectado: false } });
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    expect(m.reserva().status).toBe("aprobada");
+    expect(m.w.cal.creados).toHaveLength(0);
+    expect(m.w.editados.at(-1)!.texto).toContain("calendario (reserva provisional)");
+  });
+
+  it("si ni siquiera se puede saber si está conectado, no se aprueba a ciegas", async () => {
+    const m = await listaParaAprobar();
+    m.w.cal.fallas.estado = true;
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    expect(m.reserva().status).toBe("propuesta");
+    expect(m.w.cal.creados).toHaveLength(0);
+    expect(m.ultimo().texto).toContain("no he podido mirar tu calendario");
+  });
+
+  it("una cita real de Miami: evento en hora de Miami y con dólares en la descripción", async () => {
+    const raw = () => ({ tipo: "ok" as const, raw: salidaClaude({ tipo_trenzado: "pegadas", numero_trenzas: 6, nombre: "Dani", fecha: "2026-10-22", hora: "15:00", instagram: "dani_t" }), entrada: 1, salida: 1 });
+    const m = mundo({ calendario: {}, claude: async () => raw() });
+    await m.flujo.simular(CHAT, "miami: Hi, quiero 6 trenzas pegadas con extensiones rojas, por las caderas, el jueves 22 a las 3pm, soy Dani, rosessblake@gmail.com, @dani_t");
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "dirección 1234 Collins Ave, Miami Beach\nprecio 150");
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    const e = m.w.cal.creados[0];
+    expect(e.zona).toBe("America/New_York");
+    expect(e.inicio.toISOString()).toBe("2026-10-22T19:00:00.000Z");
+    expect(e.ubicacion).toBe("1234 Collins Ave, Miami Beach");
+    expect(e.descripcion).toBe("6 Trenzas\nCon extensiones (rojo)\n\n150$\n@dani_t");
+  });
+});
+
+describe("calendario conectado: señal recibida y cancelar", () => {
+  async function conProvisional(op: Opciones = { calendario: {} }, ajustes?: (m: ReturnType<typeof mundo>) => void) {
+    const m = mundo(op);
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo pegadas\nnombre Michael\nemail michal@gmail.com");
+    ajustes?.(m);
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    expect(m.reserva().status).toBe("pendiente_pago");
+    return m;
+  }
+
+  it("«Señal recibida» pasa a morado y la reserva a pagada; en una prueba NO se invita a un email ajeno", async () => {
+    const m = await conProvisional();
+    await m.botonCita(m.nonceCita(), "pay", m.ultimo().id);
+    expect(m.w.cal.pagados).toEqual([{ id: m.reserva().calendar_event_id, bookingId: "res-1", email: "michal@gmail.com", esPrueba: true, invitado: false }]);
+    expect(m.reserva().status).toBe("pagada");
+    expect(m.w.editados.at(-1)!.texto).toContain("💜 SEÑAL RECIBIDA");
+    expect(m.w.editados.at(-1)!.texto).toContain("no he invitado a michal@gmail.com: es una prueba y no es tu cuenta");
+    expect(m.w.respuestas.at(-1)!.texto).toBe("💜 Señal recibida");
+    expect(m.tipos()).toEqual(expect.arrayContaining(["senal_confirmada_por_blake", "evento_pagado"]));
+  });
+
+  it("en una prueba con el email de la propia cuenta de Blake SÍ se invita (así se ve todo el recorrido)", async () => {
+    const m = mundo({ calendario: { cuenta: "info@blakebraider.com" } });
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo pegadas\nemail INFO@blakebraider.com");
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    await m.botonCita(m.nonceCita(), "pay", m.ultimo().id);
+    expect(m.w.cal.pagados[0].invitado).toBe(true);
+    expect(m.w.editados.at(-1)!.texto).toContain("he invitado a info@blakebraider.com");
+  });
+
+  it("una cita REAL (no de prueba) invita siempre a la clienta", async () => {
+    const m = await conProvisional({ calendario: {} }, (x) => { x.w.reservas.get("res-1")!.is_test = false; });
+    expect(m.w.cal.creados[0]).toMatchObject({ prueba: false, titulo: "Trenzas Michael" });
+    await m.botonCita(m.nonceCita(), "pay", m.ultimo().id);
+    expect(m.w.cal.pagados[0]).toMatchObject({ esPrueba: false, invitado: true });
+    expect(m.w.editados.at(-1)!.texto).not.toContain("🧪");
+  });
+
+  it("sin email de la clienta, pasa a morado pero no hay invitación", async () => {
+    const m = mundo({ calendario: {}, claude: async () => ({ tipo: "ok", raw: salidaClaude({ email: "", tipo_trenzado: "pegadas" }), entrada: 1, salida: 1 }) });
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    await m.botonCita(m.nonceCita(), "pay", m.ultimo().id);
+    expect(m.w.cal.pagados[0]).toMatchObject({ email: null, invitado: false });
+    expect(m.w.editados.at(-1)!.texto).toContain("no tengo su email");
+  });
+
+  it("«Cancelar cita» borra SOLO el evento de esta reserva y cierra la reserva", async () => {
+    const m = await conProvisional({ calendario: { eventos: [MANANA] } });
+    const id = m.reserva().calendar_event_id!;
+    await m.botonCita(m.nonceCita(), "del", m.ultimo().id);
+    expect(m.w.cal.borrados).toEqual([id]);
+    expect(m.w.cal.eventos.map((e) => e.id)).toEqual(["e1"]); // la cita de Cata sigue ahí
+    expect(m.reserva().status).toBe("cancelada");
+    expect([...m.w.convs.values()][0].status).toBe("cerrada");
+    expect(m.w.editados.at(-1)!.texto).toContain("🗑 CITA CANCELADA");
+    expect(m.tipos()).toEqual(expect.arrayContaining(["cita_cancelada_por_blake", "evento_borrado"]));
+  });
+
+  it("cada botón vale una vez: una segunda pulsación no repite nada", async () => {
+    const m = await conProvisional();
+    const nonce = m.nonceCita();
+    await Promise.all([m.botonCita(nonce, "pay", m.ultimo().id), m.botonCita(nonce, "pay", m.ultimo().id)]);
+    expect(m.w.cal.pagados).toHaveLength(1);
+    await m.botonCita(nonce, "del", m.ultimo().id);
+    expect(m.w.respuestas.at(-1)!.texto).toBe("Ya procesado");
+    expect(m.w.cal.borrados).toHaveLength(0);
+  });
+
+  it("una reserva ya pagada no se puede cancelar con un botón viejo", async () => {
+    const m = await conProvisional();
+    const nonce = m.nonceCita();
+    await m.botonCita(nonce, "pay", m.ultimo().id);
+    await m.botonCita(nonce, "del", m.ultimo().id);
+    expect(m.reserva().status).toBe("pagada");
+    expect(m.w.cal.borrados).toHaveLength(0);
+  });
+
+  it("un nonce desconocido o de una propuesta (no de una cita) no hace nada", async () => {
+    const m = await conProvisional();
+    await m.botonCita("f".repeat(32), "pay");
+    expect(m.w.respuestas.at(-1)!.texto).toBe("Ya procesado");
+    const otra = mundo({ calendario: {} });
+    await otra.flujo.simular(CHAT, MENSAJE);
+    await otra.botonCita(otra.nonceDe(), "del"); // el nonce de una propuesta (status propuesta) no sirve como cita
+    expect(otra.reserva().status).toBe("propuesta");
+    expect(otra.w.cal.borrados).toHaveLength(0);
+  });
+
+  it("si Google falla al pasar a morado, la reserva sigue pendiente y se ofrecen botones nuevos", async () => {
+    const m = await conProvisional({ calendario: { fallaPagar: true } });
+    await m.botonCita(m.nonceCita(), "pay", m.ultimo().id);
+    const antes = m.ultimo();
+    expect(m.reserva().status).toBe("pendiente_pago");
+    const t = m.ultimo();
+    expect(t.texto).toContain("No he podido pasar el evento a morado");
+    expect(m.botones(t)).toEqual(["💜 Señal recibida", "🗑 Cancelar cita"]);
+    expect(m.reserva().proposal_nonce).toBe(m.nonceCita(t));
+    expect(m.tipos()).toContain("evento_pagado_fallo");
+    expect(antes).toBe(t);
+    // y el botón nuevo funciona en cuanto Google vuelve
+    m.w.cal.fallas.pagar = false;
+    await m.botonCita(m.nonceCita(t), "pay", t.id);
+    expect(m.reserva().status).toBe("pagada");
+    expect(m.w.cal.pagados).toHaveLength(1);
+  });
+
+  it("si Google falla al borrar, la cita sigue y se ofrecen botones nuevos", async () => {
+    const m = await conProvisional({ calendario: { fallaBorrar: true } });
+    await m.botonCita(m.nonceCita(), "del", m.ultimo().id);
+    expect(m.reserva().status).toBe("pendiente_pago");
+    expect(m.ultimo().texto).toContain("No he podido borrar el evento");
+    expect(m.botones()).toEqual(["💜 Señal recibida", "🗑 Cancelar cita"]);
+  });
+
+  it("si la reserva no tiene evento guardado, no inventa nada y avisa", async () => {
+    const m = await conProvisional();
+    m.w.reservas.get("res-1")!.calendar_event_id = null;
+    await m.botonCita(m.nonceCita(), "pay", m.ultimo().id);
+    expect(m.w.cal.pagados).toHaveLength(0);
+    expect(m.ultimo().texto).toContain("No encuentro el evento de esta reserva");
+    expect(m.reserva().status).toBe("pendiente_pago");
   });
 });

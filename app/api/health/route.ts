@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { comprobarClaude } from "../../../lib/claude-check";
 import { getDb } from "../../../lib/db";
+import { crearAgendaGoogle } from "../../../lib/google-agenda";
+import { configGoogle } from "../../../lib/google-oauth";
 import { getMe, getWebhookInfo } from "../../../lib/telegram";
 
 export const dynamic = "force-dynamic";
@@ -61,9 +63,19 @@ export async function GET() {
   // Claude: de qué tipo parece la clave y si Anthropic la acepta (sin enseñarla). No cuenta para «ok»: sin clave Kira sigue vivo.
   const claude = await comprobarClaude();
 
+  // Google Calendar: solo si está configurado y conectado (nunca la cuenta ni ningún dato). No cuenta para «ok».
+  const calendario: { configurado: boolean; conectado: boolean | null } = { configurado: configGoogle() !== null, conectado: false };
+  if (calendario.configurado) {
+    try {
+      calendario.conectado = (await crearAgendaGoogle().estado()).conectado;
+    } catch {
+      calendario.conectado = null;
+    }
+  }
+
   const ok = supabase && telegram;
   return NextResponse.json(
-    { ok, supabase, supabaseError, telegram, bot, telegramError, webhook, env, claude },
+    { ok, supabase, supabaseError, telegram, bot, telegramError, webhook, env, claude, calendario },
     { status: ok ? 200 : 503 },
   );
 }

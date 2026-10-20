@@ -1,4 +1,5 @@
 import { ZONA_MADRID, aUtc, avisosDeHorario, duracionLegible, fechaLarga, horasTexto, partesEn } from "./agenda";
+import { avisosDeHueco, textoAgendaDelDia, textoChoques, type ResultadoAgenda } from "./agenda-eventos";
 import {
   ESTILOS_PEGADAS,
   EXTENSIONES,
@@ -172,10 +173,28 @@ export function resumenPerfil(p: PerfilLegacy, moneda: Moneda = "EUR"): string {
   return `${p.nivel === "elite" ? "élite" : p.nivel} · zona ${p.zona} · ${p.estructura === "salon" ? "salón" : "casa"} · base salarial ${p.smi} ${moneda === "USD" ? "$" : "€"}`;
 }
 
+/** Inicio y fin de la cita pedida (fecha y hora en la zona de SU ciudad). null si falta fecha, hora o duración. */
+export function horarioDeSpec(spec: SpecGuardada): { inicio: Date | null; fin: Date | null } {
+  const lugar = contextoDe(spec);
+  const horas = spec.horas ?? horasPorDefecto(spec.servicio);
+  const minutos = horas > 0 ? Math.round(horas * 60) : null;
+  const inicio = spec.fecha && spec.hora ? aUtc(spec.fecha, spec.hora, lugar.zonaHoraria) : null;
+  return { inicio, fin: inicio && minutos ? new Date(inicio.getTime() + minutos * 60_000) : null };
+}
+
 export function componerPropuesta(
   spec: SpecGuardada,
   precio: ResultadoPrecio,
-  ctx: { ahora: Date; perfil: PerfilLegacy; calendarioConectado: boolean; fotos?: ResumenFoto[]; estancias?: Estancia[] },
+  ctx: {
+    ahora: Date;
+    perfil: PerfilLegacy;
+    /** Antiguo: true = no avisar de la agenda. Sustituido por `agenda`, que dice qué se encontró en el calendario. */
+    calendarioConectado?: boolean;
+    /** Lo que se vio en el calendario de Blake para esa fecha (si no se pasa, vale `calendarioConectado`). */
+    agenda?: ResultadoAgenda;
+    fotos?: ResumenFoto[];
+    estancias?: Estancia[];
+  },
 ): Propuesta {
   const lugar = contextoDe(spec);
   const horasUsadas = spec.horas ?? horasPorDefecto(spec.servicio);
@@ -183,9 +202,8 @@ export function componerPropuesta(
   const duracionMinutos = horasUsadas > 0 ? Math.round(horasUsadas * 60) : null;
 
   // La fecha y la hora que da la clienta son las de SU ciudad (Madrid o Miami).
-  let inicio: Date | null = null;
-  if (spec.fecha && spec.hora) inicio = aUtc(spec.fecha, spec.hora, lugar.zonaHoraria);
-  const fin = inicio && duracionMinutos ? new Date(inicio.getTime() + duracionMinutos * 60_000) : null;
+  const { inicio, fin } = horarioDeSpec(spec);
+  const agenda: ResultadoAgenda = ctx.agenda ?? (ctx.calendarioConectado ? { estado: "sin_horario" } : { estado: "no_conectado" });
 
   const precioCentimos =
     precio.origen === "legacy" ? precio.precio.totalCentimos : precio.origen === "manual" ? precio.totalCentimos : null;
@@ -206,8 +224,19 @@ export function componerPropuesta(
     avisos.push("Lectura básica por reglas: este mensaje NO lo ha leído Claude (modo de prueba, aún sin clave). Revisa lo que he entendido.");
   }
   if (confianzaBaja(spec)) avisos.push("Kira no está segura de lo que pide (confianza baja): revisa el mensaje original.");
-  if (!ctx.calendarioConectado) {
+  if (agenda.estado === "no_conectado") {
     avisos.push("Disponibilidad NO comprobada: el calendario todavía no está conectado. Mira tu agenda antes de aprobar.");
+  } else if (agenda.estado === "error") {
+    // Con el calendario conectado pero sin poder mirarlo, no se aprueba: nunca se da por libre un hueco sin comprobarlo.
+    faltan.push(`comprobar la agenda (${agenda.motivo})`);
+    avisos.push("No he podido mirar tu calendario, así que no sé si ese hueco está libre. No se puede aprobar hasta comprobarlo.");
+  } else if (agenda.estado === "ok") {
+    // Un choque con cualquier evento (también los marcados «libre») bloquea: no se crea nada encima de otra cita.
+    for (const c of textoChoques(agenda.hueco, lugar.zonaHoraria)) faltan.push(c);
+    avisos.push(...avisosDeHueco(agenda.hueco, lugar.zonaHoraria));
+  }
+  if (agenda.estado === "sin_horario" && ctx.agenda !== undefined) {
+    avisos.push("Todavía no he mirado tu agenda: falta la fecha, la hora o la duración. La miro en cuanto estén.");
   }
   avisos.push(...avisosDeHorario(inicio, fin, ctx.ahora, lugar.reglas));
   // Dónde está Blake ese día (sus viajes a Miami): blando, la propuesta avisa y decide él.
@@ -302,7 +331,7 @@ const recorte = (t: string, n: number) => (t.length <= n ? t : `${t.slice(0, n -
 export function textoPropuesta(
   p: Propuesta,
   spec: SpecGuardada,
-  ctx: { mensajeCliente: string; esPrueba: boolean; perfil: PerfilLegacy; fotos?: ResumenFoto[] },
+  ctx: { mensajeCliente: string; esPrueba: boolean; perfil: PerfilLegacy; fotos?: ResumenFoto[]; agenda?: ResultadoAgenda },
 ): string {
   const lugar = contextoDe(spec);
   const l: string[] = [];
@@ -321,6 +350,10 @@ export function textoPropuesta(
     l.push(`• Fecha pedida: ${fechaLarga(p.inicio, lugar.zonaHoraria)}${p.fin ? ` → ${partesEn(p.fin, lugar.zonaHoraria).hora}` : ""}${p.duracionMinutos ? ` (${duracionLegible(p.duracionMinutos)})` : ""}`);
   } else {
     l.push("• Fecha pedida: sin concretar");
+  }
+  if (ctx.agenda?.estado === "ok" && p.inicio && p.fin) {
+    l.push("");
+    l.push(...textoAgendaDelDia(ctx.agenda.hueco, p.inicio, p.fin, lugar.zonaHoraria, fechaLarga(p.inicio, lugar.zonaHoraria).split(",")[0]));
   }
   if (ctx.fotos) {
     l.push("");
@@ -370,6 +403,7 @@ export function ejemploDeEdicion(faltan: string[]): string {
   if (primero === "fecha") return "fecha 20/10 12:00";
   if (primero === "hora") return "hora 12:00";
   if (primero.includes("duración")) return "horas 3";
+  if (primero.includes("agenda") || primero.includes("hueco ocupado")) return "fecha 20/10 12:00";
   return "precio 80";
 }
 
@@ -521,6 +555,7 @@ export function parsearEdicion(texto: string, ahora: Date, zona: string = ZONA_M
         else cambios.push({ k: "horas", horas: Math.round(n * 2) / 2 });
         break;
       }
+      case "material":
       case "materiales": {
         if (/^auto$/i.test(valor)) { cambios.push({ k: "materiales", valor: null }); break; }
         const n = numero(valor);

@@ -10,6 +10,7 @@ export function PanelNav({ fallos, seguridad }: { fallos: number; seguridad: num
     { href: "/panel/proceso", etiqueta: "Proceso", aviso: 0 },
     { href: "/panel/fallos", etiqueta: "Fallos", aviso: fallos },
     { href: "/panel/seguridad", etiqueta: "Seguridad", aviso: seguridad },
+    { href: "/panel/calendario", etiqueta: "Calendario", aviso: 0 },
   ];
   return (
     <nav className="tabs" aria-label="Secciones del panel">

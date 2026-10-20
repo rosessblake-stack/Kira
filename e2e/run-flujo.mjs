@@ -31,6 +31,31 @@ const BASE = "http://localhost:3100";
 const SECRET = "secreto-falso";
 /** Hoy en Madrid (AAAA-MM-DD): la prueba no puede depender del día en que se ejecute. */
 const hoyIsoMadrid = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Madrid" });
+// Fechas del calendario: siempre futuras respecto al día en que se ejecuta (jueves y martes de dentro de al menos 2 días).
+const proximoDia = (diaSemana, minDias) => {
+  let d = new Date(new Date(`${hoyIsoMadrid}T12:00:00Z`).getTime() + minDias * 86_400_000);
+  while (d.getUTCDay() !== diaSemana) d = new Date(d.getTime() + 86_400_000);
+  return d.toISOString().slice(0, 10);
+};
+const D_JUE = proximoDia(4, 2);
+const D_MAR = proximoDia(2, 2);
+const MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+const textoFecha = (iso) => `${Number(iso.slice(8, 10))} de ${MESES_ES[Number(iso.slice(5, 7)) - 1]}`;
+const desfaseMadrid = (instante) => {
+  const p = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Madrid", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(instante);
+  const n = (t) => Number(p.find((x) => x.type === t).value);
+  return Date.UTC(n("year"), n("month") - 1, n("day"), n("hour"), n("minute"), n("second")) - Math.floor(instante.getTime() / 1000) * 1000;
+};
+/** Milisegundos UTC de una hora de pared de Madrid (como hace Kira en lib/agenda.ts). */
+const madridUtcMs = (fecha, hora) => {
+  const [y, m, d] = fecha.split("-").map(Number);
+  const [hh, mm] = hora.split(":").map(Number);
+  const pared = Date.UTC(y, m - 1, d, hh, mm);
+  let utc = pared - desfaseMadrid(new Date(pared));
+  utc = pared - desfaseMadrid(new Date(utc));
+  return utc;
+};
+const isoMadrid = (fecha, hora) => new Date(madridUtcMs(fecha, hora)).toISOString();
 const ADMIN = 111;
 const EXTRANO = 222;
 
@@ -50,7 +75,7 @@ if (!fs.existsSync(`${LEGACY_REPO}/api/calculate.js`)) {
   console.error(`No encuentro ${LEGACY_REPO}/api/calculate.js: este e2e necesita el repo de Legacy (variable LEGACY_REPO).`);
   process.exit(2);
 }
-for (const port of [3100, 54330, 54331, 54332, 54333]) {
+for (const port of [3100, 54330, 54331, 54332, 54333, 54334]) {
   if (!(await puertoLibre(port))) { console.error(`El puerto ${port} está ocupado: hay un servidor viejo.`); process.exit(2); }
 }
 
@@ -76,6 +101,12 @@ function clasificacionSimulada(texto) {
   }
   if (texto.includes("soy Dani")) {
     return salida({ tipo_trenzado: "pegadas", numero_trenzas: 6, extensiones: "con", color_extensiones: "negro", largo_cabello: "nuca_hombros", largo_extensiones: "caderas", fecha: "2026-10-22", hora: "15:00", nombre: "Dani", email: "dani@correo.com" });
+  }
+  if (texto.includes("soy Michael")) {
+    return salida({ numero_trenzas: 6, extensiones: "con", largo_cabello: "corto", largo_extensiones: "nuca", fecha: D_JUE, hora: "17:00", nombre: "Michael", email: "michal@gmail.com", notas: "No dice si son pegadas o sueltas." });
+  }
+  if (texto.includes("soy Lola")) {
+    return salida({ confianza: "alta", tipo_trenzado: "pegadas", numero_trenzas: 6, extensiones: "con", color_extensiones: "negro", largo_cabello: "nuca_hombros", largo_extensiones: "caderas", fecha: D_MAR, hora: "15:00", nombre: "Lola", email: "lola@correo.com" });
   }
   if (texto.includes("curso online")) return salida({ intencion: "info_formacion_online" });
   if (texto.includes("obedecer")) return salida({ manipulacion: true });
@@ -148,6 +179,87 @@ const servidorTelegram = http.createServer(async (req, res) => {
   json(res, 200, { ok: true, result: true });
 });
 
+// ===================================================================================== Google simulado (OAuth + Calendar)
+// Imita lo que importa de Google: la pantalla de permiso (redirige de vuelta con código y state), el cambio de código por
+// permiso, la renovación del acceso, la revocación, y la API de Calendar (listar, crear, leer, modificar, borrar).
+const g = {
+  refresh: "refresh-falso-ABCDEF123456", n: 0, codigos: new Set(), accesos: new Set(), eventos: new Map(),
+  auth: [], tokens: [], revocados: [], llamadas: [], deniega: false, caeLeer: false, caeCrear: false,
+};
+const evGoogle = (id, summary, inicio, fin, extra = {}) => ({ id, status: "confirmed", summary, start: { dateTime: inicio, timeZone: "Europe/Madrid" }, end: { dateTime: fin, timeZone: "Europe/Madrid" }, ...extra });
+const jwtFalso = (email) => `cabecera.${Buffer.from(JSON.stringify({ email })).toString("base64url")}.firma`;
+const solapaG = (e, desde, hasta) => {
+  const a = e.start.dateTime ? Date.parse(e.start.dateTime) : Date.parse(e.start.date);
+  const b = e.end.dateTime ? Date.parse(e.end.dateTime) : Date.parse(e.end.date);
+  return a < hasta && b > desde;
+};
+const servidorGoogle = http.createServer(async (req, res) => {
+  const url = new URL(req.url, "http://x");
+  if (url.pathname === "/auth") {
+    g.auth.push(Object.fromEntries(url.searchParams));
+    const vuelta = new URL(url.searchParams.get("redirect_uri"));
+    if (g.deniega) vuelta.searchParams.set("error", "access_denied");
+    else { const code = `codigo-falso-${++g.n}`; g.codigos.add(code); vuelta.searchParams.set("code", code); }
+    vuelta.searchParams.set("state", url.searchParams.get("state"));
+    res.writeHead(302, { location: vuelta.toString() });
+    return res.end();
+  }
+  if (url.pathname === "/token") {
+    const f = Object.fromEntries(new URLSearchParams((await leerCrudo(req)).toString()));
+    g.tokens.push(f);
+    if (f.client_id !== "cliente-falso" || f.client_secret !== "secreto-cliente-falso") return json(res, 401, { error: "invalid_client" });
+    if (f.grant_type === "authorization_code") {
+      if (!g.codigos.delete(f.code)) return json(res, 400, { error: "invalid_grant" });
+      const acc = `acceso-falso-${++g.n}`;
+      g.accesos.add(acc);
+      return json(res, 200, { access_token: acc, refresh_token: g.refresh, expires_in: 3599, scope: "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.events", id_token: jwtFalso("info@blakebraider.com") });
+    }
+    if (f.grant_type === "refresh_token") {
+      if (f.refresh_token !== g.refresh) return json(res, 400, { error: "invalid_grant" });
+      const acc = `acceso-falso-${++g.n}`;
+      g.accesos.add(acc);
+      return json(res, 200, { access_token: acc, expires_in: 3599 });
+    }
+    return json(res, 400, { error: "unsupported_grant_type" });
+  }
+  if (url.pathname === "/revoke") {
+    g.revocados.push(Object.fromEntries(new URLSearchParams((await leerCrudo(req)).toString())).token);
+    return json(res, 200, {});
+  }
+  const m = /^\/calendar\/v3\/calendars\/([^/]+)\/events(?:\/([^/]+))?$/.exec(url.pathname);
+  const bearer = /^Bearer (.+)$/.exec(req.headers.authorization ?? "")?.[1];
+  if (!m || !g.accesos.has(bearer)) return json(res, 401, { error: { code: 401, status: "UNAUTHENTICATED" } });
+  const cuerpo = await leerCuerpo(req);
+  const id = m[2] ? decodeURIComponent(m[2]) : null;
+  g.llamadas.push({ metodo: req.method, calendario: decodeURIComponent(m[1]), id, query: Object.fromEntries(url.searchParams), cuerpo });
+  if (req.method === "GET" && !id) {
+    if (g.caeLeer) return json(res, 500, { error: { code: 500, status: "INTERNAL", errors: [{ reason: "backendError" }] } });
+    const desde = Date.parse(url.searchParams.get("timeMin")), hasta = Date.parse(url.searchParams.get("timeMax"));
+    return json(res, 200, { items: [...g.eventos.values()].filter((e) => e.status !== "cancelled" && solapaG(e, desde, hasta)) });
+  }
+  if (req.method === "POST" && !id) {
+    if (g.caeCrear) return json(res, 403, { error: { code: 403, errors: [{ reason: "forbidden" }] } });
+    if (g.eventos.has(cuerpo.id)) return json(res, 409, { error: { code: 409, errors: [{ reason: "duplicate" }] } });
+    const e = { status: "confirmed", ...cuerpo };
+    g.eventos.set(e.id, e);
+    return json(res, 200, e);
+  }
+  const e = id ? g.eventos.get(id) : null;
+  if (req.method === "GET") return e ? json(res, 200, e) : json(res, 404, { error: { code: 404 } });
+  if (req.method === "PATCH") {
+    if (!e || e.status === "cancelled") return json(res, 404, { error: { code: 404 } });
+    Object.assign(e, cuerpo);
+    return json(res, 200, e);
+  }
+  if (req.method === "DELETE") {
+    if (!e || e.status === "cancelled") return json(res, 410, { error: { code: 410 } });
+    e.status = "cancelled";
+    res.writeHead(204);
+    return res.end();
+  }
+  json(res, 405, { error: "no soportado" });
+});
+
 // ===================================================================================== Legacy REAL (fórmula real, sin base de datos)
 const legacy = { recibidas: [], respuestas: [], caido: false };
 const handlerLegacy = (await import(pathToFileURL(`${LEGACY_REPO}/api/calculate.js`).href)).default;
@@ -167,6 +279,10 @@ const db = await start(54330);
 await escuchar(servidorClaude, 54331);
 await escuchar(servidorTelegram, 54332);
 await escuchar(servidorLegacy, 54333);
+await escuchar(servidorGoogle, 54334);
+// La agenda de Blake antes de empezar: una cita marcada «libre» (el caso Lux) un martes y un viaje de varios días.
+g.eventos.set("lux", evGoogle("lux", "Trenzas Lux", isoMadrid(D_MAR, "14:00"), isoMadrid(D_MAR, "17:00"), { transparency: "transparent", colorId: "3" }));
+g.eventos.set("alicante", { id: "alicante", status: "confirmed", summary: "ALICANTE", start: { date: "2031-10-31" }, end: { date: "2031-11-03" }, transparency: "transparent" });
 
 const app = spawn("node", ["node_modules/next/dist/bin/next", "start", "-p", "3100"], {
   cwd: APP_DIR,
@@ -182,6 +298,12 @@ const app = spawn("node", ["node_modules/next/dist/bin/next", "start", "-p", "31
     TELEGRAM_ADMIN_USER_ID: String(ADMIN),
     ...(SIN_CLAVE ? {} : { ANTHROPIC_API_KEY: "clave-falsa-anthropic", ANTHROPIC_BASE_URL: "http://127.0.0.1:54331" }),
     LEGACY_API_URL: "http://127.0.0.1:54333/api/calculate",
+    GOOGLE_CLIENT_ID: "cliente-falso",
+    GOOGLE_CLIENT_SECRET: "secreto-cliente-falso",
+    GOOGLE_AUTH_URL: "http://127.0.0.1:54334/auth",
+    GOOGLE_TOKEN_URL: "http://127.0.0.1:54334/token",
+    GOOGLE_REVOKE_URL: "http://127.0.0.1:54334/revoke",
+    GOOGLE_CALENDAR_API: "http://127.0.0.1:54334/calendar/v3",
     NO_PROXY: "localhost,127.0.0.1",
     no_proxy: "localhost,127.0.0.1",
   },
@@ -756,11 +878,178 @@ try {
   check("G30. el precio puesto por Blake, el perfil de Miami (confirmado, base salarial 2600 $) y la dirección, todo en $ (nada en €)", /Precio puesto por ti\s+150 \$/.test(detM) && /zona premium · salon · base salarial 2600 \$/.test(detM) && !/base salarial 2600 \$ \(sin confirmar\)/.test(detM) && /Dirección del evento\s+1234 Collins Ave, Miami Beach/.test(detM) && !/ €/.test(detM.slice(detM.indexOf("Ubicación"), detM.indexOf("LÍNEA DE TIEMPO") > 0 ? detM.indexOf("LÍNEA DE TIEMPO") : undefined)), JSON.stringify(detM.slice(detM.indexOf("PRECIO") >= 0 ? detM.indexOf("PRECIO") : detM.indexOf("Precio"), (detM.indexOf("PRECIO") >= 0 ? detM.indexOf("PRECIO") : detM.indexOf("Precio")) + 420)));
   await page.screenshot({ path: SHOTS + (SIN_CLAVE ? "sc-" : "") + "flujo-07-miami.png", fullPage: true });
 
+  // ============================================================================ L. GOOGLE CALENDAR
+  console.log("\n=== L. Google Calendar: conexión, agenda real, evento provisional, señal y cancelación ===");
+  const cal = () => tables.app_settings.find((a) => a.key === "google_calendar");
+  const eventoDe = (texto) => [...g.eventos.values()].find((e) => e.status !== "cancelled" && String(e.summary ?? "").includes(texto));
+  const hoyPanel = async () => (await page.locator("body").innerText());
+
+  await escribe("/calendario");
+  check("L1. antes de conectar: /calendario dice que está listo para conectar y las propuestas siguen avisando", ultimo().text.includes("listo para conectar") && g.llamadas.length === 0);
+  await page.goto(`${BASE}/panel/calendario`);
+  const antesCal = await hoyPanel();
+  check("L2. el panel: «Sin conectar», el botón para conectar y la dirección de retorno exacta", antesCal.includes("Sin conectar") && antesCal.includes("Conectar Google Calendar") && antesCal.includes("http://localhost:3100/api/google/callback"));
+
+  // Un retorno colado desde fuera (sin haber empezado desde el panel) no vale.
+  const rMala = await fetch(`${BASE}/api/google/callback?code=robado&state=inventado`);
+  check("L3. un retorno de Google que no empezó en tu panel (state inventado) se rechaza y queda en seguridad, sin hablar con Google", rMala.status === 400 && tables.security_events.some((x) => x.source === "google_callback") && g.tokens.length === 0 && !cal());
+
+  // Conectar de verdad, con el navegador: panel → Google → de vuelta → panel.
+  await page.getByRole("link", { name: "Conectar Google Calendar" }).click();
+  await page.waitForURL("**/api/google/callback**");
+  const urlRetorno = page.url();
+  const pagRetorno = await hoyPanel();
+  check("L4. Google devuelve a Blake y la página dice «Listo» con su cuenta", pagRetorno.includes("✅ Listo") && pagRetorno.includes("Conectado con info@blakebraider.com"));
+  const sol = g.auth[0];
+  check("L5. a Google solo se le pidió ver y editar eventos (+ identidad), permiso permanente, y el secreto no viaja en la URL", sol.scope === "https://www.googleapis.com/auth/calendar.events openid email" && sol.access_type === "offline" && sol.prompt === "consent" && !JSON.stringify(sol).includes("secreto-cliente-falso") && sol.redirect_uri === "http://localhost:3100/api/google/callback");
+  check("L6. el código se cambió por el permiso con el secreto en el cuerpo y la misma dirección de retorno", g.tokens[0].grant_type === "authorization_code" && g.tokens[0].client_secret === "secreto-cliente-falso" && g.tokens[0].redirect_uri === "http://localhost:3100/api/google/callback");
+  check("L7. el permiso permanente se guardó CIFRADO (nunca en claro), con la cuenta y el calendario principal", /^v1\./.test(cal()?.value.refresh ?? "") && !JSON.stringify(cal()).includes(g.refresh) && cal().value.email === "info@blakebraider.com" && cal().value.calendario === "primary");
+  check("L8. el «state» de un solo uso ya no existe y la cookie de la conexión se borró", !tables.app_settings.some((a) => a.key === "google_oauth_state") && !(await ctx.cookies()).some((c) => c.name.includes("kira_google")));
+  const retornoRepetido = await ctx.request.get(urlRetorno);
+  check("L9. repetir el mismo enlace de retorno no vale (ni cambia nada)", retornoRepetido.status() === 400 && g.tokens.length === 1);
+
+  await page.getByRole("link", { name: "Volver al panel" }).click();
+  await page.waitForURL("**/panel/calendario");
+  const conCal = await hoyPanel();
+  check("L10. de vuelta en el panel, con la sesión intacta: Conectado con su cuenta", conCal.includes("Conectado") && conCal.includes("info@blakebraider.com") && conCal.includes("Reconectar") && conCal.includes("Desconectar"));
+  await page.getByRole("button", { name: "Comprobar ahora" }).click();
+  await page.waitForURL("**/panel/calendario?c=ok**");
+  check("L11. «Comprobar ahora» lee la agenda de verdad (renovando el acceso con el permiso guardado)", (await hoyPanel()).includes("Kira lee tu agenda") && g.tokens.some((t) => t.grant_type === "refresh_token") && g.llamadas.some((x) => x.metodo === "GET" && x.calendario === "primary"));
+  await escribe("/calendario");
+  check("L12. /calendario ahora dice conectado con su cuenta", ultimo().text.includes("conectado con info@blakebraider.com"));
+  const salud2 = await (await fetch(`${BASE}/api/health`)).json();
+  check("L13. /api/health dice configurado y conectado, sin enseñar la cuenta", salud2.calendario?.configurado === true && salud2.calendario?.conectado === true && !JSON.stringify(salud2).includes("blakebraider"));
+  await page.screenshot({ path: SHOTS + (SIN_CLAVE ? "sc-" : "") + "flujo-08-calendario.png", fullPage: true });
+
+  // --- El caso de Michael: pelo corto, 6 trenzas con extensiones por la nuca, 2,5 h, 10 € de material, España
+  const MSG_MICHAEL = `Hola! soy Michael, tengo el pelo corto y quiero 6 trenzas con extensiones por la nuca, para el jueves ${textoFecha(D_JUE)} a las 17:00. Mi correo es michal@gmail.com`;
+  anota("Blake escribe", `/simular ${MSG_MICHAEL}`);
+  await escribe(`/simular ${MSG_MICHAEL}`);
+  const pM1 = conBotones();
+  anota("Kira (propuesta Michael)", `${pM1.text}\n[botones: ${botones(pM1).join(" | ")}]`);
+  check("L14. Michael, primera propuesta: con el calendario conectado ya no dice «NO comprobada»; como aún no se sabe cuánto dura (falta el tipo) avisa de que la agenda se mirará en cuanto esté", !pM1.text.includes("Disponibilidad NO comprobada") && pM1.text.includes("Todavía no he mirado tu agenda: falta la fecha, la hora o la duración"));
+  check("L15. entendido: Michael, pelo corto, trenzas hasta la nuca, 6 con extensiones, España", pM1.text.includes("Cliente: Michael (michal@gmail.com)") && pM1.text.includes("Pelo de la clienta: muy corto".replace("muy ", "")) && pM1.text.includes("Largo de las trenzas: hasta la nuca") && pM1.text.includes("6 trenzas") && pM1.text.includes("📍 España"));
+  check("L16. sin tipo de trenzado todavía no hay precio ni botón Aprobar", pM1.text.includes("Precio: sin calcular") && botones(pM1).join("|") === "✏️ Editar|❌ Rechazar");
+  await pulsa(dato(pM1, "Editar"), pM1.message_id);
+  const antesLegacyM = legacy.recibidas.length;
+  await escribe("tipo pegadas\nhoras 2,5\nmateriales 10");
+  const pM2 = conBotones();
+  const petM = legacy.recibidas.at(-1);
+  check("L17. Legacy recibe: pegadas, con extensiones, pelo corto, trenzas por la nuca, 2,5 h y 10 € de material (España, casa, élite, zona media, base 1500)", legacy.recibidas.length === antesLegacyM + 1 && petM.tipoTrenzado === "pegadas" && petM.extensionesPegadas === "con" && petM.largoCabello === "corto" && petM.largoExtensiones === "nuca" && petM.horas === 2.5 && petM.materiales === 10 && petM.pais === "es" && petM.estructura === "casa" && petM.zona === "media" && petM.nivel === "elite" && petM.smi === 1500);
+  const totalM2 = Math.round(legacy.respuestas.at(-1).precioTotal * 100);
+  check("L18a. con la duración ya conocida, la propuesta mira tu agenda de verdad y te enseña ese día con la cita nueva en su sitio", !pM2.text.includes("Disponibilidad NO comprobada") && pM2.text.includes("📅 Tu agenda ese día") && pM2.text.includes("17:00–19:30 ◀ esta cita") && pM2.text.includes("Sin otras citas ese día"));
+  check(`L18. la propuesta muestra 2,5 h, materiales 10 €, ${euros(totalM2)} de Legacy y el horario ${"17:00 → 19:30"} (2 h 30 min)`, pM2.text.includes("2,5 h · materiales 10 €") && pM2.text.includes(`${euros(totalM2)} (Legacy)`) && pM2.text.includes("17:00 → 19:30 (2 h 30 min)") && !pM2.text.includes("son una sugerencia: ajústalas con «horas") && botones(pM2).includes("✅ Aprobar"));
+  const llamadasAntesAprobar = g.llamadas.length;
+  await pulsa(dato(pM2, "Aprobar"), pM2.message_id);
+  const evM = eventoDe("Michael");
+  const rM = reservas().at(-1);
+  check("L19. Aprobar crea UN evento en el calendario de Blake", Boolean(evM) && [...g.eventos.values()].filter((e) => String(e.summary ?? "").includes("Michael")).length === 1 && g.llamadas.filter((x) => x.metodo === "POST").length === 1);
+  check("L20. con sus convenciones: título, descripción (servicio, extensiones, precio), dirección, amarillo, ocupado y aviso a los 60 min", evM.summary === "🧪 PRUEBA · Trenzas Michael" && evM.description === `6 Trenzas\nCon extensiones\n\n${euros(totalM2).replace(" €", "€")}` && evM.location === "Carrer de la Duquessa de la Victòria, 16" && evM.colorId === "5" && evM.transparency === "opaque" && evM.reminders?.useDefault === false && evM.reminders.overrides?.[0]?.minutes === 60 && evM.reminders.overrides?.[0]?.method === "popup");
+  check("L21. sin Google Meet, sin invitados, marcado como prueba y con el id de la reserva", !evM.conferenceData && !evM.attendees && evM.extendedProperties.private.kira_test === "1" && evM.extendedProperties.private.kira_booking_id === rM.id && evM.id === `kira${rM.id.replace(/-/g, "")}`);
+  const post = g.llamadas.filter((x) => x.metodo === "POST").at(-1);
+  check("L22. Google no avisa a nadie al crearlo (sendUpdates=none) y no se pide Meet", post.query.sendUpdates === "none" && post.query.conferenceDataVersion === undefined);
+  check("L23. la hora es la de Madrid (17:00 → 19:30) con su zona horaria", Date.parse(evM.start.dateTime) === madridUtcMs(D_JUE, "17:00") && Date.parse(evM.end.dateTime) === madridUtcMs(D_JUE, "19:30") && evM.start.timeZone === "Europe/Madrid");
+  check("L24. antes de crear, Kira miró la agenda (lectura justo al aprobar) y la reserva queda pendiente de pago con el id del evento", g.llamadas.slice(llamadasAntesAprobar).some((x) => x.metodo === "GET" && !x.id) && rM.status === "pendiente_pago" && rM.calendar_event_id === evM.id);
+  const msgCita = conBotones();
+  anota("Kira (reserva provisional)", `${msgCita.text}\n[botones: ${botones(msgCita).join(" | ")}]`);
+  check("L25. Blake recibe «RESERVA PROVISIONAL» con los botones «Señal recibida» y «Cancelar cita»", msgCita.text.includes("RESERVA PROVISIONAL") && botones(msgCita).join("|") === "💜 Señal recibida|🗑 Cancelar cita" && tg.editados.at(-1).text.includes("✅ APROBADA"));
+  const regM = tables.service_records.find((x) => x.booking_id === rM.id);
+  check("L26. se guardó el registro del servicio (2,5 h y 10 € aprobados; Kira sugería 3 h y 5 €)", regM.horas_aprobadas === 2.5 && regM.materiales_aprobados === 10 && regM.horas_sugeridas === 3 && regM.materiales_sugeridos === 5 && regM.numero_trenzas === 6 && regM.largo_cabello === "corto" && regM.largo_extensiones === "nuca" && regM.client_name === "Michael" && regM.is_test === true);
+
+  // Un servicio de prueba ya creado NO bloquea: otra prueba a la misma hora sigue pudiéndose aprobar.
+  await escribe(`/simular ${MSG_MICHAEL}`);
+  check("L27. el evento de una PRUEBA no bloquea el hueco (otra prueba a la misma hora sigue pudiendo aprobarse)", !conBotones().text.includes("hueco ocupado") && !conBotones().text.includes("CHOCA"));
+  await pulsa(dato(conBotones(), "Rechazar"), conBotones().message_id);
+
+  // Señal recibida
+  await pulsa(dato(msgCita, "Señal recibida"), msgCita.message_id);
+  check("L28. «Señal recibida»: el evento pasa a morado y la reserva a pagada", evM.colorId === "3" && reservas().find((x) => x.id === rM.id).status === "pagada" && tg.editados.at(-1).text.includes("💜 SEÑAL RECIBIDA"));
+  check("L29. al ser una prueba y un email que no es tu cuenta, NO se invita a nadie (y se dice)", !evM.attendees && tg.editados.at(-1).text.includes("no he invitado a michal@gmail.com") && g.llamadas.filter((x) => x.metodo === "PATCH").at(-1).query.sendUpdates === "none");
+  await pulsa(dato(msgCita, "Cancelar"), msgCita.message_id);
+  check("L30. el botón de la cita ya pagada no se puede reutilizar para cancelar ni repetir nada", reservas().find((x) => x.id === rM.id).status === "pagada" && g.llamadas.filter((x) => x.metodo === "DELETE").length === 0 && g.llamadas.filter((x) => x.metodo === "PATCH").length === 1);
+
+  // Lo real, anotado después
+  const nM = regM.seq;
+  await escribe(`/real ${nM} horas 3; materiales 9; precio 80`);
+  check("L31. /real anota lo que de verdad tardó (3 h), gastó (9 €) y cobró (80 €), y avisa de la desviación", tables.service_records.find((x) => x.booking_id === rM.id).horas_reales === 3 && ultimo().text.includes("Anotado") && ultimo().text.includes("tardó 0,5 h más"));
+
+  // Con tu propia cuenta de Google como email, una prueba SÍ invita (así se ve el recorrido completo)
+  await escribe(`/simular ${MSG_MICHAEL}`);
+  await pulsa(dato(conBotones(), "Editar"), conBotones().message_id);
+  await escribe("tipo pegadas\nemail INFO@blakebraider.com");
+  await pulsa(dato(conBotones(), "Aprobar"), conBotones().message_id);
+  const citaPropia = conBotones();
+  await pulsa(dato(citaPropia, "Señal recibida"), citaPropia.message_id);
+  const evPropio = [...g.eventos.values()].filter((e) => String(e.summary ?? "").includes("Michael")).at(-1);
+  check("L32. una prueba con TU email de Google: morado e invitación (se añade tu email y Google avisa)", evPropio.colorId === "3" && JSON.stringify(evPropio.attendees) === JSON.stringify([{ email: "info@blakebraider.com" }]) && g.llamadas.filter((x) => x.metodo === "PATCH").at(-1).query.sendUpdates === "all");
+
+  // --- Choque con una cita marcada «libre» (el caso Lux): bloquea y no se crea nada
+  const MSG_LOLA = `Hola! soy Lola, quiero 6 trenzas pegadas con extensiones negras el martes ${textoFecha(D_MAR)} a las 15:00. Mi correo es lola@correo.com`;
+  const postsAntesLola = g.llamadas.filter((x) => x.metodo === "POST").length;
+  await escribe(`/simular ${MSG_LOLA}`);
+  const pL = conBotones();
+  anota("Kira (propuesta Lola, choca con Lux)", `${pL.text}\n[botones: ${botones(pL).join(" | ")}]`);
+  check("L33. Lola pide un hueco que ocupa Lux (marcada «libre»): lo detecta, lo explica y no ofrece Aprobar", pL.text.includes("hueco ocupado por «Trenzas Lux» 14:00–17:00 (marcado «libre» en tu calendario, pero cuenta)") && pL.text.includes("⛔ CHOCA") && botones(pL).join("|") === "✏️ Editar|❌ Rechazar");
+  await pulsa(dato(pL, "Editar"), pL.message_id);
+  await escribe("hora 17:30");
+  const pL2 = conBotones();
+  check("L34. con otra hora ya cabe (17:30), con aviso de margen de 30 min respecto a Lux y botón Aprobar", pL2.text.includes("Margen de 30 min con la cita anterior («Trenzas Lux» 14:00–17:00)") && botones(pL2).includes("✅ Aprobar"));
+  // Mientras Blake lo piensa, aparece otra cita en esa franja (alguien reserva a mano en Google)
+  g.eventos.set("nueva", evGoogle("nueva", "Cita nueva a mano", isoMadrid(D_MAR, "18:00"), isoMadrid(D_MAR, "19:00")));
+  await pulsa(dato(pL2, "Aprobar"), pL2.message_id);
+  check("L35. si entre tanto aparece un choque, al aprobar se vuelve a mirar: NO se crea nada y vuelve la propuesta sin Aprobar", g.llamadas.filter((x) => x.metodo === "POST").length === postsAntesLola && reservas().at(-1).status === "propuesta" && conBotones().text.includes("⛔ No he aprobado nada ni he creado ningún evento: hueco ocupado por «Cita nueva a mano»") && !botones(conBotones()).includes("✅ Aprobar"));
+  g.eventos.delete("nueva");
+
+  // --- Google deja de responder: nunca se da el hueco por libre
+  g.caeLeer = true;
+  await pulsa(dato(conBotones(), "Editar"), conBotones().message_id);
+  await escribe("hora 17:30");
+  const pCaida = conBotones();
+  check("L36. si Google no responde: «comprobar la agenda», sin botón Aprobar y el fallo queda en Fallos", pCaida.text.includes("comprobar la agenda (Google Calendar respondió 500 al leer la agenda (backendError))") && !botones(pCaida).includes("✅ Aprobar") && eventos("agenda_lectura_fallo").length > 0);
+  g.caeLeer = false;
+
+  // --- Google rechaza crear el evento: se deshace todo
+  await pulsa(dato(conBotones(), "Editar"), conBotones().message_id);
+  await escribe("hora 17:30");
+  g.caeCrear = true;
+  await pulsa(dato(conBotones(), "Aprobar"), conBotones().message_id);
+  check("L37. si Google rechaza crear el evento: nada queda a medias (la reserva sigue siendo propuesta, sin id de evento) y vuelve con botones", reservas().at(-1).status === "propuesta" && !reservas().at(-1).calendar_event_id && conBotones().text.includes("Google Calendar no me ha dejado crear el evento") && botones(conBotones()).includes("✅ Aprobar") && eventos("evento_provisional_fallo").length === 1);
+  g.caeCrear = false;
+
+  // --- Aprobar bien y CANCELAR: borra solo el evento de Kira
+  await pulsa(dato(conBotones(), "Aprobar"), conBotones().message_id);
+  const citaLola = conBotones();
+  const evLola = eventoDe("Lola");
+  check("L38. al reintentar se crea el evento de Lola (amarillo, sin 🧪 de prueba en el id, con el dato de Instagram vacío) y la agenda de Blake sigue intacta", Boolean(evLola) && evLola.colorId === "5" && g.eventos.has("lux") && g.eventos.get("lux").status !== "cancelled" && evLola.description === `6 Trenzas\nCon extensiones (negro)\n\n${euros(reservas().at(-1).price_cents).replace(" €", "€")}`);
+  const eventosAntes = [...g.eventos.values()].filter((e) => e.status !== "cancelled").length;
+  await pulsa(dato(citaLola, "Cancelar"), citaLola.message_id);
+  check("L39. «Cancelar cita» borra SOLO el evento de Lola (el de Lux y los demás siguen) y cierra la reserva", evLola.status === "cancelled" && g.eventos.get("lux").status !== "cancelled" && [...g.eventos.values()].filter((e) => e.status !== "cancelled").length === eventosAntes - 1 && reservas().at(-1).status === "cancelada" && tg.editados.at(-1).text.includes("🗑 CITA CANCELADA"));
+  const borrados = g.llamadas.filter((x) => x.metodo === "DELETE");
+  check("L40. antes de borrar se comprobó que el evento era de Kira (lectura del evento por su id) y el borrado no avisa a nadie", borrados.length === 1 && borrados[0].id === evLola.id && g.llamadas.some((x) => x.metodo === "GET" && x.id === evLola.id) && borrados[0].query.sendUpdates === "none");
+
+  // --- Desconectar
+  await page.goto(`${BASE}/panel/calendario`);
+  await page.getByRole("button", { name: "Desconectar" }).click();
+  await page.waitForURL("**/panel/calendario?c=desconectado");
+  check("L41. Desconectar: Google revoca el permiso, Kira lo olvida y el panel dice «Sin conectar»", !cal() && g.revocados.includes(g.refresh) && (await hoyPanel()).includes("Calendario desconectado") && (await hoyPanel()).includes("Sin conectar"));
+  await escribe(`/simular ${MSG_MICHAEL}`);
+  check("L42. sin calendario conectado todo vuelve a como antes: la propuesta avisa de que NO está comprobada", conBotones().text.includes("Disponibilidad NO comprobada") && !g.llamadas.some((x) => x.metodo === "GET" && Date.now() - 1 < 0));
+  await page.screenshot({ path: SHOTS + (SIN_CLAVE ? "sc-" : "") + "flujo-09-calendario-desconectado.png", fullPage: true });
+
+  // --- Cancelar el permiso en Google
+  g.deniega = true;
+  await page.getByRole("link", { name: "Conectar Google Calendar" }).click();
+  await page.waitForURL("**/api/google/callback**");
+  check("L43. si Blake cancela el permiso en Google no se conecta nada y se explica", (await hoyPanel()).includes("No se ha conectado") && (await hoyPanel()).includes("cancelaste el permiso") && !cal());
+  g.deniega = false;
+
   // ============================================================================ H. Sin secretos en los registros
   const volcado = JSON.stringify({ e: tables.event_log, s: tables.security_events });
   check("H1. ninguna clave ni token en los registros", !/clave-falsa|token-falso|000000:|secreto-falso/.test(volcado));
   check("H2. ningún callback_data de un solo uso queda registrado", !/p:[0-9a-f]{32}:/.test(volcado));
   check("H3. los registros de fotos no contienen rutas de descarga de Telegram (llevan el token)", !/\/file\/bot|photos\/[a-z0-9]+\.bin/.test(volcado));
+  check("H4. ni el permiso permanente, ni los códigos, ni los accesos, ni el secreto de Google, ni la cuenta quedan en los registros", !new RegExp(`${g.refresh}|codigo-falso|acceso-falso|secreto-cliente-falso|blakebraider`).test(volcado));
+  check("H5. ningún callback_data de las citas (c:...) queda registrado", !/c:[0-9a-f]{32}:/.test(volcado));
 
   fs.writeFileSync(SHOTS + `conversacion-telegram${SIN_CLAVE ? "-sin-clave" : ""}.txt`, transcripcion.join("\n"));
 } catch (e) {
@@ -769,7 +1058,7 @@ try {
 } finally {
   await browser?.close();
   try { process.kill(-app.pid, "SIGKILL"); } catch {}
-  for (const s of [servidorClaude, servidorTelegram, servidorLegacy, db]) s.close();
+  for (const s of [servidorClaude, servidorTelegram, servidorLegacy, servidorGoogle, db]) s.close();
 }
 
 const fallosFinales = results.filter((r) => !r.ok);

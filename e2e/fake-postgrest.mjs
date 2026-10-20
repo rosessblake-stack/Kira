@@ -240,6 +240,14 @@ const server = http.createServer(async (req, res) => {
       if (!wantsRows) return send(res, 204, undefined);
       return conFilas(res, 200, structuredClone(rows), comoObjeto);
     }
+    if (req.method === "DELETE") {
+      const filters = parseFilters(url.searchParams);
+      if (!filters.length) return send(res, 400, { message: "DELETE sin filtro: no permitido" });
+      const borradas = tables[table].filter((r) => filters.every((f) => matches(r, f)));
+      tables[table] = tables[table].filter((r) => !borradas.includes(r));
+      if (!wantsRows) return send(res, 204, undefined);
+      return conFilas(res, 200, structuredClone(borradas), comoObjeto);
+    }
     return send(res, 405, { message: "método no soportado" });
   } catch (e) {
     return send(res, 400, { message: String(e.message) });

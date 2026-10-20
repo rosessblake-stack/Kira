@@ -16,6 +16,7 @@ type Calls = {
     botones: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: string }[];
     libres: string[];
     cancelar: number;
+    citas: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: string }[];
   };
   trips: { k: string; chatId: number; texto?: string }[];
   records: { k: string; chatId: number; texto: string }[];
@@ -27,7 +28,7 @@ type Calls = {
 };
 
 function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } = {}) {
-  const calls: Calls = { sent: [], links: 0, prop: { simular: [], botones: [], libres: [], cancelar: 0 }, trips: [], records: [], fotos: { recibir: [], reenviar: [] }, edited: [], answered: [], events: [], security: [] };
+  const calls: Calls = { sent: [], links: 0, prop: { simular: [], botones: [], libres: [], cancelar: 0, citas: [] }, trips: [], records: [], fotos: { recibir: [], reenviar: [] }, edited: [], answered: [], events: [], security: [] };
   const seen = new Set<string>(opts.seen ?? []);
   const issued = new Set<string>(opts.issued ?? []);
   let counter = 0;
@@ -70,6 +71,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
         return "conv-nueva";
       },
       async boton(b) { calls.prop.botones.push(b); },
+      async botonCita(b) { calls.prop.citas.push(b); },
       async textoLibre(_chatId, texto) { calls.prop.libres.push(texto); return opts.edicion ?? false; },
       async cancelarEdicion() { calls.prop.cancelar++; return opts.edicion ?? false; },
     },
@@ -78,6 +80,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       async viajes(chatId) { calls.trips.push({ k: "viajes", chatId }); },
       async borrarViaje(chatId, texto) { calls.trips.push({ k: "borrar", chatId, texto }); },
     },
+    async calendarioEstado() { return "📅 Calendario de prueba"; },
     records: {
       async real(chatId, texto) { calls.records.push({ k: "real", chatId, texto }); },
       async datos(chatId, texto) { calls.records.push({ k: "datos", chatId, texto }); },
@@ -591,5 +594,42 @@ describe("datos reales de cada servicio: /real y /datos", () => {
     await handleTelegramRequest(SECRET, msg("/start"), admin(ADMIN), deps);
     expect(calls.sent[0].text).toContain("/real");
     expect(calls.sent[0].text).toContain("/datos");
+  });
+});
+
+
+describe("Google Calendar en Telegram", () => {
+  it("los botones «Señal recibida» y «Cancelar cita» pasan al flujo con su nonce y acción", async () => {
+    const { calls, deps } = setup();
+    const nonce = "c".repeat(32);
+    await handleTelegramRequest(SECRET, cb(`c:${nonce}:pay`), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, cb(`c:${nonce}:del`), admin(ADMIN), deps);
+    expect(calls.prop.citas.map((c) => [c.nonce, c.accion, c.fromId, c.messageId])).toEqual([[nonce, "pay", ADMIN, 9], [nonce, "del", ADMIN, 9]]);
+    expect(calls.prop.botones).toEqual([]);
+  });
+
+  it("nadie más puede pulsarlos: se descarta y queda en seguridad", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, cb(`c:${"c".repeat(32)}:pay`, OTHER), admin(ADMIN), deps);
+    expect(calls.prop.citas).toEqual([]);
+    expect(calls.security.map((x) => x.kind)).toEqual(["telegram_no_autorizado"]);
+  });
+
+  it("un botón mal formado no llega al flujo", async () => {
+    const { calls, deps } = setup();
+    for (const data of ["c:xyz:pay", `c:${"c".repeat(32)}:borrar-todo`, `c:${"c".repeat(31)}:pay`, `C:${"c".repeat(32)}:pay`]) {
+      await handleTelegramRequest(SECRET, cb(data), admin(ADMIN), deps);
+    }
+    expect(calls.prop.citas).toEqual([]);
+    expect(calls.security.every((x) => x.kind === "payload_inesperado")).toBe(true);
+  });
+
+  it("/calendario cuenta el estado; un extraño no lo ve", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/calendario"), admin(ADMIN), deps);
+    expect(calls.sent.at(-1)!.text).toBe("📅 Calendario de prueba");
+    const n = calls.sent.length;
+    await handleTelegramRequest(SECRET, msg("/calendario", OTHER), admin(ADMIN), deps);
+    expect(calls.sent.length).toBe(n);
   });
 });

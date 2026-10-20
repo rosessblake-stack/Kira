@@ -1,5 +1,8 @@
 import { euros } from "./panel-rules";
 import { esDiaLibre, fechaLarga, listaDiasLibres, nombreDia, partesEn } from "./agenda";
+import { evaluarHueco, textoChoques, type ResultadoAgenda } from "./agenda-eventos";
+import { eventoDeReserva, type AgendaPort } from "./evento";
+import { idDeEvento } from "./google-calendar";
 import { CONFIG_UBICACION, dinero, separarUbicacion, SIMBOLO, type Moneda, type Ubicacion } from "./ubicacion";
 import type { Estancia } from "./estancias";
 import type { ResumenFoto } from "./fotos";
@@ -32,6 +35,7 @@ import {
   specDesdeClasificacion,
   textoPropuesta,
   contextoDe,
+  horarioDeSpec,
   type Cambio,
   type Propuesta,
   type ResultadoPrecio,
@@ -66,6 +70,8 @@ export type Reserva = {
   telegram_message_id: number | null;
   edit_requested_at: string | null;
   is_test: boolean;
+  /** Evento de Google Calendar de esta reserva (lo guarda Kira al aprobar: solo se borran eventos con este id). */
+  calendar_event_id?: string | null;
   approved_by_telegram_user: number | null;
   approved_at: string | null;
 };
@@ -110,10 +116,12 @@ export interface FlowDeps {
   /** Marca como sospechosos los mensajes entrantes de la conversación (messages.flagged). */
   marcarMensajeSospechoso(conversationId: string): Promise<void>;
   verReservaPorNonce(nonce: string): Promise<Reserva | null>;
-  /** Atómico: si el nonce sigue vigente (y la reserva es una propuesta), lo gasta y devuelve la reserva. */
-  tomarNonce(nonce: string): Promise<Reserva | null>;
+  /** Atómico: si el nonce sigue vigente (y la reserva está en ese estado: por defecto «propuesta»), lo gasta y devuelve la reserva. */
+  tomarNonce(nonce: string, estado?: string): Promise<Reserva | null>;
   reservaEnEdicion(): Promise<Reserva | null>;
 
+  /** El calendario de Blake. Sin él (o sin conectar) la propuesta avisa de que la disponibilidad NO está comprobada. */
+  agenda?: AgendaPort;
   /** Los viajes de Blake a Miami (de qué fecha a qué fecha): la propuesta avisa si la fecha pedida no cuadra. */
   estancias(): Promise<Estancia[]>;
   /** Fotos que siguen guardadas de una conversación (resumen para la propuesta). */
@@ -140,6 +148,8 @@ export interface ProposalPort {
    */
   simular(chatId: number, texto: string, alCrear?: (conversationId: string) => Promise<void>): Promise<string | null>;
   boton(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "ok" | "ed" | "no" }): Promise<void>;
+  /** Botones de una cita ya aprobada con reserva provisional en el calendario: señal recibida / cancelar. */
+  botonCita(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "pay" | "del" }): Promise<void>;
   /** Texto libre del administrador: si hay una edición abierta lo consume y devuelve true. */
   textoLibre(chatId: number, texto: string): Promise<boolean>;
   cancelarEdicion(chatId: number): Promise<boolean>;
@@ -161,7 +171,17 @@ const teclado = (nonce: string, puedeAprobar: boolean) => ({
   ],
 });
 
+const tecladoCita = (nonce: string) => ({
+  inline_keyboard: [
+    [
+      { text: "💜 Señal recibida", callback_data: `c:${nonce}:pay` },
+      { text: "🗑 Cancelar cita", callback_data: `c:${nonce}:del` },
+    ],
+  ],
+});
+
 const msg = (e: unknown) => (e instanceof Error ? e.message : "error desconocido");
+const DIA_MS = 86_400_000;
 
 export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
   // -------------------------------------------------------------------------
@@ -235,7 +255,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     return [
       `👤 ${r.spec?.nombre ?? "sin nombre"}${r.client_email ? ` (${r.client_email})` : ""} · 📍 ${lugar.nombre}`,
       `🧾 ${r.service_description}`,
-      `📅 ${r.starts_at ? fechaLarga(new Date(r.starts_at), lugar.zonaHoraria) : "sin fecha"} · 💶 ${dinero(r.price_cents, lugar.moneda)} (señal ${dinero(r.deposit_cents, lugar.moneda)})`,
+      `📅 ${r.starts_at ? fechaLarga(new Date(r.starts_at), lugar.zonaHoraria) : "sin fecha"}${r.starts_at && r.ends_at ? ` → ${partesEn(new Date(r.ends_at), lugar.zonaHoraria).hora}` : ""} · 💶 ${dinero(r.price_cents, lugar.moneda)} (señal ${dinero(r.deposit_cents, lugar.moneda)})`,
     ].join("\n");
   };
 
@@ -284,13 +304,32 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     }
   }
 
+  /**
+   * Lo que hay en el calendario de Blake para la fecha de la propuesta. Con el calendario conectado pero sin poder leerlo,
+   * devuelve «error»: la propuesta no se puede aprobar (nunca se da por libre un hueco sin mirarlo).
+   */
+  async function agendaPara(spec: SpecGuardada, bookingId: string | null, convId: string | null): Promise<ResultadoAgenda> {
+    if (!deps.agenda) return { estado: "no_conectado" };
+    try {
+      if (!(await deps.agenda.estado()).conectado) return { estado: "no_conectado" };
+      const { inicio, fin } = horarioDeSpec(spec);
+      if (!inicio || !fin) return { estado: "sin_horario" };
+      const eventos = await deps.agenda.eventosEntre(new Date(inicio.getTime() - DIA_MS), new Date(fin.getTime() + DIA_MS));
+      return { estado: "ok", hueco: evaluarHueco(inicio, fin, eventos, contextoDe(spec).zonaHoraria, { excluirBookingId: bookingId }) };
+    } catch (e) {
+      await deps.logEvent({ source: "calendar", kind: "agenda_lectura_fallo", level: "error", summary: msg(e), conversation_id: convId, booking_id: bookingId });
+      return { estado: "error", motivo: msg(e) };
+    }
+  }
+
   async function enviarPropuesta(chatId: number, r: Reserva, prefijo = ""): Promise<void> {
     const spec = r.spec;
     const guardado = resultadoGuardado(r);
     const perfil = r.pricing.perfil ?? (await deps.perfil(contextoDe(spec).ubicacion));
     const fotos = await fotosParaPropuesta(r.conversation_id);
     const estancias = await estanciasParaPropuesta(r.conversation_id);
-    const prop = componerPropuesta(spec, guardado, { ahora: deps.now(), perfil, calendarioConectado: false, fotos, estancias });
+    const agenda = await agendaPara(spec, r.id, r.conversation_id);
+    const prop = componerPropuesta(spec, guardado, { ahora: deps.now(), perfil, agenda, fotos, estancias });
     const nonce = deps.newNonce();
     // Primero el nonce vigente en la base de datos y luego el mensaje: el botón siempre encuentra su registro.
     const actualizada = await deps.actualizarReserva(r.id, {
@@ -307,8 +346,8 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       proposal_nonce: nonce,
       edit_requested_at: null,
     });
-    const texto = `${prefijo}${textoPropuesta(prop, spec, { mensajeCliente: spec.mensaje_cliente, esPrueba: actualizada.is_test, perfil, fotos })}`;
-    const id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada)));
+    const texto = `${prefijo}${textoPropuesta(prop, spec, { mensajeCliente: spec.mensaje_cliente, esPrueba: actualizada.is_test, perfil, fotos, agenda })}`;
+    const id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada) && prop.faltan.length === 0));
     if (id !== null) await deps.actualizarReserva(r.id, { telegram_message_id: id });
   }
 
@@ -450,11 +489,12 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const { resultado, guardado } = await calcularPrecio(spec, perfil, { conversation_id: convId });
     const fotos = await fotosParaPropuesta(convId);
     const estancias = await estanciasParaPropuesta(convId);
-    const prop = componerPropuesta(spec, resultado, { ahora: deps.now(), perfil, calendarioConectado: false, fotos, estancias });
+    const agenda = await agendaPara(spec, null, convId);
+    const prop = componerPropuesta(spec, resultado, { ahora: deps.now(), perfil, agenda, fotos, estancias });
     const nonce = deps.newNonce();
     const reserva = await deps.crearReserva(filaDeReserva(prop, spec, guardado, nonce, convId));
     await deps.actualizarConversacion(convId, { status: "esperando_aprobacion" });
-    const textoTg = textoPropuesta(prop, spec, { mensajeCliente: texto, esPrueba: true, perfil, fotos });
+    const textoTg = textoPropuesta(prop, spec, { mensajeCliente: texto, esPrueba: true, perfil, fotos, agenda });
     // Las fotos llegan primero: así Blake las tiene delante al leer la propuesta (nada si el cliente no mandó ninguna).
     if (fotos?.length) {
       try {
@@ -463,7 +503,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
         await deps.logEvent({ source: "telegram", kind: "foto_envio_fallo", level: "error", summary: msg(e), conversation_id: convId });
       }
     }
-    const id = await deps.enviar(chatId, textoTg, teclado(nonce, aprobable(reserva)));
+    const id = await deps.enviar(chatId, textoTg, teclado(nonce, aprobable(reserva) && prop.faltan.length === 0));
     if (id !== null) await deps.actualizarReserva(reserva.id, { telegram_message_id: id });
     await deps.logEvent({
       source: "telegram",
@@ -478,6 +518,205 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
   // -------------------------------------------------------------------------
   // Botones
   // -------------------------------------------------------------------------
+
+  /**
+   * ¿Hay que pasar por el calendario al aprobar? Si está conectado, sí. Si no se puede ni saber (fallo al leer la conexión),
+   * también: es mejor que el calendario diga que no puede a aprobar sin mirarlo.
+   */
+  async function calendarioActivo(): Promise<boolean> {
+    if (!deps.agenda) return false;
+    try {
+      return (await deps.agenda.estado()).conectado;
+    } catch {
+      return true;
+    }
+  }
+
+  /** Vuelve a mandar la propuesta con botones nuevos (el nonce anterior ya se gastó) y un aviso delante. */
+  async function devolverPropuesta(chatId: number, reservaId: string, aviso: string) {
+    await enviarPropuesta(chatId, await deps.leerReserva(reservaId), aviso);
+  }
+
+  /**
+   * Aprobar con el calendario conectado. Orden pensado para no crear NUNCA una cita encima de otra:
+   *  1. se mira la agenda ahora mismo (lo que se vio al preparar la propuesta pudo cambiar);
+   *  2. se reserva el hueco en la base de datos (segundo cerrojo: bookings_no_overlap);
+   *  3. solo entonces se crea el evento provisional (amarillo). Si algo falla, se deshace y se vuelve a la propuesta.
+   */
+  async function aprobarConCalendario(
+    b: { callbackId: string; chatId: number; fromId: number },
+    r: Reserva,
+    ids: { conversation_id: string | null; booking_id: string },
+    editarMensaje: (t: string) => Promise<void>,
+  ) {
+    const agenda = deps.agenda as AgendaPort;
+    const lugar = contextoDe(r.spec);
+    const marca = r.is_test ? "🧪 PRUEBA · " : "";
+    const inicio = new Date(r.starts_at as string);
+    const fin = new Date(r.ends_at as string);
+    const volver = async (cb: string, aviso: string) => {
+      await deps.responderCallback(b.callbackId, cb);
+      await editarMensaje(`${marca}↩️ No se ha aprobado: te mando la propuesta de nuevo (ver abajo).`);
+      await devolverPropuesta(b.chatId, r.id, aviso);
+    };
+
+    // 1. La agenda, ahora.
+    try {
+      const eventos = await agenda.eventosEntre(new Date(inicio.getTime() - DIA_MS), new Date(fin.getTime() + DIA_MS));
+      const hueco = evaluarHueco(inicio, fin, eventos, lugar.zonaHoraria, { excluirBookingId: r.id });
+      if (hueco.choques.length) {
+        await deps.logEvent({ source: "calendar", kind: "agenda_choque", level: "warn", summary: `Aprobación detenida: ${textoChoques(hueco, lugar.zonaHoraria).join("; ")}`, ...ids });
+        return volver("Ese hueco está ocupado", `⛔ No he aprobado nada ni he creado ningún evento: ${textoChoques(hueco, lugar.zonaHoraria).join("; ")}.\nCambia la fecha o la hora con Editar.\n\n`);
+      }
+    } catch (e) {
+      await deps.logEvent({ source: "calendar", kind: "agenda_lectura_fallo", level: "error", summary: msg(e), ...ids });
+      return volver("No puedo mirar tu agenda", `⚠️ No he aprobado nada: no he podido mirar tu calendario (${msg(e)}). Sin mirarlo no creo ninguna cita.\n\n`);
+    }
+
+    // 2. El hueco, reservado en la base de datos (si otra reserva activa lo ocupa, la base de datos lo rechaza).
+    const eventoId = idDeEvento(r.id);
+    const nonceCita = deps.newNonce();
+    const ahora = deps.now().toISOString();
+    try {
+      await deps.actualizarReserva(r.id, { status: "pendiente_pago", calendar_event_id: eventoId, proposal_nonce: nonceCita, approved_by_telegram_user: b.fromId, approved_at: ahora });
+    } catch (e) {
+      await deps.logEvent({ source: "system", kind: "reserva_hueco_fallo", level: "error", summary: msg(e), ...ids });
+      return volver("No se pudo reservar el hueco", `⛔ No he aprobado nada: la base de datos no deja reservar ese hueco (${msg(e)}).\n\n`);
+    }
+
+    // 3. El evento provisional.
+    try {
+      await agenda.crearProvisional(eventoDeReserva({ ...r, status: "pendiente_pago" }));
+    } catch (e) {
+      await deps.logEvent({ source: "calendar", kind: "evento_provisional_fallo", level: "error", summary: msg(e), ...ids });
+      try {
+        await deps.actualizarReserva(r.id, { status: "propuesta", calendar_event_id: null, proposal_nonce: null, approved_by_telegram_user: null, approved_at: null });
+      } catch (e2) {
+        await deps.logEvent({ source: "system", kind: "reserva_deshacer_fallo", level: "error", summary: msg(e2), ...ids });
+        await deps.responderCallback(b.callbackId, "Algo falló");
+        await deps.enviar(b.chatId, `⚠️ No se pudo crear el evento y además no pude deshacer la reserva (${msg(e2)}). Mírala en Fallos del panel antes de seguir.`);
+        return;
+      }
+      return volver("No se pudo crear el evento", `⚠️ No he aprobado nada: Google Calendar no me ha dejado crear el evento (${msg(e)}).\n\n`);
+    }
+
+    // 4. Hecho.
+    if (r.conversation_id) await deps.actualizarConversacion(r.conversation_id, { status: "esperando_cliente" });
+    try {
+      await deps.guardarRegistro({ ...r, status: "pendiente_pago" });
+    } catch (e) {
+      await deps.logEvent({ source: "system", kind: "registro_servicio_fallo", level: "error", summary: msg(e), ...ids });
+    }
+    await deps.responderCallback(b.callbackId, "✅ Aprobada · evento creado");
+    await editarMensaje(`${marca}✅ APROBADA\n\n${resumenDecision(r)}\n\nReserva provisional creada en tu calendario (ver abajo).`);
+    await deps.logEvent({ source: "telegram", kind: "propuesta_aprobada", summary: "Propuesta aprobada por Blake", detail: { precio_centimos: r.price_cents }, ...ids });
+    await deps.logEvent({ source: "calendar", kind: "evento_provisional_creado", summary: "Evento provisional (amarillo) creado en Google Calendar", ...ids });
+    await deps.logEvent({ source: "system", kind: "respuesta_lista_sin_enviar", summary: "Respuesta aprobada pero sin enviar: el canal de Instagram no está conectado", ...ids });
+    const id = await deps.enviar(b.chatId, textoProvisional(r), tecladoCita(nonceCita));
+    if (id !== null) await deps.actualizarReserva(r.id, { telegram_message_id: id });
+  }
+
+  const textoProvisional = (r: Reserva, aviso = "") => {
+    const lugar = contextoDe(r.spec);
+    const email = r.client_email
+      ? ` y se añade el email de la clienta (${r.client_email})${r.is_test ? "; en las pruebas solo si es el de tu propia cuenta de Google" : ""}`
+      : "";
+    return [
+      `${r.is_test ? "🧪 PRUEBA · " : ""}📅 RESERVA PROVISIONAL (amarilla)`,
+      aviso ? `\n${aviso}` : "",
+      "",
+      resumenDecision(r),
+      `📍 Dirección: ${r.spec.direccion ?? "sin indicar"} · 🌍 ${lugar.nombre}`,
+      "",
+      `Cuando recibas la señal (Bizum o Stripe), pulsa «Señal recibida»: el evento pasa a morado${email}.`,
+      "Si la cita no va a ser, pulsa «Cancelar cita»: borro el evento.",
+      "",
+      "No se ha enviado nada al cliente (el canal de Instagram no está conectado).",
+    ].filter((x, i) => !(x === "" && i === 1)).join("\n");
+  };
+
+  /** Botones de una cita con reserva provisional: señal recibida / cancelar. Un solo uso cada vez; si algo falla, se vuelven a ofrecer. */
+  async function botonCita(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "pay" | "del" }) {
+    const r = await deps.verReservaPorNonce(b.nonce);
+    if (!r || r.status !== "pendiente_pago") {
+      await deps.responderCallback(b.callbackId, "Ya procesado");
+      return;
+    }
+    if (!(await deps.tomarNonce(b.nonce, "pendiente_pago"))) {
+      await deps.responderCallback(b.callbackId, "Ya procesado");
+      return;
+    }
+    const ids = { conversation_id: r.conversation_id, booking_id: r.id };
+    const marca = r.is_test ? "🧪 PRUEBA · " : "";
+    const editarMensaje = async (texto: string) => {
+      if (b.messageId === null) return;
+      try {
+        await deps.editar(b.chatId, b.messageId, texto);
+      } catch (e) {
+        await deps.logEvent({ source: "telegram", kind: "editar_mensaje_fallo", level: "warn", summary: msg(e), ...ids });
+      }
+    };
+    /** Algo falló: el botón se había gastado, así que se ofrece uno nuevo con el motivo. Nada queda sin salida. */
+    const reofrecer = async (cb: string, aviso: string) => {
+      await deps.responderCallback(b.callbackId, cb);
+      const nuevo = deps.newNonce();
+      try {
+        const fresca = await deps.actualizarReserva(r.id, { proposal_nonce: nuevo });
+        await editarMensaje(`${marca}↩️ No se ha podido: te vuelvo a ofrecer los botones (ver abajo).`);
+        const id = await deps.enviar(b.chatId, textoProvisional(fresca, `⚠️ ${aviso}`), tecladoCita(nuevo));
+        if (id !== null) await deps.actualizarReserva(r.id, { telegram_message_id: id });
+      } catch (e) {
+        await deps.logEvent({ source: "system", kind: "botones_cita_fallo", level: "error", summary: msg(e), ...ids });
+        await deps.enviar(b.chatId, `⚠️ ${aviso}\nY no he podido volver a ofrecerte los botones (${msg(e)}). Mira la reserva en Fallos del panel.`);
+      }
+    };
+
+    const eventoId = r.calendar_event_id;
+    if (!eventoId || !deps.agenda) {
+      await deps.logEvent({ source: "calendar", kind: "evento_sin_id", level: "error", summary: "La reserva no tiene evento guardado o el calendario no está disponible", ...ids });
+      return reofrecer("No encuentro el evento", "No encuentro el evento de esta reserva en el calendario.");
+    }
+
+    if (b.accion === "pay") {
+      let invitado = false;
+      try {
+        ({ invitado } = await deps.agenda.pasarAPagada(eventoId, r.id, { email: r.client_email, esPrueba: r.is_test }));
+      } catch (e) {
+        await deps.logEvent({ source: "calendar", kind: "evento_pagado_fallo", level: "error", summary: msg(e), ...ids });
+        return reofrecer("No se pudo actualizar el evento", `No he podido pasar el evento a morado (${msg(e)}). Sigue amarillo; inténtalo otra vez.`);
+      }
+      try {
+        await deps.actualizarReserva(r.id, { status: "pagada" });
+      } catch (e) {
+        await deps.logEvent({ source: "system", kind: "reserva_pagada_fallo", level: "error", summary: msg(e), ...ids });
+        return reofrecer("No se pudo guardar", `El evento ya está morado, pero no he podido guardar el pago (${msg(e)}). Pulsa otra vez.`);
+      }
+      await deps.responderCallback(b.callbackId, "💜 Señal recibida");
+      await editarMensaje(`${marca}💜 SEÑAL RECIBIDA · RESERVA CONFIRMADA\n\n${resumenDecision(r)}\n\nEl evento está en morado en tu calendario${invitado ? ` y he invitado a ${r.client_email} (Google le envía la invitación)` : r.client_email ? ` (no he invitado a ${r.client_email}${r.is_test ? ": es una prueba y no es tu cuenta" : ""})` : " (no tengo su email, así que no hay invitación)"}.`);
+      await deps.logEvent({ source: "telegram", kind: "senal_confirmada_por_blake", summary: "Blake confirmó la señal: reserva pagada", detail: { invitado }, ...ids });
+      await deps.logEvent({ source: "calendar", kind: "evento_pagado", summary: `Evento pasado a morado${invitado ? " e invitada la clienta" : ""}`, ...ids });
+      return;
+    }
+
+    // Cancelar: borra el evento que creó Kira para esta reserva (nada más) y cierra la reserva.
+    try {
+      await deps.agenda.borrar(eventoId, r.id);
+    } catch (e) {
+      await deps.logEvent({ source: "calendar", kind: "evento_borrado_fallo", level: "error", summary: msg(e), ...ids });
+      return reofrecer("No se pudo borrar el evento", `No he podido borrar el evento (${msg(e)}). Sigue en tu calendario; inténtalo otra vez.`);
+    }
+    try {
+      await deps.actualizarReserva(r.id, { status: "cancelada" });
+    } catch (e) {
+      await deps.logEvent({ source: "system", kind: "reserva_cancelada_fallo", level: "error", summary: msg(e), ...ids });
+      return reofrecer("No se pudo guardar", `El evento ya está borrado, pero no he podido cerrar la reserva (${msg(e)}). Pulsa otra vez.`);
+    }
+    if (r.conversation_id) await deps.actualizarConversacion(r.conversation_id, { status: "cerrada" });
+    await deps.responderCallback(b.callbackId, "🗑 Cita cancelada");
+    await editarMensaje(`${marca}🗑 CITA CANCELADA\n\n${resumenDecision(r)}\n\nHe borrado el evento de tu calendario. No se envía nada al cliente.`);
+    await deps.logEvent({ source: "telegram", kind: "cita_cancelada_por_blake", summary: "Blake canceló la cita: evento borrado", ...ids });
+    await deps.logEvent({ source: "calendar", kind: "evento_borrado", summary: "Evento provisional borrado del calendario", ...ids });
+  }
 
   async function boton(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "ok" | "ed" | "no" }) {
     const r = await deps.verReservaPorNonce(b.nonce);
@@ -505,6 +744,11 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
         await deps.logEvent({ source: "telegram", kind: "editar_mensaje_fallo", level: "warn", summary: msg(e), ...ids });
       }
     };
+
+    if (b.accion === "ok" && (await calendarioActivo())) {
+      await aprobarConCalendario(b, r, ids, editarMensaje);
+      return;
+    }
 
     if (b.accion === "ok") {
       await deps.actualizarReserva(r.id, { status: "aprobada", approved_by_telegram_user: b.fromId, approved_at: deps.now().toISOString() });
@@ -602,5 +846,5 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     return true;
   }
 
-  return { simular, boton, textoLibre, cancelarEdicion };
+  return { simular, boton, botonCita, textoLibre, cancelarEdicion };
 }

@@ -3,6 +3,9 @@ import { NextResponse } from "next/server";
 import { handleTelegramRequest, type Config, type Deps } from "../../../lib/telegram-handler";
 import { clasificarConClaude } from "../../../lib/claude";
 import { leerEstancias, guardarEstancias } from "../../../lib/estancias-store";
+import { crearAgendaGoogle } from "../../../lib/google-agenda";
+import { textoEstadoCalendario } from "../../../lib/google-estado";
+import { configGoogle } from "../../../lib/google-oauth";
 import * as fotoStore from "../../../lib/foto-store";
 import { crearFlujoFotos, resumenDeFotos, type PhotoDeps, type PhotoPort } from "../../../lib/photo-flow";
 import { leerBasico } from "../../../lib/lectura-basica";
@@ -58,6 +61,7 @@ function makePhotoDeps(): PhotoDeps {
 
 function makeFlowDeps(photos: PhotoPort): FlowDeps {
   return {
+    agenda: crearAgendaGoogle(),
     now: () => new Date(),
     newNonce: () => randomUUID().replace(/-/g, ""),
     clasificar: clasificarConClaude,
@@ -109,6 +113,15 @@ function makeDeps(host: string | null): Deps {
       return `https://${host}/panel/entrar?t=${token}`;
     },
     proposals: crearFlujoPropuestas(makeFlowDeps(photos)),
+    async calendarioEstado() {
+      const configurado = configGoogle() !== null;
+      try {
+        const st = configurado ? await crearAgendaGoogle().estado() : { conectado: false, cuenta: null };
+        return textoEstadoCalendario({ configurado, ...st });
+      } catch {
+        return "📅 No he podido leer el estado del calendario ahora mismo. Prueba otra vez en un momento.";
+      }
+    },
     photos,
     records: crearFlujoRegistro({
       now: () => new Date(),

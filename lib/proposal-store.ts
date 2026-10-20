@@ -71,12 +71,12 @@ export async function verReservaPorNonce(nonce: string): Promise<Reserva | null>
  * Gasta el nonce de forma atómica: un solo UPDATE con las condiciones dentro. Si dos pulsaciones llegan a la vez,
  * solo una devuelve fila; la otra recibe null.
  */
-export async function tomarNonce(nonce: string): Promise<Reserva | null> {
+export async function tomarNonce(nonce: string, estado = "propuesta"): Promise<Reserva | null> {
   const { data, error } = await getDb()
     .from("bookings")
     .update({ proposal_nonce: null })
     .eq("proposal_nonce", nonce)
-    .eq("status", "propuesta")
+    .eq("status", estado)
     .select("*");
   ok("No se pudo gastar el botón", error);
   const filas = (data as Reserva[] | null) ?? [];
