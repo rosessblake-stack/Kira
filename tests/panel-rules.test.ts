@@ -94,9 +94,19 @@ describe("problemasDeReservas", () => {
     expect(problemasDeReservas([reserva({ status: "pendiente_pago", payment_deadline: hacia(1) })], AHORA)).toEqual([]);
   });
 
-  it("pendiente de pago sin plazo es un error: nunca expiraría", () => {
-    const [p] = problemasDeReservas([reserva({ status: "pendiente_pago", payment_deadline: null })], AHORA);
+  it("pendiente de pago sin plazo y sin evento es un error: nunca expiraría", () => {
+    const [p] = problemasDeReservas([reserva({ status: "pendiente_pago", payment_deadline: null, calendar_event_id: null })], AHORA);
     expect(p.gravedad).toBe("error");
+  });
+
+  it("reserva provisional (con evento y sin plazo): tras 1 h sin pulsar «Señal recibida» o «Cancelar cita» es un aviso, no un error", () => {
+    const antes = problemasDeReservas([reserva({ status: "pendiente_pago", payment_deadline: null, calendar_event_id: "kira1", approved_at: hacia(30) })], AHORA);
+    expect(antes).toEqual([]);
+    const [p] = problemasDeReservas([reserva({ status: "pendiente_pago", payment_deadline: null, calendar_event_id: "kira1", approved_at: hacia(90) })], AHORA);
+    expect(p.gravedad).toBe("aviso");
+    expect(p.titulo).toBe("Reserva provisional sin señal confirmada");
+    expect(p.detalle).toContain("Señal recibida");
+    expect(p.detalle).toContain("Cancelar cita");
   });
 
   it("pagada sin evento de calendario es un error", () => {

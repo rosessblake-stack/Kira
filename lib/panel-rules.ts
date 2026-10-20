@@ -13,6 +13,8 @@ export const UMBRALES = {
   pagoVencidoMargenMin: 2,
   /** Aprobada pero sin enlace de pago pasado este tiempo. */
   aprobadaSinEnlaceMin: 5,
+  /** Reserva provisional en el calendario esperando que Blake pulse «Señal recibida» o «Cancelar cita». */
+  provisionalSinSenalMin: 60,
   /** Igual que claim_due_jobs(): una tarea en curso más de 5 min se da por atascada. */
   tareaAtascadaMin: 5,
   /** Tarea pendiente cuya hora pasó hace más de esto: el cron no está corriendo. */
@@ -182,7 +184,21 @@ export function problemasDeReservas(rows: ReservaRow[], ahora: Date): Problema[]
         });
       }
     } else if (r.status === "pendiente_pago") {
-      if (!r.payment_deadline) {
+      if (!r.payment_deadline && r.calendar_event_id) {
+        // Reserva provisional creada por Aprobar: no tiene plazo (aún no hay temporizador); espera tu botón.
+        const desde = r.approved_at ?? r.created_at;
+        const min = minutosDesde(desde, ahora);
+        if (min > UMBRALES.provisionalSinSenalMin) {
+          out.push({
+            ...base,
+            clave: `reserva:${r.id}:provisional`,
+            gravedad: "aviso",
+            titulo: "Reserva provisional sin señal confirmada",
+            detalle: `${prueba}La reserva de ${r.client_name} lleva ${duracion(min)} en amarillo en tu calendario. Pulsa «Señal recibida» si ya pagó o «Cancelar cita» para liberar el hueco.`,
+            desde,
+          });
+        }
+      } else if (!r.payment_deadline) {
         out.push({
           ...base,
           clave: `reserva:${r.id}:sin_plazo`,

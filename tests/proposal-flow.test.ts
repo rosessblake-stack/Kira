@@ -1314,6 +1314,7 @@ describe("calendario conectado: Aprobar crea la reserva provisional", () => {
     expect(m.reserva()).toMatchObject({ status: "propuesta", approved_by_telegram_user: null, approved_at: null });
     expect(m.reserva().calendar_event_id ?? null).toBeNull();
     expect(m.ultimo().texto).toContain("Google Calendar no me ha dejado crear el evento");
+    expect(m.w.cal.borrados).toEqual(["kirares1"]); // por si Google lo había creado y se perdió la respuesta, se intenta limpiar
     expect(m.botones()).toContain("✅ Aprobar"); // se puede reintentar
     expect(m.tipos()).toContain("evento_provisional_fallo");
     expect(m.w.registros).toHaveLength(0);

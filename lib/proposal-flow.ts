@@ -589,6 +589,8 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       await agenda.crearProvisional(eventoDeReserva({ ...r, status: "pendiente_pago" }));
     } catch (e) {
       await deps.logEvent({ source: "calendar", kind: "evento_provisional_fallo", level: "error", summary: msg(e), ...ids });
+      // Si Google llegó a crearlo pero la respuesta se perdió, no se deja un evento huérfano (solo borra uno con la marca de esta reserva).
+      await agenda.borrar(eventoId, r.id).catch(() => undefined);
       try {
         await deps.actualizarReserva(r.id, { status: "propuesta", calendar_event_id: null, proposal_nonce: null, approved_by_telegram_user: null, approved_at: null });
       } catch (e2) {
