@@ -78,6 +78,7 @@ function primero(m: Map<string, string>, claves: string[]): string | null {
   return null;
 }
 
+const texto_ = (v: string | null, max: number) => (v ? limpiarTexto(v, max) || null : null);
 const texto = (v: string | null, max: number) => (v ? limpiarTexto(v, max) || null : null);
 
 function url(v: string | null): string | null {
@@ -161,4 +162,21 @@ export function leerSolicitud(raw: unknown): ResultadoEntrada {
     fechaTexto: texto(primero(m, ["fechatexto"]), 200),
   };
   return { ok: true, solicitud: { ...base, texto: componerMensaje(base) } };
+}
+
+// ---------------------------------------------------------------------------
+// Lo que la clienta escribe DESPUÉS del flujo («vale», «confirmado»…), reenviado por ManyChat
+// ---------------------------------------------------------------------------
+
+export type RespuestaManychat = { contactoId: string; texto: string };
+
+/** El cuerpo de /api/manychat/respuesta: el id del contacto y lo que acaba de escribir. */
+export function leerRespuesta(raw: unknown): { ok: true; respuesta: RespuestaManychat } | { ok: false; motivo: string } {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, motivo: "cuerpo_no_es_objeto" };
+  const m = aplanar(raw);
+  const id = primero(m, ["id", "subscriberid", "contactid", "userid", "igid"]);
+  if (!id || !ID_RE.test(id)) return { ok: false, motivo: "sin_id_de_contacto" };
+  const texto = texto_(primero(m, ["texto", "lastinputtext", "mensaje", "message", "text"]), 600);
+  if (!texto) return { ok: false, motivo: "sin_texto" };
+  return { ok: true, respuesta: { contactoId: id, texto } };
 }

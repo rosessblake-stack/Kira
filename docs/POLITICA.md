@@ -78,6 +78,6 @@ Todo lo demás que escriba la clienta (preguntas, regateos, dudas) se te reenví
 ## 8. Modo sombra: la entrada de ManyChat (20-oct)
 
 - Cuando la clienta termina el flujo «cita / agendar», ManyChat manda a Kira todo de una vez (`POST /api/manychat`, `docs/FLUJO_MANYCHAT.md`). Kira baja las dos fotos, las lee, calcula el precio con Legacy y te manda a Telegram las fotos y la propuesta «📥 SOLICITUD DE INSTAGRAM».
-- **Kira NO escribe a la clienta** por Instagram (el envío no existe): tú le contestas como siempre. Al pulsar Aprobar se reserva el hueco en amarillo y Kira te avisa de que le escribas tú el precio y, cuando pague, pulses «Señal recibida».
+- **Por defecto Kira NO escribe a la clienta** por Instagram: tú le contestas como siempre. Con **`/responder on`** (decisión de Blake, 20-oct) Kira le escribe por la API de ManyChat, y **solo** las plantillas de §4 bis (precio tras tu Aprobar, Bizum tras su «vale», confirmación tras su «confirmado»); nunca texto de Claude. `/responder off` vuelve al modo sombra. Al pulsar Aprobar se reserva el hueco en amarillo y Kira te avisa de que le escribas tú el precio y, cuando pague, pulses «Señal recibida».
 - Una solicitud real **nunca** se lee con la lectura básica por reglas: sin clave de Claude, o si Claude falla, se te deriva.
 - Mismos filtros que cualquier mensaje: pausa, señales de manipulación, límite de solicitudes por clienta y hora, tope diario de llamadas a Claude (la lectura de fotos también cuenta).

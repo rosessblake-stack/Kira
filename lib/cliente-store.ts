@@ -87,3 +87,10 @@ export async function guardarBizum(numero: string): Promise<void> {
   const { error } = await getDb().from("app_settings").upsert({ key: CLAVE_BIZUM, value: numero, updated_at: new Date().toISOString(), updated_by: "telegram" });
   ok("No se pudo guardar el Bizum", error);
 }
+
+/** La conversación de Instagram de un contacto de ManyChat (null si nunca ha mandado una solicitud). */
+export async function conversacionDeInstagram(contactoId: string): Promise<string | null> {
+  const { data, error } = await getDb().from("conversations").select("id").eq("channel", "instagram").eq("contact_ref", contactoId).maybeSingle();
+  ok("No se pudo buscar la conversación", error);
+  return (data as { id: string } | null)?.id ?? null;
+}

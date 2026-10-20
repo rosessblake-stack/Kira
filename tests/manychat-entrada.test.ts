@@ -134,3 +134,24 @@ describe("el mensaje compuesto para el clasificador", () => {
     expect(largoComoTexto("otra cosa")).toBe("otra cosa");
   });
 });
+
+import { leerRespuesta } from "../lib/manychat-entrada";
+
+describe("leerRespuesta: lo que la clienta escribe después del flujo", () => {
+  it("el id y el texto, con el nombre que use ManyChat", () => {
+    expect(leerRespuesta({ id: "123", texto: "vale" })).toEqual({ ok: true, respuesta: { contactoId: "123", texto: "vale" } });
+    expect(leerRespuesta({ id: "123", last_input_text: "confirmado" })).toEqual({ ok: true, respuesta: { contactoId: "123", texto: "confirmado" } });
+  });
+  it("sin id, con un id raro o sin texto se rechaza", () => {
+    expect(leerRespuesta({ texto: "vale" }).ok).toBe(false);
+    expect(leerRespuesta({ id: "a b", texto: "vale" }).ok).toBe(false);
+    expect(leerRespuesta({ id: "123", texto: "   " }).ok).toBe(false);
+    expect(leerRespuesta({ id: "123", texto: "{{last_input_text}}" }).ok).toBe(false);
+    expect(leerRespuesta("hola").ok).toBe(false);
+  });
+  it("el texto se limpia y se recorta", () => {
+    const r = leerRespuesta({ id: "1", texto: "vale\u0000\n" + "x".repeat(900) });
+    expect(r.ok && r.respuesta.texto.length).toBeLessThanOrEqual(600);
+    expect(r.ok && r.respuesta.texto).not.toMatch(/[\u0000-\u001f]/);
+  });
+});

@@ -1,6 +1,7 @@
 /**
- * Cliente mínimo de la API de ManyChat (solo servidor, sin SDK). De momento SOLO LECTURA: comprobar la clave y ver los flujos,
- * etiquetas y campos de la cuenta. No envía mensajes ni modifica nada (eso llegará aparte y con su propia revisión).
+ * Cliente mínimo de la API de ManyChat (solo servidor, sin SDK). Lee (comprobar la clave, ver flujos, etiquetas y campos) y, desde
+ * que Blake activa «/responder on», envía UN tipo de cosa: un mensaje de texto de Instagram a un contacto (`enviarTexto`). El texto
+ * siempre sale de las plantillas de lib/clienta.ts con datos ya validados; nunca de Claude. Nada más se modifica en la cuenta.
  *
  * La clave (MANYCHAT_API_KEY) da control total sobre la cuenta de ManyChat: solo se lee aquí, nunca se registra, nunca se
  * devuelve y los errores no llevan ni la clave ni el cuerpo crudo de la respuesta.
@@ -16,7 +17,7 @@ export class ManychatError extends Error {
   }
 }
 
-export type FetchManychat = (url: string, init: { method: string; headers: Record<string, string>; signal: AbortSignal }) => Promise<{ status: number; text(): Promise<string> }>;
+export type FetchManychat = (url: string, init: { method: string; headers: Record<string, string>; signal: AbortSignal; body?: string }) => Promise<{ status: number; text(): Promise<string> }>;
 
 const BASE_POR_DEFECTO = "https://api.manychat.com";
 const TIMEOUT_MS = 10_000;
@@ -37,11 +38,16 @@ export type CampoManychat = { nombre: string; tipo: string };
 const txt = (v: unknown, max = 80) => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, max) : "");
 
 export function crearClienteManychat(clave: string, fetchImpl: FetchManychat = fetch as unknown as FetchManychat) {
-  async function pedir(ruta: string): Promise<unknown> {
+  async function pedir(ruta: string, envio?: { cuerpo: unknown }): Promise<unknown> {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), TIMEOUT_MS);
     try {
-      const res = await fetchImpl(`${baseManychat()}${ruta}`, { method: "GET", headers: { authorization: `Bearer ${clave}`, accept: "application/json" }, signal: ctl.signal });
+      const res = await fetchImpl(`${baseManychat()}${ruta}`, {
+        method: envio ? "POST" : "GET",
+        headers: { authorization: `Bearer ${clave}`, accept: "application/json", ...(envio ? { "content-type": "application/json" } : {}) },
+        signal: ctl.signal,
+        ...(envio ? { body: JSON.stringify(envio.cuerpo) } : {}),
+      });
       const cuerpo = await res.text();
       let json: Record<string, unknown> = {};
       try {
@@ -83,6 +89,18 @@ export function crearClienteManychat(clave: string, fetchImpl: FetchManychat = f
     async etiquetas(): Promise<string[]> {
       const d = (await pedir("/fb/page/getTags")) as unknown;
       return (Array.isArray(d) ? d : []).map((t) => txt((t as Record<string, unknown>)?.name)).filter(Boolean);
+    },
+    /**
+     * Mensaje de texto de Instagram a un contacto. Solo dentro de la ventana de 24 h de Instagram (la comprueba quien llama): fuera de
+     * ella ManyChat lo rechaza y aquí se convierte en un error legible. El id es el del contacto en ManyChat.
+     */
+    async enviarTexto(contactoId: string, texto: string): Promise<void> {
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(contactoId)) throw new ManychatError("El id del contacto de ManyChat no es válido");
+      const limpio = texto.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").trim();
+      if (!limpio || limpio.length > 1900) throw new ManychatError("El mensaje para la clienta está vacío o es demasiado largo");
+      await pedir("/fb/sending/sendContent", {
+        cuerpo: { subscriber_id: contactoId, data: { version: "v2", content: { type: "instagram", messages: [{ type: "text", text: limpio }] } } },
+      });
     },
     async campos(): Promise<CampoManychat[]> {
       const d = (await pedir("/fb/page/getCustomFields")) as unknown;

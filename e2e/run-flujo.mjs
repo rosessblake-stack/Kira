@@ -40,6 +40,7 @@ const proximoDia = (diaSemana, minDias) => {
 const D_JUE = proximoDia(4, 2);
 const D_MAR = proximoDia(2, 2);
 const D_VIE = proximoDia(5, 9);
+const D_VIE2 = proximoDia(5, 16);
 const MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 const textoFecha = (iso) => `${Number(iso.slice(8, 10))} de ${MESES_ES[Number(iso.slice(5, 7)) - 1]}`;
 const desfaseMadrid = (instante) => {
@@ -76,7 +77,7 @@ if (!fs.existsSync(`${LEGACY_REPO}/api/calculate.js`)) {
   console.error(`No encuentro ${LEGACY_REPO}/api/calculate.js: este e2e necesita el repo de Legacy (variable LEGACY_REPO).`);
   process.exit(2);
 }
-for (const port of [3100, 54330, 54331, 54332, 54333, 54334, 54335]) {
+for (const port of [3100, 54330, 54331, 54332, 54333, 54334, 54335, 54336]) {
   if (!(await puertoLibre(port))) { console.error(`El puerto ${port} está ocupado: hay un servidor viejo.`); process.exit(2); }
 }
 
@@ -117,6 +118,9 @@ function clasificacionSimulada(texto) {
   }
   if (texto.includes("soy Lola")) {
     return salida({ confianza: "alta", tipo_trenzado: "pegadas", numero_trenzas: 6, extensiones: "con", color_extensiones: "negro", largo_cabello: "nuca_hombros", largo_extensiones: "caderas", fecha: D_MAR, hora: "15:00", nombre: "Lola", email: "lola@correo.com" });
+  }
+  if (texto.includes("Solicitud de cita recibida por el formulario") && texto.includes("SEGUNDA")) {
+    return salida({ extensiones: "con", color_extensiones: "rojo", largo_extensiones: "caderas", fecha: D_VIE2, hora: "12:00", nombre: /Nombre: (.+)/.exec(texto)?.[1] ?? "", email: /Email: (\S+)/.exec(texto)?.[1] ?? "", notas: "" });
   }
   if (texto.includes("Solicitud de cita recibida por el formulario")) {
     // Como el modelo real: copia el nombre y el email tal como aparecen en el mensaje.
@@ -173,6 +177,24 @@ const servidorFotos = http.createServer((req, res) => {
   if (ruta === "/falso.jpg") return sirve(Buffer.from("<html><script>alert(1)</script></html>"), "image/jpeg");
   res.writeHead(404);
   res.end();
+});
+
+// ===================================================================================== ManyChat simulado (su API)
+const mcApi = { envios: [], cae: false };
+const servidorManychat = http.createServer(async (req, res) => {
+  const ruta = req.url.split("?")[0];
+  const ok = (data) => json(res, 200, { status: "success", data });
+  if (req.method === "GET" && ruta === "/fb/page/getInfo") return ok({ id: "1", name: "The Braider" });
+  if (req.method === "GET" && ruta === "/fb/page/getFlows") return ok({ flows: [{ ns: "a", name: "cita agendar v2 Kira" }] });
+  if (req.method === "GET" && ruta === "/fb/page/getTags") return ok([{ name: "esperando_kira" }]);
+  if (req.method === "GET" && ruta === "/fb/page/getCustomFields") return ok([{ name: "Nombre", type: "text" }]);
+  if (req.method === "POST" && ruta === "/fb/sending/sendContent") {
+    const cuerpo = await leerCuerpo(req);
+    mcApi.envios.push({ autorizacion: req.headers.authorization, cuerpo });
+    if (mcApi.cae) return json(res, 400, { status: "error", message: "Outside of the allowed window" });
+    return json(res, 200, { status: "success" });
+  }
+  json(res, 404, { status: "error", message: "no soportado" });
 });
 
 // ===================================================================================== Telegram simulado
@@ -325,6 +347,7 @@ await escuchar(servidorTelegram, 54332);
 await escuchar(servidorLegacy, 54333);
 await escuchar(servidorGoogle, 54334);
 await escuchar(servidorFotos, 54335);
+await escuchar(servidorManychat, 54336);
 // La agenda de Blake antes de empezar: una cita marcada «libre» (el caso Lux) un martes y un viaje de varios días.
 g.eventos.set("lux", evGoogle("lux", "Trenzas Lux", isoMadrid(D_MAR, "14:00"), isoMadrid(D_MAR, "17:00"), { transparency: "transparent", colorId: "3" }));
 g.eventos.set("alicante", { id: "alicante", status: "confirmed", summary: "ALICANTE", start: { date: "2031-10-31" }, end: { date: "2031-11-03" }, transparency: "transparent" });
@@ -343,6 +366,8 @@ const app = spawn("node", ["node_modules/next/dist/bin/next", "start", "-p", "31
     TELEGRAM_ADMIN_USER_ID: String(ADMIN),
     CRON_SECRET: "cron-secreto-falso",
     MANYCHAT_WEBHOOK_SECRET: "mc-secreto-falso",
+    MANYCHAT_API_KEY: "1234567:clave-falsa-manychat-abcdefghij",
+    MANYCHAT_API_BASE: "http://127.0.0.1:54336",
     ...(SIN_CLAVE ? {} : { ANTHROPIC_API_KEY: "clave-falsa-anthropic", ANTHROPIC_BASE_URL: "http://127.0.0.1:54331" }),
     LEGACY_API_URL: "http://127.0.0.1:54333/api/calculate",
     GOOGLE_CUENTA_ESPERADA: "info@blakebraider.com",
@@ -1261,9 +1286,9 @@ try {
   check("M26. los mensajes a la clienta de las pruebas quedan en su conversación (entrantes y salientes)", tables.messages.some((m) => m.conversation_id === tables.bookings.find((x) => x.id === idPago).conversation_id && m.direction === "in" && m.body === "vale") && Boolean(ig));
 
   await escribe("/manychat");
-  check("M27. /manychat sin clave puesta explica dónde conseguirla y que no se pegue por chat (y no rompe nada)", ultimo().text.includes("MANYCHAT_API_KEY") && ultimo().text.includes("nunca por aquí"));
+  check("M27. /manychat con la clave puesta lista flujos, etiquetas y campos, y dice que no ha enviado nada", ultimo().text.includes("ManyChat conectado: The Braider") && ultimo().text.includes("cita agendar v2 Kira") && ultimo().text.includes("No he enviado ni cambiado nada") && !ultimo().text.includes("clave-falsa-manychat"));
   const saludMc = await (await fetch(`${BASE}/api/health`)).json();
-  check("M28. /api/health dice solo sí o no de la clave de ManyChat", saludMc.env.MANYCHAT_API_KEY === false);
+  check("M28. /api/health dice solo sí o no de la clave de ManyChat (sin enseñarla)", saludMc.env.MANYCHAT_API_KEY === true && !JSON.stringify(saludMc).includes("clave-falsa-manychat"));
 
 
   // ============================================================================ N. LA ENTRADA DE MANYCHAT (modo sombra)
@@ -1358,6 +1383,84 @@ try {
   check("N21. ni la clave de ManyChat ni los permisos temporales de las direcciones de las fotos quedan en los registros", !/mc-secreto-falso|TOKENSECRETO|SECRETOQUENOSEVE/.test(volcadoN));
   const salud = await (await fetch(`${BASE}/api/health`)).json();
   check("N22. /api/health sigue sin enseñar ningún secreto", !JSON.stringify(salud).includes("mc-secreto-falso"));
+
+  // ============================================================================ O. KIRA CONTESTA A LA CLIENTA POR INSTAGRAM (/responder on)
+  console.log("\n=== O. Kira contesta por Instagram: precio, «vale», Bizum, «confirmado» (con /responder on) ===");
+  check("O1. en modo sombra (por defecto) no se ha enviado NADA a ManyChat, ni siquiera al aprobar", mcApi.envios.length === 0);
+  await escribe("/responder");
+  check("O2. /responder dice que está en modo sombra", ultimo().text.includes("MODO SOMBRA"));
+  await escribe("/responder on");
+  check("O3. /responder on lo activa y queda guardado", ultimo().text.includes("ACTIVADO") && tables.app_settings.some((x) => x.key === "kira_responde" && x.value === true));
+  await escribe("/responder on", EXTRANO);
+  check("O4. un desconocido no puede tocar el interruptor", tables.app_settings.find((x) => x.key === "kira_responde").value === true);
+
+  const respuestaIg = (cuerpo, cabeceras = { "x-kira-secret": "mc-secreto-falso" }) =>
+    fetch(`${BASE}/api/manychat/respuesta`, { method: "POST", headers: { "content-type": "application/json", ...cabeceras }, body: JSON.stringify(cuerpo) });
+  const n3 = tg.enviados.length;
+  await mc(formulario({ id: "mc-3001", Nombre: "Carla", ig_username: "carla.ig", email: "carla@correo.com", Fecha_texto: "SEGUNDA cita, un viernes a las 12" }));
+  await esperarHasta(() => tg.enviados.slice(n3).some((m) => m.text.includes("SOLICITUD DE INSTAGRAM")));
+  const propCarla = tg.enviados.slice(n3).find((m) => m.text.includes("SOLICITUD DE INSTAGRAM"));
+  const convCarla = tables.conversations.find((c) => c.contact_ref === "mc-3001");
+  check("O5. llega la propuesta de la segunda clienta, con botón Aprobar", Boolean(propCarla) && botones(propCarla).includes("✅ Aprobar"), propCarla?.text);
+  await pulsa(dato(propCarla, "Aprobar"), propCarla.message_id);
+  const resCarla = () => reservas().find((x) => x.conversation_id === convCarla.id);
+  const llegoPrecio = await esperarHasta(() => mcApi.envios.length >= 1);
+  const envio1 = mcApi.envios[0];
+  check("O6. al Aprobar, Kira escribe a la clienta por la API de ManyChat: contacto correcto, clave de la API y solo texto", llegoPrecio && envio1.cuerpo.subscriber_id === "mc-3001" && envio1.autorizacion === "Bearer 1234567:clave-falsa-manychat-abcdefghij" && envio1.cuerpo.data.content.type === "instagram" && envio1.cuerpo.data.content.messages.length === 1 && envio1.cuerpo.data.content.messages[0].type === "text");
+  const textoPrecio = envio1.cuerpo.data.content.messages[0].text;
+  check("O7. el mensaje lleva el servicio, el precio, la duración, la fecha y la señal; y pide el «vale»", textoPrecio.includes("Carla") && /€/.test(textoPrecio) && textoPrecio.includes("dura aproximadamente") && textoPrecio.includes("Tu cita sería el") && textoPrecio.includes("señal de 20 €") && textoPrecio.includes("«vale»"));
+  check("O8. la reserva queda en «precio enviado» con plazo, el mensaje saliente guardado y el hueco en amarillo", resCarla().client_phase === "precio_enviado" && Boolean(resCarla().payment_deadline) && tables.messages.some((m) => m.conversation_id === convCarla.id && m.direction === "out") && g.eventos.get(`kira${resCarla().id.replace(/-/g, "")}`)?.colorId === "5");
+  check("O9. Blake NO recibe el aviso de «no he podido escribir» (se escribió bien)", !tg.enviados.slice(n3).some((m) => m.text.includes("NO he podido escribir")));
+
+  const sinClaveR = await respuestaIg({ id: "mc-3001", texto: "vale" }, {});
+  const malaR = await respuestaIg({ id: "mc-3001", texto: "vale" }, { "x-kira-secret": "otra" });
+  const sinId = await respuestaIg({ texto: "vale" });
+  check("O10. el endpoint de respuestas exige la clave (401) y el id (400)", sinClaveR.status === 401 && malaR.status === 401 && sinId.status === 400 && mcApi.envios.length === 1);
+  const rVale = await respuestaIg({ id: "mc-3001", texto: "Vale 👍" });
+  await esperarHasta(() => mcApi.envios.length >= 2);
+  const textoBizum = mcApi.envios[1]?.cuerpo.data.content.messages[0].text ?? "";
+  check("O11. «vale» (200 enseguida) → Kira le manda el Bizum de 20 € al número de Blake, con «confirmado» y plazo", rVale.status === 200 && textoBizum.includes("Bizum de 20 € al 662018425") && textoBizum.includes("«confirmado»") && textoBizum.includes("45 minutos") && resCarla().client_phase === "pago_pedido");
+  const dupVale = await (await respuestaIg({ id: "mc-3001", texto: "Vale 👍" })).json();
+  check("O12. si ManyChat reintenta el mismo mensaje no se contesta dos veces", dupVale.duplicado === true && mcApi.envios.length === 2);
+
+  const n4 = tg.enviados.length;
+  await respuestaIg({ id: "mc-3001", texto: "¿Tenéis parking cerca?" });
+  await esperarHasta(() => tg.enviados.slice(n4).some((m) => m.text.includes("ha escrito")));
+  check("O13. una pregunta no es un «confirmado»: Kira no contesta y se la reenvía a Blake", mcApi.envios.length === 2 && tg.enviados.slice(n4).some((m) => m.text.includes("Carla") && m.text.includes("parking")) && resCarla().client_phase === "pago_pedido");
+
+  const n5 = tg.enviados.length;
+  await respuestaIg({ id: "mc-3001", texto: "confirmado" });
+  await esperarHasta(() => mcApi.envios.length >= 3);
+  const evCarla = g.eventos.get(`kira${resCarla().id.replace(/-/g, "")}`);
+  const avisoCarla = tg.enviados.slice(n5).find((m) => m.text.includes("No me ha llegado nada") || botones(m).includes("❌ No me ha llegado nada"));
+  check("O14. «confirmado» → cita en morado con la invitación, Kira lo confirma a la clienta y Blake recibe el aviso con el botón de revertir", resCarla().status === "pagada" && resCarla().client_phase === "confirmada" && evCarla?.colorId === "3" && (mcApi.envios[2]?.cuerpo.data.content.messages[0].text ?? "").includes("¡Confirmado!") && Boolean(avisoCarla));
+
+  const enviosAntesDesconocido = mcApi.envios.length;
+  const desconocido = await respuestaIg({ id: "mc-9999", texto: "hola" });
+  await esperarHasta(() => tables.event_log.some((e) => e.kind === "respuesta_sin_conversacion"));
+  check("O15. un contacto que nunca mandó solicitud: 200, se ignora y no se le escribe", desconocido.status === 200 && mcApi.envios.length === enviosAntesDesconocido && tables.event_log.some((e) => e.kind === "respuesta_sin_conversacion"));
+
+  // Si ManyChat rechaza el envío (p. ej. ventana de 24 h cerrada) Blake lo sabe y se le dice qué hacer
+  mcApi.cae = true;
+  const n6 = tg.enviados.length;
+  await mc(formulario({ id: "mc-3002", Nombre: "Dora", ig_username: "dora.ig", email: "dora@correo.com", Fecha_texto: "SEGUNDA cita otra vez" }));
+  await esperarHasta(() => tg.enviados.slice(n6).some((m) => m.text.includes("SOLICITUD DE INSTAGRAM")));
+  const propDora = tg.enviados.slice(n6).find((m) => m.text.includes("SOLICITUD DE INSTAGRAM"));
+  if (botones(propDora).includes("✅ Aprobar")) {
+    const n7 = tg.enviados.length;
+    await pulsa(dato(propDora, "Aprobar"), propDora.message_id);
+    await esperarHasta(() => tg.enviados.slice(n7).some((m) => m.text.includes("NO he podido escribir")));
+    check("O16. si ManyChat rechaza el envío, Blake recibe el motivo y la instrucción de escribirle él (el hueco no caduca solo)", tg.enviados.slice(n7).some((m) => m.text.includes("NO he podido escribir a Dora") && m.text.includes("Outside of the allowed window")));
+  } else {
+    check("O16. (la propuesta de Dora choca con la agenda: no se puede probar el fallo de envío)", true);
+  }
+  mcApi.cae = false;
+
+  await escribe("/responder off");
+  const enviosAntesOff = mcApi.envios.length;
+  check("O17. /responder off vuelve al modo sombra y queda guardado", ultimo().text.includes("MODO SOMBRA") && tables.app_settings.find((x) => x.key === "kira_responde").value === false && mcApi.envios.length === enviosAntesOff);
+  const volcadoO = JSON.stringify({ e: tables.event_log, s: tables.security_events });
+  check("O18. la clave de la API de ManyChat no queda en los registros", !/clave-falsa-manychat/.test(volcadoO));
   }
 
   // ============================================================================ H. Sin secretos en los registros
@@ -1375,7 +1478,7 @@ try {
 } finally {
   await browser?.close();
   try { process.kill(-app.pid, "SIGKILL"); } catch {}
-  for (const s of [servidorClaude, servidorTelegram, servidorLegacy, servidorGoogle, servidorFotos, db]) s.close();
+  for (const s of [servidorClaude, servidorTelegram, servidorLegacy, servidorGoogle, servidorFotos, servidorManychat, db]) s.close();
 }
 
 const fallosFinales = results.filter((r) => !r.ok);

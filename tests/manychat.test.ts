@@ -140,3 +140,41 @@ describe("/manychat", () => {
     expect(JSON.stringify(m.eventos)).not.toContain(CLAVE);
   });
 });
+
+describe("enviarTexto: el único mensaje que Kira puede mandar por ManyChat", () => {
+  function fetchEnvio(res: { status: number; cuerpo: unknown }) {
+    const llamadas: { url: string; metodo: string; cabeceras: Record<string, string>; cuerpo: any }[] = [];
+    const f: FetchManychat = async (url, init) => {
+      llamadas.push({ url, metodo: init.method, cabeceras: init.headers, cuerpo: init.body ? JSON.parse(init.body) : undefined });
+      return respuesta(res.status, res.cuerpo);
+    };
+    return { f, llamadas };
+  }
+
+  it("manda un POST a sendContent con el contacto y el texto, como mensaje de Instagram", async () => {
+    const { f, llamadas } = fetchEnvio({ status: 200, cuerpo: { status: "success" } });
+    await crearClienteManychat(CLAVE, f).enviarTexto("251792246", "Hola 😊\n\nTu cita es el viernes");
+    expect(llamadas).toHaveLength(1);
+    expect(llamadas[0].metodo).toBe("POST");
+    expect(new URL(llamadas[0].url).pathname).toBe("/fb/sending/sendContent");
+    expect(llamadas[0].cabeceras.authorization).toBe(`Bearer ${CLAVE}`);
+    expect(llamadas[0].cuerpo).toEqual({ subscriber_id: "251792246", data: { version: "v2", content: { type: "instagram", messages: [{ type: "text", text: "Hola 😊\n\nTu cita es el viernes" }] } } });
+  });
+
+  it("rechaza un id raro o un texto vacío o enorme SIN llamar a ManyChat", async () => {
+    const { f, llamadas } = fetchEnvio({ status: 200, cuerpo: { status: "success" } });
+    const c = crearClienteManychat(CLAVE, f);
+    await expect(c.enviarTexto("1; drop", "hola")).rejects.toThrow(ManychatError);
+    await expect(c.enviarTexto("123", "   ")).rejects.toThrow(ManychatError);
+    await expect(c.enviarTexto("123", "x".repeat(2000))).rejects.toThrow(ManychatError);
+    expect(llamadas).toHaveLength(0);
+  });
+
+  it("si ManyChat rechaza el envío (p. ej. ventana de 24 h cerrada) lanza un error legible sin la clave", async () => {
+    const { f } = fetchEnvio({ status: 400, cuerpo: { status: "error", message: "Outside of the allowed window" } });
+    const e = await crearClienteManychat(CLAVE, f).enviarTexto("123", "hola").catch((x) => x);
+    expect(e).toBeInstanceOf(ManychatError);
+    expect(e.message).toContain("Outside of the allowed window");
+    expect(e.message).not.toContain(CLAVE);
+  });
+});

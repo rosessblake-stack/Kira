@@ -96,6 +96,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       async bizum(chatId, texto) { calls.client.push({ k: "bizum", chatId, texto }); },
     },
     manychat: { async estado(chatId) { calls.client.push({ k: "manychat", chatId }); } },
+    responder: { async manejar(chatId, argumento) { calls.client.push({ k: "responder", chatId, texto: argumento }); } },
     async calendarioEstado() { return "📅 Calendario de prueba"; },
     records: {
       async real(chatId, texto) { calls.records.push({ k: "real", chatId, texto }); },
@@ -713,5 +714,22 @@ describe("/manychat", () => {
     const otro = setup();
     await handleTelegramRequest(SECRET, msg("/manychat", OTHER), admin(ADMIN), otro.deps);
     expect(otro.calls.client).toEqual([]);
+  });
+});
+
+describe("/responder", () => {
+  it("llega al flujo con su argumento, solo para Blake", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/responder on"), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, msg("/responder"), admin(ADMIN), deps);
+    expect(calls.client.filter((c) => c.k === "responder")).toEqual([
+      { k: "responder", chatId: ADMIN, texto: "on" },
+      { k: "responder", chatId: ADMIN, texto: "" },
+    ]);
+  });
+  it("un desconocido no puede activarlo", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/responder on", 999), admin(ADMIN), deps);
+    expect(calls.client.filter((c) => c.k === "responder")).toEqual([]);
   });
 });

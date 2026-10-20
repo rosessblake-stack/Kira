@@ -14,6 +14,7 @@ import { authStore } from "../../../lib/panel-store";
 import { crearClienteReal } from "../../../lib/cliente-real";
 import { claveManychat, crearClienteManychat } from "../../../lib/manychat";
 import { crearFlujoManychat } from "../../../lib/manychat-flow";
+import { crearFlujoResponder, guardarResponde, leerResponde } from "../../../lib/responder";
 import { crearFlujoRegistro } from "../../../lib/registro-flow";
 import * as registroStore from "../../../lib/registro-store";
 import { crearFlujoViajes } from "../../../lib/trip-flow";
@@ -59,6 +60,13 @@ function makeDeps(host: string | null): Deps {
       },
       enviar: tg.sendMessage,
       logEvent: (e) => db.logEvent("manychat", e),
+    }),
+    responder: crearFlujoResponder({
+      leer: leerResponde,
+      guardar: guardarResponde,
+      hayClave: () => claveManychat() !== null,
+      enviar: tg.sendMessage,
+      logEvent: (e) => db.logEvent("system", e),
     }),
     async calendarioEstado() {
       const configurado = configGoogle() !== null;

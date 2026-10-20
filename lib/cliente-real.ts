@@ -5,6 +5,8 @@ import * as clienteStore from "./cliente-store";
 import * as db from "./db";
 import * as store from "./proposal-store";
 import * as registroStore from "./registro-store";
+import { claveManychat, crearClienteManychat } from "./manychat";
+import { crearEnvioInstagram, leerResponde } from "./responder";
 import { isPaused } from "./settings";
 import * as tg from "./telegram";
 
@@ -12,6 +14,13 @@ import * as tg from "./telegram";
 export function crearClienteReal(): ClientePort {
   const raw = process.env.TELEGRAM_ADMIN_USER_ID?.trim();
   const adminChatId = raw && /^\d+$/.test(raw) ? Number(raw) : null;
+  const enviarPorInstagram = crearEnvioInstagram({
+    activo: leerResponde,
+    cliente: () => {
+      const clave = claveManychat();
+      return clave ? crearClienteManychat(clave) : null;
+    },
+  });
   return crearFlujoCliente({
     now: () => new Date(),
     newNonce: () => randomUUID().replace(/-/g, ""),
@@ -39,8 +48,8 @@ export function crearClienteReal(): ClientePort {
         await tg.sendMessage(adminChatId, `📤 PARA LA CLIENTA (simulado: no se envía a nadie)\n\n${texto}\n\n↩️ Contesta como ella con /clienta … (por ejemplo: /clienta vale)`);
         return { ok: true };
       }
-      // Instagram: se conectará con ManyChat. Mientras tanto no se escribe a nadie y Blake recibe el aviso.
-      return { ok: false, motivo: "canal_no_conectado" };
+      // Instagram, por la API de ManyChat. Con «/responder off» (por defecto) no se escribe a nadie y Blake recibe el aviso.
+      return enviarPorInstagram(conv.contact_ref, texto);
     },
     bizum: clienteStore.leerBizum,
     guardarBizum: clienteStore.guardarBizum,
