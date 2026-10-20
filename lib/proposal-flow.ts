@@ -9,6 +9,7 @@ import type { Estancia } from "./estancias";
 import type { ResumenFoto } from "./fotos";
 import { aplicarLecturaFoto, validarLecturaFoto, type LecturaGuardada } from "./lectura-foto";
 import type { SolicitudManychat } from "./manychat-entrada";
+import { clasificacionDesdeFormulario } from "./formulario";
 import {
   INTENCION_EN_BD,
   MAX_CARACTERES_CLIENTE,
@@ -232,6 +233,8 @@ type Entrada = {
   fijos?: { nombre: string | null; email: string | null; instagram: string | null };
   /** Avisos propios de la entrada (p. ej. el país no era ni Miami ni España). */
   avisos?: string[];
+  /** La clasificación ya hecha por código a partir de los campos del formulario (sin Claude). Si falta, clasifica Claude. */
+  directa?: Clasificacion | null;
   alCrear?: (conversationId: string) => Promise<void>;
 };
 
@@ -435,6 +438,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       texto: s.texto.slice(0, MAX_CARACTERES_CLIENTE),
       ubicacion: s.ubicacion,
       fijos: { nombre: s.nombre, email: s.email, instagram: s.instagram ? `@${s.instagram}` : null },
+      directa: clasificacionDesdeFormulario(s, deps.now(), CONFIG_UBICACION[s.ubicacion].zonaHoraria),
       avisos: s.ubicacionDudosa ? ["El campo «país» de la clienta no era ni Miami ni España: se ha tomado España. Si es de Miami, rechaza esta propuesta y vuelve a lanzarla."] : [],
       alCrear,
     });
@@ -496,53 +500,70 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       return;
     }
 
-    // 4. Claude clasifica.
-    let respuesta: RespuestaClaude;
-    let basica = false;
-    try {
-      respuesta = await deps.clasificar(texto, ahora, lugar.zonaHoraria);
-    } catch (e) {
-      const sinClave = e instanceof SinClaveError;
-      if (sinClave && deps.lecturaBasica && !real) {
-        // Sin clave: se lee con reglas simples (solo pruebas) para poder ver todo el recorrido. Cualquier otro
-        // fallo de Claude NO cae aquí: ahí lo correcto es derivar a Blake.
-        basica = true;
-        respuesta = deps.lecturaBasica(texto, ahora, lugar.zonaHoraria);
-        await deps.logEvent({ source: "system", kind: "lectura_basica", level: "warn", summary: "Sin clave de Claude: mensaje leído con la lectura básica por reglas (solo pruebas)", conversation_id: convId });
-      } else {
-        await deps.logEvent({ source: "claude", kind: sinClave ? "sin_clave_anthropic" : "claude_error", level: "error", summary: describirErrorClaude(e), conversation_id: convId });
-        await avisarADerivar(chatId, convId, sinClave ? "Falta la clave de Claude (ANTHROPIC_API_KEY) en Vercel: no puedo clasificar." : "No he podido clasificar el mensaje (Claude no respondió).", texto, undefined, canal);
-        return;
+    // 4–5. Quién interpreta el mensaje. Un formulario de Instagram con la fecha ya entendida por código NO gasta Claude (ahorro de tokens);
+    // el resto, sí: Claude clasifica y el código valida de forma estricta lo que devuelve.
+    const clasificarConClaudeFlow = async (): Promise<{ c: Clasificacion; basica: boolean } | null> => {
+      let respuesta: RespuestaClaude;
+      let basica = false;
+      try {
+        respuesta = await deps.clasificar(texto, ahora, lugar.zonaHoraria);
+      } catch (e) {
+        const sinClave = e instanceof SinClaveError;
+        if (sinClave && deps.lecturaBasica && !real) {
+          // Sin clave: se lee con reglas simples (solo pruebas) para poder ver todo el recorrido. Cualquier otro
+          // fallo de Claude NO cae aquí: ahí lo correcto es derivar a Blake.
+          basica = true;
+          respuesta = deps.lecturaBasica(texto, ahora, lugar.zonaHoraria);
+          await deps.logEvent({ source: "system", kind: "lectura_basica", level: "warn", summary: "Sin clave de Claude: mensaje leído con la lectura básica por reglas (solo pruebas)", conversation_id: convId });
+        } else {
+          await deps.logEvent({ source: "claude", kind: sinClave ? "sin_clave_anthropic" : "claude_error", level: "error", summary: describirErrorClaude(e), conversation_id: convId });
+          await avisarADerivar(chatId, convId, sinClave ? "Falta la clave de Claude (ANTHROPIC_API_KEY) en Vercel: no puedo clasificar." : "No he podido clasificar el mensaje (Claude no respondió).", texto, undefined, canal);
+          return null;
+        }
       }
-    }
-    // La lectura básica no cuenta para el tope diario de llamadas a Claude porque no es una llamada.
-    if (!basica) {
-      await deps.logEvent({
-        source: "claude",
-        kind: "claude_llamada",
-        summary: `Claude respondió (${respuesta.tipo})`,
-        detail: respuesta.tipo === "ok" ? { entrada: respuesta.entrada, salida: respuesta.salida } : { resultado: respuesta.tipo },
-        conversation_id: convId,
-      });
-    }
-    if (respuesta.tipo !== "ok") {
-      if (respuesta.tipo === "rechazo") {
-        await deps.logSecurity({ kind: "posible_inyeccion", source: "claude", conversation_id: convId, detail: { origen: "rechazo_del_modelo" } });
+      // La lectura básica no cuenta para el tope diario de llamadas a Claude porque no es una llamada.
+      if (!basica) {
+        await deps.logEvent({
+          source: "claude",
+          kind: "claude_llamada",
+          summary: `Claude respondió (${respuesta.tipo})`,
+          detail: respuesta.tipo === "ok" ? { entrada: respuesta.entrada, salida: respuesta.salida, modelo: respuesta.modelo ?? null, reintento: respuesta.reintento ?? false } : { resultado: respuesta.tipo },
+          conversation_id: convId,
+        });
       }
-      await avisarADerivar(chatId, convId, `Claude no devolvió una clasificación utilizable (${respuesta.tipo}).`, texto, undefined, canal);
-      return;
-    }
+      if (respuesta.tipo !== "ok") {
+        if (respuesta.tipo === "rechazo") {
+          await deps.logSecurity({ kind: "posible_inyeccion", source: "claude", conversation_id: convId, detail: { origen: "rechazo_del_modelo" } });
+        }
+        await avisarADerivar(chatId, convId, `Claude no devolvió una clasificación utilizable (${respuesta.tipo}).`, texto, undefined, canal);
+        return null;
+      }
 
-    // 5. Validación estricta: lo que no cuadra se descarta.
-    const validada = validarClasificacion(respuesta.raw, texto);
-    if (!validada.ok) {
-      await deps.logEvent({ source: "claude", kind: "clasificacion_invalida", level: "warn", summary: `Clasificación descartada: ${validada.motivo}`, conversation_id: convId });
-      await avisarADerivar(chatId, convId, "La clasificación de Claude no pasó la validación y se ha descartado.", texto, { motivo: validada.motivo }, canal);
-      return;
+      // 5. Validación estricta: lo que no cuadra se descarta.
+      const validada = validarClasificacion(respuesta.raw, texto);
+      if (!validada.ok) {
+        await deps.logEvent({ source: "claude", kind: "clasificacion_invalida", level: "warn", summary: `Clasificación descartada: ${validada.motivo}`, conversation_id: convId });
+        await avisarADerivar(chatId, convId, "La clasificación de Claude no pasó la validación y se ha descartado.", texto, { motivo: validada.motivo }, canal);
+        return null;
+      }
+      return { c: validada.value, basica };
+    };
+    let c: Clasificacion;
+    let basica = false;
+    let lector: "claude" | "basica" | "formulario" = "claude";
+    if (entrada.directa) {
+      c = entrada.directa;
+      lector = "formulario";
+      await deps.logEvent({ source: "system", kind: "formulario_leido", summary: "Formulario de Instagram leído por código, sin Claude (los datos ya vienen estructurados)", conversation_id: convId });
+    } else {
+      const r = await clasificarConClaudeFlow();
+      if (!r) return;
+      c = r.c;
+      basica = r.basica;
+      lector = basica ? "basica" : "claude";
     }
-    let c = validada.value;
     await deps.actualizarConversacion(convId, { intent: INTENCION_EN_BD[c.intencion] });
-    await deps.logEvent({ source: "claude", kind: "clasificado", summary: `Intención: ${c.intencion} (confianza ${c.confianza})${basica ? " · lectura básica" : ""}`, detail: { intencion: c.intencion, confianza: c.confianza, lector: basica ? "basica" : "claude" }, conversation_id: convId });
+    await deps.logEvent({ source: lector === "claude" ? "claude" : "system", kind: "clasificado", summary: `Intención: ${c.intencion} (confianza ${c.confianza})${basica ? " · lectura básica" : lector === "formulario" ? " · formulario" : ""}`, detail: { intencion: c.intencion, confianza: c.confianza, lector }, conversation_id: convId });
 
     if (c.manipulacion) return marcarManipulacion(chatId, convId, texto, "modelo", ["marcado_por_el_modelo"], canal);
 
@@ -572,7 +593,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
         lectura = vista.guardada;
       }
     }
-    await proponerCita(chatId, convId, c, texto, basica, ubicacion, { canal, lectura });
+    await proponerCita(chatId, convId, c, texto, basica, ubicacion, { canal, lectura, lector });
   }
 
   /**
@@ -593,7 +614,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
         source: "claude",
         kind: "claude_llamada",
         summary: `Claude leyó las fotos (${r.tipo})`,
-        detail: r.tipo === "ok" ? { entrada: r.entrada, salida: r.salida, fotos: fotos.length, uso: "vision" } : { resultado: r.tipo, uso: "vision" },
+        detail: r.tipo === "ok" ? { entrada: r.entrada, salida: r.salida, fotos: fotos.length, uso: "vision", modelo: r.modelo ?? null, reintento: r.reintento ?? false } : { resultado: r.tipo, uso: "vision" },
         conversation_id: convId,
       });
       if (r.tipo === "rechazo") {
@@ -602,7 +623,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
         return "manipulacion";
       }
       if (r.tipo !== "ok") return aviso(`No he podido leer las fotos (${r.tipo}): míralas tú.`);
-      const v = validarLecturaFoto(r.raw);
+      const v = validarLecturaFoto(r.raw, { referencia: fotos.some((f) => f.rol === "referencia"), pelo: fotos.some((f) => f.rol === "pelo") });
       if (!v.ok) {
         await deps.logEvent({ source: "claude", kind: "lectura_foto_invalida", level: "warn", summary: `Lectura de fotos descartada: ${v.motivo}`, conversation_id: convId });
         return aviso("La lectura de las fotos no pasó la validación y se ha descartado: míralas tú.");
@@ -628,11 +649,11 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     texto: string,
     basica: boolean,
     ubicacion: Ubicacion,
-    origen: { canal: Canal; lectura?: LecturaGuardada } = { canal: "prueba" },
+    origen: { canal: Canal; lectura?: LecturaGuardada; lector?: "claude" | "basica" | "formulario" } = { canal: "prueba" },
   ) {
     const real = origen.canal === "instagram";
     const spec: SpecGuardada = {
-      ...specDesdeClasificacion(c, texto, basica ? "basica" : "claude", ubicacion),
+      ...specDesdeClasificacion(c, texto, basica ? "basica" : origen.lector === "formulario" ? "formulario" : "claude", ubicacion),
       ...(real ? { origen: "instagram" as const } : {}),
       ...(origen.lectura ? { lectura_foto: origen.lectura } : {}),
     };

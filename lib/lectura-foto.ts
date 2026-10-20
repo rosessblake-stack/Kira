@@ -84,7 +84,11 @@ export type LecturaFoto = {
 
 export type ResultadoLectura = { ok: true; value: LecturaFoto } | { ok: false; motivo: string };
 
-export function validarLecturaFoto(raw: unknown): ResultadoLectura {
+/**
+ * `enviadas` = qué fotos se mandaron de verdad a leer. Lo que el modelo diga de una foto que NO se le mandó (alucinar un «pelo
+ * rizado» sin haberlo visto) se descarta.
+ */
+export function validarLecturaFoto(raw: unknown, enviadas: { referencia: boolean; pelo: boolean } = { referencia: true, pelo: true }): ResultadoLectura {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, motivo: "no_es_objeto" };
   const o = raw as Record<string, unknown>;
   const esperadas = new Set<string>(LECTURA_FOTO_SCHEMA.required);
@@ -114,8 +118,8 @@ export function validarLecturaFoto(raw: unknown): ResultadoLectura {
   if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > 200) return { ok: false, motivo: "numero_trenzas_invalido" };
   for (const k of ["resumen_referencia", "resumen_pelo"]) if (typeof o[k] !== "string") return { ok: false, motivo: `${k}_no_es_texto` };
 
-  const referenciaValida = o.referencia_valida as boolean;
-  const peloValido = o.pelo_valido as boolean;
+  const referenciaValida = (o.referencia_valida as boolean) && enviadas.referencia;
+  const peloValido = (o.pelo_valido as boolean) && enviadas.pelo;
   const resumen = (k: string, valido: boolean) => (valido ? limpiarTexto(o[k] as string, 200) || null : null);
 
   return {

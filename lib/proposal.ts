@@ -51,7 +51,7 @@ export type SpecGuardada = {
   confianza: "alta" | "media" | "baja";
   avisos_validacion: string[];
   /** Quién interpretó el mensaje: Claude, o la lectura básica por reglas (solo pruebas, sin clave). */
-  clasificador?: "claude" | "basica";
+  clasificador?: "claude" | "basica" | "formulario";
   /** De dónde viene: solicitud real del formulario de Instagram (ManyChat). Sin dato = prueba de Telegram. */
   origen?: "instagram";
   /** Lo que Claude vio en las fotos de la clienta (solo describe; los datos que rellenó llevan su aviso). */
@@ -75,7 +75,7 @@ export function contextoDe(spec: Pick<SpecGuardada, "ubicacion">) {
 export function specDesdeClasificacion(
   c: Clasificacion,
   mensajeCliente: string,
-  clasificador: "claude" | "basica" = "claude",
+  clasificador: "claude" | "basica" | "formulario" = "claude",
   ubicacion: Ubicacion = "espana",
 ): SpecGuardada {
   return {

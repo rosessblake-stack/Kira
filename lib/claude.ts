@@ -11,6 +11,26 @@ import { LECTURA_FOTO_SCHEMA, SYSTEM_PROMPT_FOTOS } from "./lectura-foto";
 /** Se puede cambiar sin tocar código con la variable KIRA_MODEL. */
 export const MODELO = process.env.KIRA_MODEL?.trim() || "claude-opus-5-5";
 
+/**
+ * Para ahorrar tokens se puede usar un modelo más barato SOLO para una tarea (KIRA_MODEL_TEXTO para leer textos, KIRA_MODEL_VISION para
+ * las fotos). Si no están puestas, se usa el modelo principal. Si el modelo barato falla por no admitir algo de la petición (error 400
+ * o 404), se repite UNA vez con el principal: nunca se queda Kira sin leer por probar un modelo.
+ */
+export const modeloTexto = () => process.env.KIRA_MODEL_TEXTO?.trim() || MODELO;
+export const modeloVision = () => process.env.KIRA_MODEL_VISION?.trim() || MODELO;
+
+const estadoDe = (e: unknown) => (typeof (e as { status?: unknown } | null)?.status === "number" ? (e as { status: number }).status : null);
+
+export async function conReintentoDeModelo<T>(modelo: string, llamar: (m: string) => Promise<T>): Promise<{ res: T; modelo: string; reintento: boolean }> {
+  try {
+    return { res: await llamar(modelo), modelo, reintento: false };
+  } catch (e) {
+    const st = estadoDe(e);
+    if (modelo !== MODELO && (st === 400 || st === 404)) return { res: await llamar(MODELO), modelo: MODELO, reintento: true };
+    throw e;
+  }
+}
+
 export class SinClaveError extends Error {
   constructor() {
     super("Falta ANTHROPIC_API_KEY: Kira no puede clasificar mensajes");
@@ -62,7 +82,7 @@ export function describirErrorClaude(e: unknown): string {
 }
 
 export type RespuestaClaude =
-  | { tipo: "ok"; raw: unknown; entrada: number; salida: number }
+  | { tipo: "ok"; raw: unknown; entrada: number; salida: number; modelo?: string; reintento?: boolean }
   | { tipo: "rechazo" }
   | { tipo: "truncado" }
   | { tipo: "sin_json" };
@@ -127,14 +147,16 @@ export async function clasificarConClaude(textoCliente: string, ahora: Date, zon
   if (!process.env.ANTHROPIC_API_KEY) throw new SinClaveError();
 
   const client = new Anthropic({ maxRetries: 1, timeout: 30_000 });
-  const res = await client.messages.create({
-    model: MODELO,
-    // La reflexión interna también cuenta contra max_tokens: se deja holgura para que el JSON no se corte.
-    max_tokens: 4000,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: construirPrompt(textoCliente, ahora, zona) }],
-    output_config: { effort: "low", format: { type: "json_schema", schema: CLASIFICACION_SCHEMA } },
-  });
+  const { res, modelo, reintento } = await conReintentoDeModelo(modeloTexto(), (model) =>
+    client.messages.create({
+      model,
+      // La reflexión interna también cuenta contra max_tokens: se deja holgura para que el JSON no se corte.
+      max_tokens: 4000,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: construirPrompt(textoCliente, ahora, zona) }],
+      output_config: { effort: "low", format: { type: "json_schema", schema: CLASIFICACION_SCHEMA } },
+    }),
+  );
 
   // Una negativa del modelo en un mensaje de cliente es una señal en sí misma: se trata como duda, no se reintenta.
   if (res.stop_reason === "refusal") return { tipo: "rechazo" };
@@ -143,7 +165,7 @@ export async function clasificarConClaude(textoCliente: string, ahora: Date, zon
   const bloque = res.content.find((b) => b.type === "text");
   if (!bloque || bloque.type !== "text") return { tipo: "sin_json" };
   try {
-    return { tipo: "ok", raw: JSON.parse(bloque.text), entrada: res.usage.input_tokens, salida: res.usage.output_tokens };
+    return { tipo: "ok", raw: JSON.parse(bloque.text), entrada: res.usage.input_tokens, salida: res.usage.output_tokens, modelo, reintento };
   } catch {
     return { tipo: "sin_json" };
   }
@@ -166,19 +188,21 @@ export async function leerFotosConClaude(fotos: FotoParaLeer[]): Promise<Respues
   contenido.push({ type: "text", text: "Devuelve el JSON con lo que se ve en las fotos." });
 
   const client = new Anthropic({ maxRetries: 1, timeout: 45_000 });
-  const res = await client.messages.create({
-    model: MODELO,
-    max_tokens: 4000,
-    system: SYSTEM_PROMPT_FOTOS,
-    messages: [{ role: "user", content: contenido }],
-    output_config: { effort: "low", format: { type: "json_schema", schema: LECTURA_FOTO_SCHEMA } },
-  });
+  const { res, modelo, reintento } = await conReintentoDeModelo(modeloVision(), (model) =>
+    client.messages.create({
+      model,
+      max_tokens: 4000,
+      system: SYSTEM_PROMPT_FOTOS,
+      messages: [{ role: "user", content: contenido }],
+      output_config: { effort: "low", format: { type: "json_schema", schema: LECTURA_FOTO_SCHEMA } },
+    }),
+  );
   if (res.stop_reason === "refusal") return { tipo: "rechazo" };
   if (res.stop_reason === "max_tokens") return { tipo: "truncado" };
   const bloque = res.content.find((b) => b.type === "text");
   if (!bloque || bloque.type !== "text") return { tipo: "sin_json" };
   try {
-    return { tipo: "ok", raw: JSON.parse(bloque.text), entrada: res.usage.input_tokens, salida: res.usage.output_tokens };
+    return { tipo: "ok", raw: JSON.parse(bloque.text), entrada: res.usage.input_tokens, salida: res.usage.output_tokens, modelo, reintento };
   } catch {
     return { tipo: "sin_json" };
   }

@@ -97,6 +97,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       async bizum(chatId, texto) { calls.client.push({ k: "bizum", chatId, texto }); },
     },
     manychat: { async estado(chatId) { calls.client.push({ k: "manychat", chatId }); } },
+    gasto: { async resumen(chatId) { calls.client.push({ k: "gasto", chatId }); } },
     responder: { async manejar(chatId, argumento) { calls.client.push({ k: "responder", chatId, texto: argumento }); } },
     async calendarioEstado() { return "📅 Calendario de prueba"; },
     records: {

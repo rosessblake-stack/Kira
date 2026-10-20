@@ -14,6 +14,7 @@ import { authStore } from "../../../lib/panel-store";
 import { crearClienteReal } from "../../../lib/cliente-real";
 import { claveManychat, crearClienteManychat } from "../../../lib/manychat";
 import { crearFlujoManychat } from "../../../lib/manychat-flow";
+import { crearFlujoGasto, leerGastoReal } from "../../../lib/gasto";
 import { crearFlujoResponder, guardarResponde, leerResponde } from "../../../lib/responder";
 import { crearFlujoRegistro } from "../../../lib/registro-flow";
 import * as registroStore from "../../../lib/registro-store";
@@ -61,6 +62,7 @@ function makeDeps(host: string | null): Deps {
       enviar: tg.sendMessage,
       logEvent: (e) => db.logEvent("manychat", e),
     }),
+    gasto: crearFlujoGasto({ leer: leerGastoReal, now: () => new Date(), enviar: tg.sendMessage }),
     responder: crearFlujoResponder({
       leer: leerResponde,
       guardar: guardarResponde,

@@ -51,6 +51,17 @@ describe("validarLecturaFoto", () => {
   });
 });
 
+describe("solo vale lo que se refiere a una foto que se envió de verdad", () => {
+  it("si solo se mandó la de referencia, lo que el modelo diga del pelo se descarta", () => {
+    const r = validarLecturaFoto(salida(), { referencia: true, pelo: false });
+    expect(r.ok && r.value).toMatchObject({ resumenPelo: null, largo_cabello: null, peloValido: false, tipo_trenzado: "pegadas" });
+  });
+  it("y al revés", () => {
+    const r = validarLecturaFoto(salida(), { referencia: false, pelo: true });
+    expect(r.ok && r.value).toMatchObject({ resumenReferencia: null, tipo_trenzado: null, referenciaValida: false, largo_cabello: "nuca_hombros" });
+  });
+});
+
 describe("aplicarLecturaFoto", () => {
   const v = (o = {}) => {
     const r = validarLecturaFoto(salida(o));

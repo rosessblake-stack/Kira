@@ -14,6 +14,7 @@ import * as registroStore from "./registro-store";
 import { isPaused } from "./settings";
 import * as tg from "./telegram";
 import { detectarImagen } from "./fotos";
+import { reducirParaClaude } from "./imagen-ligera";
 
 /** Composición real de los flujos (Supabase, Telegram, Claude, Legacy, Google): la comparten el webhook de Telegram y el de ManyChat. */
 
@@ -85,17 +86,23 @@ export function makeFlowDeps(photos: PhotoPort, cliente: ReturnType<typeof crear
 }
 
 
-/** La última foto de referencia y la última del pelo de la conversación, con sus bytes, para que Claude las lea. */
+/**
+ * La foto de referencia (y, solo si Blake lo desbloquea con KIRA_LEER_PELO=1, la del pelo) de la conversación, ya REDUCIDA, para que
+ * Claude la lea. Decisión de Blake (20-oct, ahorro de tokens): el pelo lo mira y lo describe él; la foto le llega igualmente a Telegram.
+ */
+export const leerFotoDelPelo = () => process.env.KIRA_LEER_PELO === "1";
+
 async function fotosParaLeerDe(conversationId: string): Promise<FotoParaLeer[]> {
   const guardadas = (await fotoStore.listarFotos(conversationId)).filter((f) => !f.purged_at);
   const salida: FotoParaLeer[] = [];
-  for (const rol of ["referencia", "pelo"] as const) {
+  for (const rol of leerFotoDelPelo() ? (["referencia", "pelo"] as const) : (["referencia"] as const)) {
     const f = [...guardadas].reverse().find((x) => x.kind === rol);
     if (!f) continue;
     const bytes = await fotoStore.descargarBytes(f);
-    // El tipo se vuelve a decidir por los bytes: a Claude solo llega una imagen de verdad.
-    const imagen = bytes ? detectarImagen(bytes) : null;
-    if (bytes && imagen) salida.push({ rol, mime: imagen.mime, bytes });
+    // El tipo se vuelve a decidir por los bytes y la imagen se reduce: a Claude solo llega una imagen de verdad, pequeña.
+    if (!bytes || !detectarImagen(bytes)) continue;
+    const ligera = await reducirParaClaude(bytes);
+    if (ligera) salida.push({ rol, mime: ligera.mime, bytes: ligera.bytes });
   }
   return salida;
 }
