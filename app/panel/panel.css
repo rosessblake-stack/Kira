@@ -83,7 +83,8 @@ body:has(.panel) {
 .estado.activa { border-color: var(--ok); }
 .estado p { margin: 2px 0 0; }
 
-.tabs { display: flex; gap: 2px; margin: 18px 0 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+/* Las pestañas se parten en dos filas si no caben: nunca se deslizan ni se esconden (en el móvil la 4.ª quedaba fuera de pantalla). */
+.tabs { display: flex; flex-wrap: wrap; gap: 2px; margin: 18px 0 4px; border-bottom: 1px solid var(--line); }
 .tabs a {
   text-decoration: none; padding: 10px 10px; border-bottom: 3px solid transparent; color: var(--muted);
   white-space: nowrap; display: inline-flex; gap: 6px; align-items: center; min-height: 44px;

@@ -171,6 +171,17 @@ try {
   check("Estilos aplicados: Proceso", await estiloAplicado(page), peticionesFallidas.join(" | "));
   await page.screenshot({ path: SHOTS + "02-proceso.png", fullPage: true });
 
+  // Móvil (390 px): las cuatro pestañas se ven enteras, sin tener que deslizar (la de Calendario quedaba fuera de pantalla).
+  const cajas = await page.locator(".tabs a").evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { t: e.textContent.trim(), izq: r.left, der: r.right, ancho: r.width }; }));
+  check("pestañas: las cuatro existen (Proceso, Fallos, Seguridad, Calendario)", ["Proceso", "Fallos", "Seguridad", "Calendario"].every((n) => cajas.some((c) => c.t.startsWith(n))), JSON.stringify(cajas));
+  check("pestañas: todas caben dentro de la pantalla del móvil", cajas.every((c) => c.izq >= 0 && c.der <= 390 && c.ancho > 0), JSON.stringify(cajas));
+  await page.screenshot({ path: SHOTS + "02b-pestañas.png", clip: { x: 0, y: 0, width: 390, height: 460 } });
+  await page.getByRole("link", { name: /^Calendario/ }).click();
+  await page.waitForURL("**/panel/calendario");
+  check("pestaña Calendario: abre la pantalla de Google Calendar", (await page.locator("h2").innerText()).includes("Google Calendar"));
+  await page.getByRole("link", { name: /^Proceso/ }).click();
+  await page.waitForURL("**/panel/proceso");
+
   await page.getByRole("link", { name: /Ana López/ }).click();
   await page.waitForURL(`**/panel/proceso/${C1}`);
   const det = await page.locator("body").innerText();
