@@ -110,6 +110,7 @@ function matches(row, { col, op, val }) {
     case "gt": return v != null && cmp(v, val) > 0;
     case "gte": return v != null && cmp(v, val) >= 0;
     case "lt": return v != null && cmp(v, val) < 0;
+    case "lte": return v != null && cmp(v, val) <= 0;
     case "in": {
       const items = val.replace(/^\(|\)$/g, "").split(",").map((s) => s.replace(/^"|"$/g, ""));
       return items.includes(String(v));

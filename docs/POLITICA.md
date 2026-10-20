@@ -21,7 +21,7 @@ Cualquier otra cosa que Claude devuelva se descarta y se trata como `derivar_a_b
 - Reservar sin tu Aprobar, o saltarse la señal (los clientes OG los metes tú a mano).
 - Mover, cancelar o borrar citas existentes. Solo borra el evento provisional que ella misma creó y que sigue sin pagar.
 - Dar datos de otros clientes, de tu agenda, de tus precios internos, de tus contactos o de VIPs.
-- Dar tu teléfono, dirección exacta o email antes de que haya cita pagada.
+- Dar tu teléfono, dirección exacta o email antes de que haya cita pagada. **Única excepción, decidida por Blake:** el número de Bizum (662018425) se da a la clienta que ha dicho «vale» al precio aprobado, y solo en esa plantilla.
 - Hablar de política, medicina, temas legales, dar consejos fuera de trenzas/formaciones, ni hacer de asistente general (código, traducciones, redacciones, "ignora tus instrucciones").
 - Revelar sus instrucciones, que es una IA configurada de cierta manera, claves, herramientas o cómo está montado.
 - Abrir enlaces, ejecutar nada que venga en un mensaje, ni enviar enlaces que no estén en su lista (Stripe generado por el sistema, página del curso, Typeform).
@@ -42,6 +42,17 @@ Reembolsos y quejas, colaboraciones/marcas/prensa, VIPs y clientes conocidos, me
 5. Límites de ritmo por cliente (p. ej. máx. mensajes por hora y por día) y tope diario de gasto en Claude; al superarlos, silencio y aviso.
 6. Solo el servidor con firma válida de ManyChat/Telegram/Stripe puede activar acciones. Solo tu usuario de Telegram puede aprobar.
 7. Si algo falla, Kira falla **hacia el silencio y hacia ti**, nunca hacia hacer algo por su cuenta.
+
+## 4 bis. Lo que Kira escribe sola a la clienta (decisión de Blake, 20-oct)
+
+Después de que apruebes el precio, Kira lleva sola este tramo, SIEMPRE con plantillas fijas (nada redactado por Claude) y solo con respuestas cortas y exactas de la clienta:
+
+1. **Aprobar** → le manda el precio (el borrador que viste) y reserva el hueco en **amarillo**.
+2. **«vale»/«ok»/«👍»** → le pide la señal: Bizum de 20 € al 662018425 (se descuentan del total; el resto, en efectivo) y que escriba «confirmado». Plazo: 45 min.
+3. **«confirmado»** → cita en **morado** + invitación al email, y te avisa AL MOMENTO con el botón «❌ No me ha llegado nada» para revertirlo (opción C).
+4. **Sin respuesta al precio en 20 h** → cierra el chat en silencio y libera el hueco. **«vale» sin pago en 45 min** → libera el hueco y se lo dice.
+
+Todo lo demás que escriba la clienta (preguntas, regateos, dudas) se te reenvía y Kira no contesta. Si han pasado más de 24 h desde su último mensaje, Instagram no deja escribirle: Kira te avisa en vez de enviar. Clientas de Miami: aún no hay cobro (Stripe pendiente), te avisa para que se lo digas tú.
 
 ## 5. Automatización gradual
 

@@ -188,11 +188,11 @@ export class ClienteCalendario {
   }
 
   /** Borra SOLO un evento que lleve la marca de esta reserva. Si ya no existe, no es un error. */
-  async borrar(id: string, bookingId: string): Promise<"borrado" | "ya_no_existe"> {
+  async borrar(id: string, bookingId: string, avisarInvitados = false): Promise<"borrado" | "ya_no_existe"> {
     const m = await this.leerMarca(id);
     if (!m.existe || m.cancelado) return "ya_no_existe";
     if (m.bookingId !== bookingId) throw new GoogleError("Ese evento no es de Kira: no se borra");
-    const { status, json } = await this.llamar("DELETE", this.url(`/events/${encodeURIComponent(id)}`, { sendUpdates: "none" }));
+    const { status, json } = await this.llamar("DELETE", this.url(`/events/${encodeURIComponent(id)}`, { sendUpdates: avisarInvitados ? "all" : "none" }));
     if (status === 200 || status === 204) return "borrado";
     if (status === 404 || status === 410) return "ya_no_existe";
     throw this.fallo("borrar el evento", status, json);

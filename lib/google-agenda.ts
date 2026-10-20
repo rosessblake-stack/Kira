@@ -81,8 +81,8 @@ export function crearAgendaGoogle(d: DepsAgendaGoogle = depsReales()): AgendaPor
       return { invitado: invitar };
     },
 
-    async borrar(eventId, bookingId) {
-      return (await cliente()).cli.borrar(eventId, bookingId);
+    async borrar(eventId, bookingId, o) {
+      return (await cliente()).cli.borrar(eventId, bookingId, Boolean(o?.avisarInvitados));
     },
   };
 }

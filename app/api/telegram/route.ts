@@ -13,6 +13,7 @@ import * as db from "../../../lib/db";
 import { issueLoginToken } from "../../../lib/panel-auth";
 import { authStore } from "../../../lib/panel-store";
 import { consultarLegacy } from "../../../lib/pricing";
+import { crearClienteReal } from "../../../lib/cliente-real";
 import { crearFlujoPropuestas, type FlowDeps } from "../../../lib/proposal-flow";
 import * as store from "../../../lib/proposal-store";
 import { crearFlujoRegistro } from "../../../lib/registro-flow";
@@ -59,8 +60,9 @@ function makePhotoDeps(): PhotoDeps {
   };
 }
 
-function makeFlowDeps(photos: PhotoPort): FlowDeps {
+function makeFlowDeps(photos: PhotoPort, cliente: ReturnType<typeof crearClienteReal>): FlowDeps {
   return {
+    cliente,
     agenda: crearAgendaGoogle(),
     now: () => new Date(),
     newNonce: () => randomUUID().replace(/-/g, ""),
@@ -98,6 +100,7 @@ function makeFlowDeps(photos: PhotoPort): FlowDeps {
 
 function makeDeps(host: string | null): Deps {
   const photos = crearFlujoFotos(makePhotoDeps());
+  const client = crearClienteReal();
   return {
     recordUpdate: db.recordUpdate,
     logEvent: (e) => db.logEvent("telegram", e),
@@ -114,7 +117,8 @@ function makeDeps(host: string | null): Deps {
       const token = await issueLoginToken(authStore);
       return `https://${host}/panel/entrar?t=${token}`;
     },
-    proposals: crearFlujoPropuestas(makeFlowDeps(photos)),
+    proposals: crearFlujoPropuestas(makeFlowDeps(photos, client)),
+    client,
     async calendarioEstado() {
       const configurado = configGoogle() !== null;
       try {

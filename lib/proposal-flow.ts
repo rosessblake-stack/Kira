@@ -73,6 +73,10 @@ export type Reserva = {
   is_test: boolean;
   /** Evento de Google Calendar de esta reserva (lo guarda Kira al aprobar: solo se borran eventos con este id). */
   calendar_event_id?: string | null;
+  /** En qué punto de la conversación con la clienta está (lib/cliente-flow.ts). */
+  client_phase?: "precio_enviado" | "pago_pedido" | "confirmada" | "cerrada" | null;
+  /** Plazo de la fase actual (si vence, el temporizador cierra la reserva). */
+  payment_deadline?: string | null;
   approved_by_telegram_user: number | null;
   approved_at: string | null;
 };
@@ -135,6 +139,15 @@ export interface FlowDeps {
   guardarRegistro(r: Reserva): Promise<void>;
   /** Quita el registro de una cita cancelada (no cuenta para calibrar). */
   retirarRegistro(bookingId: string): Promise<void>;
+  /**
+   * La conversación con la clienta tras el Aprobar (precio, «vale», Bizum, «confirmado»). Sin él, Aprobar solo reserva el hueco
+   * y no se escribe a nadie (como antes de conectar Instagram).
+   */
+  cliente?: {
+    alAprobar(r: Reserva): Promise<void>;
+    alConfirmarBlake(r: Reserva, invitado: boolean): Promise<void>;
+    alCancelarBlake(r: Reserva): Promise<void>;
+  };
   /** Reservas que pueden haberse quedado sin botones (propuestas y citas provisionales), las más recientes primero. */
   listarPendientes(): Promise<Reserva[]>;
 
@@ -691,7 +704,13 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     }
     await deps.logEvent({ source: "telegram", kind: "propuesta_aprobada", summary: "Propuesta aprobada por Blake", detail: { precio_centimos: r.price_cents }, ...ids });
     await deps.logEvent({ source: "calendar", kind: "evento_provisional_creado", summary: "Evento provisional (amarillo) creado en Google Calendar", ...ids });
-    await deps.logEvent({ source: "system", kind: "respuesta_lista_sin_enviar", summary: "Respuesta aprobada pero sin enviar: el canal de Instagram no está conectado", ...ids });
+    if (deps.cliente) {
+      // El precio a la clienta: lo último y secundario (si falla, Blake ya tiene sus botones y recibe un aviso).
+      const cliente = deps.cliente;
+      await mejorEsfuerzo("enviar el precio a la clienta", ids, () => cliente.alAprobar({ ...r, status: "pendiente_pago", calendar_event_id: eventoId }));
+    } else {
+      await deps.logEvent({ source: "system", kind: "respuesta_lista_sin_enviar", summary: "Respuesta aprobada pero sin enviar: el canal de Instagram no está conectado", ...ids });
+    }
   }
 
   const textoProvisional = (r: Reserva, aviso = "") => {
@@ -699,18 +718,27 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const email = r.client_email
       ? ` y se añade el email de la clienta (${r.client_email})${r.is_test ? "; en las pruebas solo si es el de tu propia cuenta de Google" : ""}`
       : "";
+    const siguiente = deps.cliente
+      ? [
+          `Le mando el precio a la clienta. Si dice «vale», le pido el Bizum y, cuando escriba «confirmado», la cita pasa a morado${email} y te aviso para que mires tu Bizum (con un botón para revertirlo).`,
+          "Si no responde al precio en 20 h, o dice «vale» y no paga en 45 min, borro el evento y libero el hueco.",
+          "Tú puedes adelantarte: «Señal recibida» la da por pagada y «Cancelar cita» borra el evento.",
+        ]
+      : [
+          `Cuando recibas la señal (Bizum o Stripe), pulsa «Señal recibida»: el evento pasa a morado${email}.`,
+          "Si la cita no va a ser, pulsa «Cancelar cita»: borro el evento.",
+          "",
+          "No se ha enviado nada al cliente (el canal de Instagram no está conectado).",
+        ];
     return [
       `${r.is_test ? "🧪 PRUEBA · " : ""}📅 RESERVA PROVISIONAL (amarilla)`,
-      aviso ? `\n${aviso}` : "",
+      ...(aviso ? ["", aviso] : []),
       "",
       resumenDecision(r),
       `📍 Dirección: ${r.spec.direccion ?? "sin indicar"} · 🌍 ${lugar.nombre}`,
       "",
-      `Cuando recibas la señal (Bizum o Stripe), pulsa «Señal recibida»: el evento pasa a morado${email}.`,
-      "Si la cita no va a ser, pulsa «Cancelar cita»: borro el evento.",
-      "",
-      "No se ha enviado nada al cliente (el canal de Instagram no está conectado).",
-    ].filter((x, i) => !(x === "" && i === 1)).join("\n");
+      ...siguiente,
+    ].join("\n");
   };
 
   /** Botones de una cita con reserva provisional: señal recibida / cancelar. Un solo uso cada vez; si algo falla, se vuelven a ofrecer. */
@@ -778,6 +806,10 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       await editarMensaje(`${marca}💜 SEÑAL RECIBIDA · RESERVA CONFIRMADA\n\n${resumenDecision(r)}\n\nEl evento está en morado en tu calendario${invitado ? ` y he invitado a ${r.client_email} (Google le envía la invitación)` : r.client_email ? ` (no he invitado a ${r.client_email}${r.is_test ? ": es una prueba y no es tu cuenta" : ""})` : " (no tengo su email, así que no hay invitación)"}.`);
       await deps.logEvent({ source: "telegram", kind: "senal_confirmada_por_blake", summary: "Blake confirmó la señal: reserva pagada", detail: { invitado }, ...ids });
       await deps.logEvent({ source: "calendar", kind: "evento_pagado", summary: `Evento pasado a morado${invitado ? " e invitada la clienta" : ""}`, ...ids });
+      if (deps.cliente) {
+        const cliente = deps.cliente;
+        await mejorEsfuerzo("confirmar la cita a la clienta", ids, () => cliente.alConfirmarBlake({ ...r, status: "pagada" }, invitado));
+      }
       return;
     }
 
@@ -802,6 +834,10 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     }
     // Una cita cancelada no cuenta para calibrar horas y materiales: su registro se retira.
     await mejorEsfuerzo("retirar el registro del servicio", ids, () => deps.retirarRegistro(r.id));
+    if (deps.cliente) {
+      const cliente = deps.cliente;
+      await mejorEsfuerzo("cerrar el seguimiento de la clienta", ids, () => cliente.alCancelarBlake(r));
+    }
     await deps.logEvent({ source: "telegram", kind: "cita_cancelada_por_blake", summary: "Blake canceló la cita: evento borrado", ...ids });
     await deps.logEvent({ source: "calendar", kind: "evento_borrado", summary: "Evento provisional borrado del calendario", ...ids });
   }

@@ -21,6 +21,7 @@ type Calls = {
   };
   trips: { k: string; chatId: number; texto?: string }[];
   records: { k: string; chatId: number; texto: string }[];
+  client: { k: string; chatId?: number; texto?: string; nonce?: string; accion?: string }[];
   fotos: { recibir: { chatId: number; fileId: string; tamano: number | null; conversationId: string | null; pie: string }[]; reenviar: { chatId: number; conversationId: string | null }[] };
   edited: { chatId: number; messageId: number; text: string }[];
   answered: { id: string; text?: string }[];
@@ -29,7 +30,7 @@ type Calls = {
 };
 
 function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } = {}) {
-  const calls: Calls = { sent: [], links: 0, prop: { simular: [], botones: [], libres: [], cancelar: 0, citas: [], pendientes: [] }, trips: [], records: [], fotos: { recibir: [], reenviar: [] }, edited: [], answered: [], events: [], security: [] };
+  const calls: Calls = { sent: [], links: 0, prop: { simular: [], botones: [], libres: [], cancelar: 0, citas: [], pendientes: [] }, trips: [], records: [], client: [], fotos: { recibir: [], reenviar: [] }, edited: [], answered: [], events: [], security: [] };
   const seen = new Set<string>(opts.seen ?? []);
   const issued = new Set<string>(opts.issued ?? []);
   let counter = 0;
@@ -81,6 +82,17 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       async viaje(chatId, texto) { calls.trips.push({ k: "viaje", chatId, texto }); },
       async viajes(chatId) { calls.trips.push({ k: "viajes", chatId }); },
       async borrarViaje(chatId, texto) { calls.trips.push({ k: "borrar", chatId, texto }); },
+    },
+    client: {
+      async alAprobar() {},
+      async alConfirmarBlake() {},
+      async alCancelarBlake() {},
+      async respuestaClienta() {},
+      async respuestaEnPrueba(chatId, texto) { calls.client.push({ k: "clienta", chatId, texto }); },
+      async botonRevertir(b) { calls.client.push({ k: "revertir", chatId: b.chatId, nonce: b.nonce }); },
+      async procesarVencidas() { return { cerradas: 0 }; },
+      async vencerYa(chatId) { calls.client.push({ k: "vencer", chatId }); },
+      async bizum(chatId, texto) { calls.client.push({ k: "bizum", chatId, texto }); },
     },
     async calendarioEstado() { return "📅 Calendario de prueba"; },
     records: {
@@ -648,5 +660,44 @@ describe("/pendientes: recuperar botones perdidos", () => {
     const { calls, deps } = setup();
     await handleTelegramRequest(SECRET, msg("/start"), admin(ADMIN), deps);
     expect(calls.sent[0].text).toContain("/pendientes");
+  });
+});
+
+describe("la conversación con la clienta: /clienta, /bizum, /vencer y el botón de revertir", () => {
+  it("/clienta, /bizum y /vencer llegan al flujo con su texto (sin el comando) y solo para Blake", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/clienta vale gracias"), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, msg("/bizum 662018425"), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, msg("/vencer"), admin(ADMIN), deps);
+    expect(calls.client).toEqual([
+      { k: "clienta", chatId: ADMIN, texto: "vale gracias" },
+      { k: "bizum", chatId: ADMIN, texto: "662018425" },
+      { k: "vencer", chatId: ADMIN },
+    ]);
+
+    const otro = setup();
+    await handleTelegramRequest(SECRET, msg("/clienta confirmado", OTHER), admin(ADMIN), otro.deps);
+    await handleTelegramRequest(SECRET, msg("/bizum 600000000", OTHER), admin(ADMIN), otro.deps);
+    expect(otro.calls.client).toEqual([]);
+    expect(otro.calls.security.filter((e) => e.kind === "telegram_no_autorizado")).toHaveLength(2);
+  });
+
+  it("el botón «No me ha llegado nada» (c:…:rev) va al flujo de revertir, no al de la señal", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, cb(`c:${NONCE}:rev`), admin(ADMIN), deps);
+    expect(calls.client).toEqual([{ k: "revertir", chatId: ADMIN, nonce: NONCE }]);
+    expect(calls.prop.citas).toEqual([]);
+
+    const otro = setup();
+    await handleTelegramRequest(SECRET, cb(`c:${NONCE}:rev`, OTHER), admin(ADMIN), otro.deps);
+    expect(otro.calls.client).toEqual([]);
+  });
+
+  it("los botones de señal y cancelar siguen yendo a su flujo", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, cb(`c:${NONCE}:pay`), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, cb(`c:${NONCE}:del`), admin(ADMIN), deps);
+    expect(calls.prop.citas.map((c) => c.accion)).toEqual(["pay", "del"]);
+    expect(calls.client).toEqual([]);
   });
 });

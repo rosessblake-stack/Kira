@@ -298,6 +298,7 @@ const app = spawn("node", ["node_modules/next/dist/bin/next", "start", "-p", "31
     TELEGRAM_API_BASE: "http://127.0.0.1:54332",
     TELEGRAM_WEBHOOK_SECRET: SECRET,
     TELEGRAM_ADMIN_USER_ID: String(ADMIN),
+    CRON_SECRET: "cron-secreto-falso",
     ...(SIN_CLAVE ? {} : { ANTHROPIC_API_KEY: "clave-falsa-anthropic", ANTHROPIC_BASE_URL: "http://127.0.0.1:54331" }),
     LEGACY_API_URL: "http://127.0.0.1:54333/api/calculate",
     GOOGLE_CUENTA_ESPERADA: "info@blakebraider.com",
@@ -430,7 +431,7 @@ try {
   check(`A28. Blake ve EXACTAMENTE el precio de Legacy (${euros(totalLegacy)})`, propuesta2.text.includes(`${euros(totalLegacy)} (Legacy)`));
   check("A29. muestra horas, materiales y el perfil confirmado de Blake (sin avisar de perfil sin confirmar), y avisa de lo provisional (horas)", propuesta2.text.includes("3 h · materiales 5 €") && propuesta2.text.includes("perfil élite · zona media · casa · base salarial 1500 €") && !propuesta2.text.includes("Perfil de precios sin confirmar") && propuesta2.text.includes("son una sugerencia: ajústalas con «horas 3»"));
   check("A30. horario: 12:00 → 15:00 (3 h)", propuesta2.text.includes("mar 20 oct, 12:00 → 15:00 (3 h)"));
-  check("A31. borrador al cliente con precio real, fecha y señal", propuesta2.text.includes(`el precio es de ${euros(totalLegacy)}`) && propuesta2.text.includes("Me pides el mar 20 oct, 12:00") && propuesta2.text.includes("señal de 20 €"));
+  check("A31. borrador al cliente con precio real, fecha y señal", propuesta2.text.includes(`el precio es de ${euros(totalLegacy)}`) && propuesta2.text.includes("Tu cita sería el mar 20 oct, 12:00") && propuesta2.text.includes("señal de 20 €"));
   check("A32. ya sin ⛔ y con botón Aprobar", !propuesta2.text.includes("⛔") && JSON.stringify(botones(propuesta2)) === JSON.stringify(["✅ Aprobar", "✏️ Editar", "❌ Rechazar"]));
   r = reservas()[0];
   check("A33. la reserva guarda precio, duración y fin", r.price_cents === totalLegacy && r.duration_minutes === 180 && r.ends_at === "2026-10-20T13:00:00.000Z" && r.pricing.origen === "legacy");
@@ -1120,6 +1121,100 @@ try {
   check("L54. con el botón nuevo se puede cancelar: se borra su evento y se retira su registro (una cita cancelada no cuenta para calibrar)", reservas().at(-1).status === "cancelada" && [...g.eventos.values()].filter((e) => e.status !== "cancelled").length === eventosAntesCancelar - 1 && tables.service_records.length === registrosAntesCancelar - 1);
   await escribe("/pendientes");
   check("L55. sin nada pendiente, /pendientes lo dice", ultimo().text.includes("No tienes ninguna reserva provisional"));
+
+  // ============================================================================ M. LA CONVERSACIÓN CON LA CLIENTA (precio → «vale» → Bizum → «confirmado»)
+  console.log("\n=== M. Conversación con la clienta: precio, «vale», Bizum, «confirmado», revertir, plazos y cron ===");
+  const paraClienta = () => tg.enviados.filter((m) => m.text.startsWith("📤 PARA LA CLIENTA"));
+  const reservaM = () => reservas().at(-1);
+  const salidasM = () => tables.messages.filter((m) => m.direction === "out");
+  const eventoDeR = (r) => { const e = g.eventos.get(`kira${r.id.replace(/-/g, "")}`); return e && e.status !== "cancelled" ? e : undefined; };
+  const llamadasDelete = () => g.llamadas.filter((x) => x.metodo === "DELETE");
+  /** /simular de Michael + Aprobar: deja la reserva en amarillo con el precio ya «enviado» a la clienta. */
+  const aprobarMichael = async () => {
+    await escribe(`/simular ${MSG_MICHAEL}`);
+    const prop = conBotones();
+    await pulsa(dato(prop, "Aprobar"), prop.message_id);
+  };
+
+  await escribe("/bizum");
+  check("M1. sin número guardado, /bizum lo dice", ultimo().text.includes("Todavía no tengo tu número de Bizum"));
+  await escribe("/bizum 12345");
+  check("M2. un número que no es un móvil de España se rechaza", ultimo().text.includes("no me cuadra"));
+  await escribe("/bizum 662 01 84 25");
+  check("M3. se guarda el número normalizado en la configuración (no en el código)", ultimo().text.includes("al 662018425") && tables.app_settings.some((x) => x.key === "bizum_numero" && x.value === "662018425"));
+
+  await aprobarMichael();
+  const rA = reservaM();
+  const msgPrecio = paraClienta().at(-1);
+  anota("Kira (precio a la clienta, simulado)", msgPrecio?.text ?? "(nada)");
+  const nBase = paraClienta().length; // los mensajes a la clienta de pruebas anteriores también cuentan
+  check("M4. tras Aprobar, el precio sale hacia la clienta (en pruebas, a Blake y marcado como simulado)", Boolean(msgPrecio) && msgPrecio.text.includes("Si te encaja, respóndeme «vale»") && msgPrecio.text.includes("Tu cita sería el"));
+  check("M5. la reserva queda en amarillo con fase «precio_enviado» y plazo de 20 h", rA.status === "pendiente_pago" && rA.client_phase === "precio_enviado" && Math.abs(Date.parse(rA.payment_deadline) - (Date.now() + 20 * 3_600_000)) < 120_000);
+  check("M6. el mensaje queda guardado como saliente y la ventana de 24 h está abierta", salidasM().at(-1)?.body === msgPrecio.text.split("\n\n").slice(1, -1).join("\n\n").split("\n\n↩️")[0] || salidasM().some((x) => msgPrecio.text.includes(x.body)));
+  check("M7. el hueco sigue en amarillo (provisional) en el calendario de Blake", eventoDeR(reservaM())?.colorId === "5");
+
+  await escribe("/clienta ¿no puede ser más barato?");
+  check("M8. una pregunta no es un «vale»: Kira no decide, se lo reenvía a Blake y no contesta a la clienta", ultimo().text.includes("respóndele tú") && ultimo().text.includes("¿no puede ser más barato?") && reservaM().client_phase === "precio_enviado" && paraClienta().length === nBase);
+
+  await escribe("/clienta vale");
+  const msgBizum = paraClienta().at(-1);
+  anota("Kira (Bizum, simulado)", msgBizum.text);
+  check("M9. «vale» → se le pide el Bizum de 20 € al número de Blake, con «confirmado» y plazo", paraClienta().length === nBase + 1 && msgBizum.text.includes("Bizum de 20 € al 662018425") && msgBizum.text.includes("«confirmado»") && msgBizum.text.includes("45 minutos"));
+  check("M10. fase «pago_pedido» y plazo de 45 min; Blake recibe el aviso", reservaM().client_phase === "pago_pedido" && Math.abs(Date.parse(reservaM().payment_deadline) - (Date.now() + 45 * 60_000)) < 120_000 && ultimo().text.includes("Le he pedido el Bizum"));
+  await escribe("/clienta vale");
+  check("M11. un segundo «vale» no repite el Bizum", paraClienta().length === nBase + 1);
+
+  await escribe("/clienta no he confirmado todavía");
+  check("M12. «no he confirmado todavía» NO confirma nada (sigue en amarillo y pendiente)", reservaM().status === "pendiente_pago" && eventoDeR(reservaM())?.colorId === "5" && ultimo().text.includes("respóndele tú"));
+
+  const antesPagado = g.llamadas.filter((x) => x.metodo === "PATCH").length;
+  await escribe("/clienta confirmado");
+  const avisoC = conBotones();
+  anota("Kira (aviso a Blake tras «confirmado»)", `${avisoC.text}\n[botones: ${botones(avisoC).join(" | ")}]`);
+  check("M13. «confirmado» → la cita pasa a morado sin esperar a Blake (reserva pagada, fase confirmada)", reservaM().status === "pagada" && reservaM().client_phase === "confirmada" && eventoDeR(reservaM())?.colorId === "3" && g.llamadas.filter((x) => x.metodo === "PATCH").length > antesPagado);
+  check("M14. Blake recibe el aviso al momento con el botón «No me ha llegado nada» (la palabra de la clienta no prueba un pago)", avisoC.text.includes("ha escrito «confirmado»") && avisoC.text.includes("Mira tu Bizum") && botones(avisoC).join("|") === "❌ No me ha llegado nada");
+  check("M15. la clienta recibe la confirmación (en pruebas no se invita a un email que no sea el de Blake)", paraClienta().at(-1).text.includes("¡Confirmado!") && !eventoDeR(reservaM())?.attendees);
+
+  const botonRev = avisoC.reply_markup.inline_keyboard[0][0].callback_data;
+  await pulsa(botonRev, avisoC.message_id);
+  check("M16. «No me ha llegado nada» revierte: evento borrado AVISANDO a la clienta, reserva cancelada, conversación cerrada", reservaM().status === "cancelada" && reservaM().client_phase === "cerrada" && !eventoDeR(reservaM()) && llamadasDelete().at(-1)?.query.sendUpdates === "all" && tables.conversations.at(-1).status === "cerrada");
+  check("M17. la clienta recibe el aviso de que no consta el Bizum y se libera el hueco", paraClienta().at(-1).text.includes("Todavía no me consta el Bizum"));
+  await pulsa(botonRev, avisoC.message_id);
+  check("M18. el botón de revertir es de un solo uso", tg.respuestas.at(-1)?.text === "Ya procesado" && llamadasDelete().length === g.llamadas.filter((x) => x.metodo === "DELETE").length);
+
+  // Plazo de 45 min: dice «vale» y no paga
+  await aprobarMichael();
+  await escribe("/clienta vale");
+  const idPago = reservaM().id;
+  await escribe("/vencer");
+  check("M19. sin Bizum a tiempo, el plazo cierra la reserva: evento amarillo borrado (sin avisar a nadie), reserva expirada", reservaM().id === idPago && reservaM().status === "expirada" && reservaM().client_phase === "cerrada" && !eventoDeR(reservaM()) && llamadasDelete().at(-1)?.query.sendUpdates === "none");
+  check("M20. a la clienta se le dice que se libera el hueco y Blake recibe el aviso", paraClienta().at(-1).text.includes("liberado el hueco") && tg.enviados.some((m) => m.text.includes("no confirmó el Bizum en 45 min")));
+
+  // Plazo de 20 h: no responde al precio (visto) → se cierra en silencio
+  await aprobarMichael();
+  const salientesAntes = paraClienta().length;
+  await escribe("/vencer");
+  check("M21. en visto 20 h: se cierra y se libera el hueco SIN escribir a la clienta; Blake recibe el aviso", reservaM().status === "expirada" && !eventoDeR(reservaM()) && paraClienta().length === salientesAntes && tg.enviados.some((m) => m.text.includes("no respondió al precio en 20 h")));
+  check("M22. una reserva expirada deja su registro de servicio fuera de los datos de calibrado", !tables.service_records.some((x) => x.booking_id === reservaM().id));
+
+  // El temporizador de verdad: /api/cron con la clave compartida
+  const cron = (cabeceras = {}) => fetch(`${BASE}/api/cron`, { method: "POST", headers: cabeceras });
+  const sinClave = await cron();
+  const malaClave = await cron({ "x-cron-secret": "otra-cosa" });
+  check("M23. /api/cron sin clave o con clave mala responde 401, no cierra nada y queda anotado", sinClave.status === 401 && malaClave.status === 401 && tables.security_events.filter((e) => e.source === "cron").length === 2);
+  await aprobarMichael();
+  const rCron = reservaM();
+  const fila = tables.bookings.find((x) => x.id === rCron.id);
+  fila.payment_deadline = new Date(Date.now() - 60_000).toISOString();
+  const buena = await cron({ "x-cron-secret": "cron-secreto-falso" });
+  const cuerpo = await buena.json();
+  check("M24. el temporizador (con la clave correcta) cierra el plazo vencido", buena.status === 200 && cuerpo.ok === true && cuerpo.cerradas === 1 && tables.bookings.find((x) => x.id === rCron.id).status === "expirada");
+  const otra = await (await cron({ "x-cron-secret": "cron-secreto-falso" })).json();
+  check("M25. llamarlo de más no cambia nada (idempotente)", otra.ok === true && otra.cerradas === 0);
+
+  // Instagram sin conectar y ventana de 24 h
+  const ig = tables.conversations.find((c) => c.id === rCron.conversation_id);
+  check("M26. los mensajes a la clienta de las pruebas quedan en su conversación (entrantes y salientes)", tables.messages.some((m) => m.conversation_id === tables.bookings.find((x) => x.id === idPago).conversation_id && m.direction === "in" && m.body === "vale") && Boolean(ig));
 
   // ============================================================================ H. Sin secretos en los registros
   const volcado = JSON.stringify({ e: tables.event_log, s: tables.security_events });

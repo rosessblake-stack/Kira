@@ -318,8 +318,8 @@ function componerBorrador(
   return [
     `${saludo} Gracias por escribirme 😊`,
     `Para ${describirServicioNatural(spec)}, el precio es de ${dinero(precio, moneda)}${duracion ? ` y dura aproximadamente ${duracionLegible(duracion)}` : ""}.`,
-    `Me pides el ${fechaLarga(inicio, zona)}. Lo confirmo y te aviso enseguida.`,
-    `Para reservar el hueco se deja una señal de ${dinero(spec.senal_centimos, moneda)}, que se descuenta del total. En cuanto lo confirme te paso el enlace de pago.`,
+    `Tu cita sería el ${fechaLarga(inicio, zona)}.`,
+    `Para reservar el hueco se deja una señal de ${dinero(spec.senal_centimos, moneda)}, que se descuenta del total el día de la cita. Si te encaja, respóndeme «vale» y te explico cómo hacerla 😊`,
   ].join("\n\n");
 }
 

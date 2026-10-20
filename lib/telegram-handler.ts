@@ -1,5 +1,6 @@
 import { MAX_BYTES_FOTO } from "./fotos";
 import type { MediaTelegram, PhotoPort } from "./photo-flow";
+import type { ClientePort } from "./cliente-flow";
 import type { ProposalPort } from "./proposal-flow";
 import type { RegistroPort } from "./registro-flow";
 import type { TripPort } from "./trip-flow";
@@ -60,6 +61,8 @@ export interface Deps {
   createLoginLink(): Promise<string>;
   /** Propuestas de cita: simulación, botones Aprobar/Editar/Rechazar y edición por texto. */
   proposals: ProposalPort;
+  /** La conversación con la clienta tras el Aprobar (precio, «vale», Bizum, «confirmado»): /clienta, /bizum, /vencer y el botón de revertir. */
+  client: ClientePort;
   /** Fotos que Blake envía (pelo, trenzas de referencia): se guardan en privado y se adjuntan a la prueba. */
   photos: PhotoPort;
   /** Viajes de Blake a Miami (de qué fecha a qué fecha): las propuestas avisan si la fecha pedida no cuadra. */
@@ -93,7 +96,7 @@ type TgUpdate = { update_id?: number; message?: TgMessage; callback_query?: TgCa
 const CALLBACK_RE = /^t:([0-9a-f]{32}):(ok|ed|no)$/;
 const PROPOSAL_CB_RE = /^p:([0-9a-f]{32}):(ok|ed|no)$/;
 /** Botones de una cita con reserva provisional en el calendario: señal recibida / cancelar. */
-const CITA_CB_RE = /^c:([0-9a-f]{32}):(pay|del)$/;
+const CITA_CB_RE = /^c:([0-9a-f]{32}):(pay|del|rev)$/;
 
 const LABELS: Record<string, string> = {
   ok: "✅ Aprobado",
@@ -228,7 +231,7 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   if (cmd === "/start") {
     await deps.sendMessage(
       chatId,
-      "Kira activa. Te he identificado como administrador.\n\n/simular <mensaje> → simula el mensaje de un cliente (España) y te manda la propuesta\n/simular miami: <mensaje> → igual, pero una clienta de Miami (dólares y hora de Miami)\nFotos → mándame la foto del pelo y la de las trenzas; si quieres, con un pie («pelo: rizado, fino…» o «referencia: boxeadoras largas»)\n/fotos → te devuelvo las fotos de la última prueba\n/viaje miami 3/11 al 20/11 → apunta de qué día a qué día estás en Miami (/viajes los lista, /borrarviaje 1 quita uno)\n/calendario → estado de la conexión con tu Google Calendar\n/pendientes → te vuelvo a mandar los botones de las reservas que esperan tu señal o decisión (por si se perdieron)\n/real → las últimas citas aprobadas; /real 12 horas 3,5; materiales 9; precio 80 anota lo que de verdad tardó y gastó\n/datos → lo que de verdad pasa en cada tipo de servicio\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
+      "Kira activa. Te he identificado como administrador.\n\n/simular <mensaje> → simula el mensaje de un cliente (España) y te manda la propuesta\n/simular miami: <mensaje> → igual, pero una clienta de Miami (dólares y hora de Miami)\nFotos → mándame la foto del pelo y la de las trenzas; si quieres, con un pie («pelo: rizado, fino…» o «referencia: boxeadoras largas»)\n/fotos → te devuelvo las fotos de la última prueba\n/viaje miami 3/11 al 20/11 → apunta de qué día a qué día estás en Miami (/viajes los lista, /borrarviaje 1 quita uno)\n/calendario → estado de la conexión con tu Google Calendar\n/pendientes → te vuelvo a mandar los botones de las reservas que esperan tu señal o decisión (por si se perdieron)\n/clienta vale → contestas como si fueras la clienta de la última prueba aprobada (también /clienta confirmado)\n/bizum 662018425 → el número al que las clientas hacen la señal (/bizum solo lo muestra)\n/vencer → agota el plazo de la última prueba para ver qué pasa cuando no responde\n/real → las últimas citas aprobadas; /real 12 horas 3,5; materiales 9; precio 80 anota lo que de verdad tardó y gastó\n/datos → lo que de verdad pasa en cada tipo de servicio\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
     );
     return;
   }
@@ -253,6 +256,20 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
 
   if (cmd === "/pendientes") {
     await deps.proposals.pendientes(chatId);
+    return;
+  }
+
+  // La conversación con la clienta. Todo lo que sigue al comando es texto «de la clienta» o un dato: no se interpreta como orden.
+  if (cmd === "/clienta") {
+    await deps.client.respuestaEnPrueba(chatId, text.replace(/^\S+\s*/, ""));
+    return;
+  }
+  if (cmd === "/bizum") {
+    await deps.client.bizum(chatId, text.replace(/^\S+\s*/, ""));
+    return;
+  }
+  if (cmd === "/vencer") {
+    await deps.client.vencerYa(chatId);
     return;
   }
 
@@ -326,7 +343,7 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   // Texto libre: solo se atiende si hay una edición abierta (tras pulsar Editar en una propuesta).
   if (text && !text.startsWith("/") && (await deps.proposals.textoLibre(chatId, text))) return;
 
-  await deps.sendMessage(chatId, "No conozco ese comando. Prueba con /simular, /fotos, /viaje, /calendario, /pendientes, /real, /datos, /panel o /prueba.");
+  await deps.sendMessage(chatId, "No conozco ese comando. Prueba con /simular, /fotos, /viaje, /calendario, /pendientes, /clienta, /bizum, /real, /datos, /panel o /prueba.");
 }
 
 async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {
@@ -360,14 +377,15 @@ async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {
 
   const cita = CITA_CB_RE.exec(cq.data ?? "");
   if (cita) {
-    await deps.proposals.botonCita({
+    const comun = {
       callbackId,
       chatId: cq.message?.chat?.id ?? fromId,
       messageId: typeof cq.message?.message_id === "number" ? cq.message.message_id : null,
       fromId,
       nonce: cita[1],
-      accion: cita[2] as "pay" | "del",
-    });
+    };
+    if (cita[2] === "rev") await deps.client.botonRevertir(comun);
+    else await deps.proposals.botonCita({ ...comun, accion: cita[2] as "pay" | "del" });
     return;
   }
 

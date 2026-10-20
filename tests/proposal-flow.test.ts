@@ -70,6 +70,8 @@ type Opciones = {
   /** Viajes de Blake a Miami (de qué fecha a qué fecha). Por defecto, ninguno. */
   estancias?: Estancia[];
   fallaLecturaViajes?: boolean;
+  /** Si se pasa, Kira habla con la clienta tras el Aprobar (lib/cliente-flow.ts); aquí solo se anotan las llamadas. */
+  cliente?: { fallaAprobar?: boolean };
   /** Instante «de hoy». Por defecto un martes (los lunes y domingos son días libres de Blake). */
   ahora?: string;
 };
@@ -94,6 +96,7 @@ function mundo(op: Opciones = {}) {
     zonasClasificar: [] as (string | undefined)[],
     fotos: new Map<string, ResumenFoto[]>(),
     albumes: [] as { chat: number; conv: string; antesDeLosMensajes: number }[],
+    clienteLlamadas: [] as { k: string; id: string; status: string; invitado?: boolean; botonesAntes: number }[],
     registros: [] as Reserva[],
     registrosRetirados: [] as string[],
     /** Mientras sea true, escribir un botón nuevo (proposal_nonce) en la base de datos falla. */
@@ -147,6 +150,16 @@ function mundo(op: Opciones = {}) {
   if (op.fotosIniciales) w.fotos.set("conv-1", structuredClone(op.fotosIniciales));
   const deps: FlowDeps = {
     agenda,
+    cliente: op.cliente
+      ? {
+          async alAprobar(r) {
+            w.clienteLlamadas.push({ k: "aprobar", id: r.id, status: r.status, botonesAntes: w.enviados.filter((e) => JSON.stringify(e.markup ?? "").includes(":pay")).length });
+            if (op.cliente?.fallaAprobar) throw new Error("fallo al escribir a la clienta");
+          },
+          async alConfirmarBlake(r, invitado) { w.clienteLlamadas.push({ k: "confirmar", id: r.id, status: r.status, invitado, botonesAntes: 0 }); },
+          async alCancelarBlake(r) { w.clienteLlamadas.push({ k: "cancelar", id: r.id, status: r.status, botonesAntes: 0 }); },
+        }
+      : undefined,
     now: () => reloj,
     newNonce: () => (++n).toString(16).padStart(32, "0"),
     async clasificar(texto, _ahora, zona) {
@@ -1780,5 +1793,57 @@ describe("conexión perdida o ilegible: el motivo dice cómo arreglarlo", () => 
     await m.boton(m.nonceDe(), "ok", m.ultimo().id);
     expect(m.w.cal.creados).toHaveLength(0);
     expect(m.ultimo().texto).toContain("Reconecta en el panel → Calendario");
+  });
+});
+
+describe("la conversación con la clienta se engancha a los botones de Blake", () => {
+  async function aprobada(op: Opciones = { calendario: {}, cliente: {} }) {
+    const m = mundo(op);
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo pegadas\ntrenzas 6\nnombre Michael\nhoras 2,5\nmateriales 10");
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    return m;
+  }
+
+  it("Aprobar: primero los botones de Blake y después el precio a la clienta, con la reserva ya en pendiente_pago", async () => {
+    const m = await aprobada();
+    expect(m.w.clienteLlamadas).toHaveLength(1);
+    expect(m.w.clienteLlamadas[0]).toMatchObject({ k: "aprobar", id: "res-1", status: "pendiente_pago" });
+    expect(m.w.clienteLlamadas[0].botonesAntes).toBe(1);
+    expect(m.reserva().status).toBe("pendiente_pago");
+    const texto = m.ultimo().texto;
+    expect(texto).toContain("Le mando el precio a la clienta");
+    expect(texto).toContain("20 h");
+    expect(texto).toContain("45 min");
+    expect(texto).not.toContain("No se ha enviado nada al cliente");
+    expect(m.tipos()).not.toContain("respuesta_lista_sin_enviar");
+  });
+
+  it("si escribir a la clienta falla, Aprobar sigue valiendo (Blake ya tiene su cita y sus botones) y queda constancia", async () => {
+    const m = await aprobada({ calendario: {}, cliente: { fallaAprobar: true } });
+    expect(m.reserva().status).toBe("pendiente_pago");
+    expect(m.w.cal.creados).toHaveLength(1);
+    expect(m.botones()).toEqual(["💜 Señal recibida", "🗑 Cancelar cita"]);
+    expect(m.tipos()).toContain("paso_secundario_fallo");
+  });
+
+  it("«Señal recibida» de Blake se lo confirma a la clienta (diciendo si se la invitó)", async () => {
+    const m = await aprobada();
+    await m.botonCita(m.nonceCita(), "pay");
+    expect(m.w.clienteLlamadas.filter((c) => c.k === "confirmar")).toEqual([{ k: "confirmar", id: "res-1", status: "pagada", invitado: false, botonesAntes: 0 }]);
+  });
+
+  it("«Cancelar cita» cierra el seguimiento de la clienta", async () => {
+    const m = await aprobada();
+    await m.botonCita(m.nonceCita(), "del");
+    expect(m.w.clienteLlamadas.filter((c) => c.k === "cancelar")).toHaveLength(1);
+  });
+
+  it("sin la conversación con la clienta (como antes de conectar Instagram) todo sigue igual: no se escribe a nadie", async () => {
+    const m = await aprobada({ calendario: {} });
+    expect(m.w.clienteLlamadas).toEqual([]);
+    expect(m.ultimo().texto).toContain("No se ha enviado nada al cliente");
+    expect(m.tipos()).toContain("respuesta_lista_sin_enviar");
   });
 });
