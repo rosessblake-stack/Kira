@@ -15,6 +15,24 @@ Hoy la conexión es **solo de lectura**: Kira comprueba la clave y te lista los 
 
 La clave da control total sobre tu cuenta de ManyChat: si alguna vez se pega por error en un chat, se genera otra en ManyChat (la anterior deja de valer).
 
+## El flujo actual de Blake («cita» / «agendar») — leído de su captura del 20-oct
+
+Disparador: mensaje que **contiene** «cita» o «agendar». Pasos, en orden:
+1. «¿Estás en Miami o España?» (botones) → etiqueta `Lugar Cliente`; el campo `pais de cliente` decide la rama.
+2. Miami: «Estaré disponible en Miami hacia Diciembre…» (texto fijo) y comprobación de la etiqueta `En_proceso_reserva` (si está: «tu diagnóstico está en proceso»); si no, la pone. **España salta esa comprobación y no pone la etiqueta.**
+3. Foto del **estilo exacto** que quiere (`Referencia_Diseño`; «imagen que permanezca en el chat, no temporal») → etiqueta `Foto_Recibida`.
+4. Foto del **estado actual del cabello** (`Estado_Cabello`).
+5. ¿Extensiones? SÍ/NO (`uso_extensiones`); si SÍ, ¿qué color? (texto, `color_extensiones`).
+6. Largo deseado: Nuca / Media espalda / Cintura / Debajo del culo (`Largo_trenzas`).
+7. «Dime tu fecha y hora ideal» (texto libre → `Fecha y Hora`, que es un campo de tipo fecha).
+8. Email (campo de email de ManyChat).
+9. Cierre: «Expediente recibido con éxito, {nombre de Instagram}… recibirás presupuesto y confirmación» y se quita `En_proceso_reserva`.
+Cada pregunta tiene recordatorio a los 15 min y cierre a las 23 h («vi que se te olvidó acabar…»).
+
+**Mapa a lo que necesita Kira (confirmado por Blake):** tipo/número de trenzas = la **foto de referencia** (hay que leerla: visión, opción B, pendiente de su decisión); foto del pelo = `Estado_Cabello`; Instagram = el del contacto; email = campo de email; nombre = nombre del perfil de Instagram (hoy no se pregunta); borrar `Clor_extensiones` (con errata) y quedarse con `color_extensiones`.
+
+**Fallos y mejoras detectados:** (a) el disparador «contiene cita» reinicia el cuestionario si la clienta escribe «cita» (o «solicitar», «capacitación»…) mientras Kira habla con ella: hace falta una etiqueta de «esperando a Kira» y comprobarla al empezar, o un disparador exacto; (b) España no pasa por la comprobación `En_proceso_reserva`; (c) `Fecha y Hora` se pide en texto libre pero se guarda en un campo de fecha: «el sábado por la tarde» no se entiende y activa el aviso de «se te olvidó»; Kira debe leer el texto crudo; (d) hay una acción «Set User Field: Fecha y Hora → Fecha y Hora» que parece copiarse a sí misma, y un mensaje que remite a «el calendario de arriba» que no existe en este flujo; (e) «Notify Assignees: 0 personas» no avisa a nadie (lo sustituye Telegram); (f) «Estaré disponible en Miami hacia Diciembre» está escrito a mano y se quedará viejo: las fechas de Miami ya las lleva Kira (`/viaje`); (g) no se pregunta el nombre (se usa el del perfil, que puede ser un apodo o un emoji); (h) si se analiza la foto con Claude hay que avisar a la clienta y decidirlo expresamente (hoy `docs/POLITICA.md` §6 dice que las fotos no salen a ningún servicio externo).
+
 ## 0. Cómo sabe cada conversación de qué va: botones primero, palabras clave solo como puerta, Claude para el texto libre
 
 **Recomendación: un sistema mixto.** Ni todo palabras clave ni todo inteligencia artificial: cada herramienta para lo que hace bien.
