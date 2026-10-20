@@ -3,6 +3,7 @@ import { esDiaLibre, fechaLarga, listaDiasLibres, nombreDia, partesEn } from "./
 import { evaluarHueco, textoChoques, type ResultadoAgenda } from "./agenda-eventos";
 import { eventoDeReserva, type AgendaPort } from "./evento";
 import { idDeEvento } from "./google-calendar";
+import { describirFalloGoogle } from "./google-oauth";
 import { CONFIG_UBICACION, dinero, separarUbicacion, SIMBOLO, type Moneda, type Ubicacion } from "./ubicacion";
 import type { Estancia } from "./estancias";
 import type { ResumenFoto } from "./fotos";
@@ -132,6 +133,10 @@ export interface FlowDeps {
   enviarFotos(chatId: number, conversationId: string): Promise<void>;
   /** Guarda la foto fija de la cita al aprobarla (lo sugerido, lo aprobado) para calibrar horas y materiales con datos propios. */
   guardarRegistro(r: Reserva): Promise<void>;
+  /** Quita el registro de una cita cancelada (no cuenta para calibrar). */
+  retirarRegistro(bookingId: string): Promise<void>;
+  /** Reservas que pueden haberse quedado sin botones (propuestas y citas provisionales), las más recientes primero. */
+  listarPendientes(): Promise<Reserva[]>;
 
   logEvent(e: { source: Fuente; kind: string; level?: "info" | "warn" | "error"; summary: string; detail?: Record<string, unknown>; conversation_id?: string | null; booking_id?: string | null }): Promise<void>;
   logSecurity(e: { kind: "posible_inyeccion" | "limite_de_peticiones"; source: string; conversation_id?: string | null; detail?: Record<string, unknown> }): Promise<void>;
@@ -150,6 +155,8 @@ export interface ProposalPort {
   boton(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "ok" | "ed" | "no" }): Promise<void>;
   /** Botones de una cita ya aprobada con reserva provisional en el calendario: señal recibida / cancelar. */
   botonCita(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "pay" | "del" }): Promise<void>;
+  /** /pendientes: vuelve a mandar los botones que se hayan perdido (reservas provisionales y propuestas sin botones). */
+  pendientes(chatId: number): Promise<void>;
   /** Texto libre del administrador: si hay una edición abierta lo consume y devuelve true. */
   textoLibre(chatId: number, texto: string): Promise<boolean>;
   cancelarEdicion(chatId: number): Promise<boolean>;
@@ -315,10 +322,11 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       const { inicio, fin } = horarioDeSpec(spec);
       if (!inicio || !fin) return { estado: "sin_horario" };
       const eventos = await deps.agenda.eventosEntre(new Date(inicio.getTime() - DIA_MS), new Date(fin.getTime() + DIA_MS));
-      return { estado: "ok", hueco: evaluarHueco(inicio, fin, eventos, contextoDe(spec).zonaHoraria, { excluirBookingId: bookingId }) };
+      const lugar = contextoDe(spec);
+      return { estado: "ok", hueco: evaluarHueco(inicio, fin, eventos, lugar.zonaHoraria, { excluirBookingId: bookingId, horario: lugar.reglas.horario }) };
     } catch (e) {
-      await deps.logEvent({ source: "calendar", kind: "agenda_lectura_fallo", level: "error", summary: msg(e), conversation_id: convId, booking_id: bookingId });
-      return { estado: "error", motivo: msg(e) };
+      await deps.logEvent({ source: "calendar", kind: "agenda_lectura_fallo", level: "error", summary: describirFalloGoogle(e), conversation_id: convId, booking_id: bookingId });
+      return { estado: "error", motivo: describirFalloGoogle(e) };
     }
   }
 
@@ -347,7 +355,14 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       edit_requested_at: null,
     });
     const texto = `${prefijo}${textoPropuesta(prop, spec, { mensajeCliente: spec.mensaje_cliente, esPrueba: actualizada.is_test, perfil, fotos, agenda })}`;
-    const id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada) && prop.faltan.length === 0));
+    let id: number | null;
+    try {
+      id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada) && prop.faltan.length === 0));
+    } catch (e) {
+      // El mensaje no llegó: el botón no existe, así que su nonce no puede quedar vivo (si no, /pendientes no vería la propuesta).
+      await deps.actualizarReserva(r.id, { proposal_nonce: null }).catch(() => undefined);
+      throw e;
+    }
     if (id !== null) await deps.actualizarReserva(r.id, { telegram_message_id: id });
   }
 
@@ -503,7 +518,13 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
         await deps.logEvent({ source: "telegram", kind: "foto_envio_fallo", level: "error", summary: msg(e), conversation_id: convId });
       }
     }
-    const id = await deps.enviar(chatId, textoTg, teclado(nonce, aprobable(reserva) && prop.faltan.length === 0));
+    let id: number | null;
+    try {
+      id = await deps.enviar(chatId, textoTg, teclado(nonce, aprobable(reserva) && prop.faltan.length === 0));
+    } catch (e) {
+      await deps.actualizarReserva(reserva.id, { proposal_nonce: null }).catch(() => undefined);
+      throw e;
+    }
     if (id !== null) await deps.actualizarReserva(reserva.id, { telegram_message_id: id });
     await deps.logEvent({
       source: "telegram",
@@ -537,11 +558,64 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     await enviarPropuesta(chatId, await deps.leerReserva(reservaId), aviso);
   }
 
+  /** Contestar al botón nunca debe romper el flujo: Telegram rechaza contestar pasados unos segundos y nada depende de ello. */
+  async function responder(callbackId: string, texto?: string) {
+    try {
+      await deps.responderCallback(callbackId, texto);
+    } catch (e) {
+      await deps.logEvent({ source: "telegram", kind: "responder_boton_fallo", level: "warn", summary: msg(e) }).catch(() => undefined);
+    }
+  }
+
+  /** Un paso secundario (anotar, registrar…) que, si falla, solo deja constancia: nunca deja colgado lo importante. */
+  async function mejorEsfuerzo(nombre: string, ids: { conversation_id: string | null; booking_id: string }, fn: () => Promise<unknown>) {
+    try {
+      await fn();
+    } catch (e) {
+      await deps.logEvent({ source: "system", kind: "paso_secundario_fallo", level: "warn", summary: `${nombre}: ${msg(e)}`, ...ids }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Manda a Blake el mensaje de la reserva provisional con sus botones (señal recibida / cancelar). Si Telegram falla, un texto
+   * simple le dice cómo recuperarlos (/pendientes). Devuelve si los botones llegaron.
+   */
+  async function ofrecerBotonesCita(chatId: number, r: Reserva, nonce: string, aviso: string, ids: { conversation_id: string | null; booking_id: string }): Promise<boolean> {
+    try {
+      const id = await deps.enviar(chatId, textoProvisional(r, aviso), tecladoCita(nonce));
+      if (id !== null) await mejorEsfuerzo("guardar el mensaje de la cita", ids, () => deps.actualizarReserva(r.id, { telegram_message_id: id }));
+      return true;
+    } catch (e) {
+      await deps.logEvent({ source: "telegram", kind: "botones_cita_fallo", level: "error", summary: msg(e), ...ids }).catch(() => undefined);
+      try {
+        await deps.enviar(chatId, `⚠️ ${aviso ? `${aviso}\n` : ""}La reserva de ${r.spec?.nombre ?? "la clienta"} está en tu calendario, pero no he podido mandarte sus botones. Escribe /pendientes y te los mando otra vez.`);
+      } catch {
+        /* sin Telegram no hay más que hacer: queda registrado y /pendientes los recupera */
+      }
+      return false;
+    }
+  }
+
+  /** Vuelve a mandar la propuesta; si no se puede, un texto simple con la salida (/pendientes). */
+  async function intentarDevolver(chatId: number, reservaId: string, aviso: string, ids: { conversation_id: string | null; booking_id: string }) {
+    try {
+      await devolverPropuesta(chatId, reservaId, aviso);
+    } catch (e) {
+      await deps.logEvent({ source: "telegram", kind: "devolver_propuesta_fallo", level: "error", summary: msg(e), ...ids }).catch(() => undefined);
+      try {
+        await deps.enviar(chatId, `${aviso}No he podido mandarte la propuesta de nuevo (${msg(e)}). Escribe /pendientes para recibirla.`);
+      } catch {
+        /* queda registrado */
+      }
+    }
+  }
+
   /**
    * Aprobar con el calendario conectado. Orden pensado para no crear NUNCA una cita encima de otra:
    *  1. se mira la agenda ahora mismo (lo que se vio al preparar la propuesta pudo cambiar);
    *  2. se reserva el hueco en la base de datos (segundo cerrojo: bookings_no_overlap);
    *  3. solo entonces se crea el evento provisional (amarillo). Si algo falla, se deshace y se vuelve a la propuesta.
+   * Y, una vez creado el evento, LO PRIMERO es darle a Blake sus botones; todo lo demás es secundario.
    */
   async function aprobarConCalendario(
     b: { callbackId: string; chatId: number; fromId: number },
@@ -555,22 +629,22 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const inicio = new Date(r.starts_at as string);
     const fin = new Date(r.ends_at as string);
     const volver = async (cb: string, aviso: string) => {
-      await deps.responderCallback(b.callbackId, cb);
+      await responder(b.callbackId, cb);
       await editarMensaje(`${marca}↩️ No se ha aprobado: te mando la propuesta de nuevo (ver abajo).`);
-      await devolverPropuesta(b.chatId, r.id, aviso);
+      await intentarDevolver(b.chatId, r.id, aviso, ids);
     };
 
     // 1. La agenda, ahora.
     try {
       const eventos = await agenda.eventosEntre(new Date(inicio.getTime() - DIA_MS), new Date(fin.getTime() + DIA_MS));
-      const hueco = evaluarHueco(inicio, fin, eventos, lugar.zonaHoraria, { excluirBookingId: r.id });
+      const hueco = evaluarHueco(inicio, fin, eventos, lugar.zonaHoraria, { excluirBookingId: r.id, horario: lugar.reglas.horario });
       if (hueco.choques.length) {
         await deps.logEvent({ source: "calendar", kind: "agenda_choque", level: "warn", summary: `Aprobación detenida: ${textoChoques(hueco, lugar.zonaHoraria).join("; ")}`, ...ids });
         return volver("Ese hueco está ocupado", `⛔ No he aprobado nada ni he creado ningún evento: ${textoChoques(hueco, lugar.zonaHoraria).join("; ")}.\nCambia la fecha o la hora con Editar.\n\n`);
       }
     } catch (e) {
-      await deps.logEvent({ source: "calendar", kind: "agenda_lectura_fallo", level: "error", summary: msg(e), ...ids });
-      return volver("No puedo mirar tu agenda", `⚠️ No he aprobado nada: no he podido mirar tu calendario (${msg(e)}). Sin mirarlo no creo ninguna cita.\n\n`);
+      await deps.logEvent({ source: "calendar", kind: "agenda_lectura_fallo", level: "error", summary: describirFalloGoogle(e), ...ids });
+      return volver("No puedo mirar tu agenda", `⚠️ No he aprobado nada: no he podido mirar tu calendario (${describirFalloGoogle(e)}). Sin mirarlo no creo ninguna cita.\n\n`);
     }
 
     // 2. El hueco, reservado en la base de datos (si otra reserva activa lo ocupa, la base de datos lo rechaza).
@@ -588,34 +662,40 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     try {
       await agenda.crearProvisional(eventoDeReserva({ ...r, status: "pendiente_pago" }));
     } catch (e) {
-      await deps.logEvent({ source: "calendar", kind: "evento_provisional_fallo", level: "error", summary: msg(e), ...ids });
+      await deps.logEvent({ source: "calendar", kind: "evento_provisional_fallo", level: "error", summary: describirFalloGoogle(e), ...ids });
       // Si Google llegó a crearlo pero la respuesta se perdió, no se deja un evento huérfano (solo borra uno con la marca de esta reserva).
       await agenda.borrar(eventoId, r.id).catch(() => undefined);
       try {
         await deps.actualizarReserva(r.id, { status: "propuesta", calendar_event_id: null, proposal_nonce: null, approved_by_telegram_user: null, approved_at: null });
       } catch (e2) {
         await deps.logEvent({ source: "system", kind: "reserva_deshacer_fallo", level: "error", summary: msg(e2), ...ids });
-        await deps.responderCallback(b.callbackId, "Algo falló");
-        await deps.enviar(b.chatId, `⚠️ No se pudo crear el evento y además no pude deshacer la reserva (${msg(e2)}). Mírala en Fallos del panel antes de seguir.`);
+        await responder(b.callbackId, "Algo falló");
+        try {
+          await deps.enviar(b.chatId, `⚠️ No se pudo crear el evento y además no pude deshacer la reserva (${msg(e2)}). Mírala en Fallos del panel antes de seguir.`);
+        } catch {
+          /* queda registrado */
+        }
         return;
       }
-      return volver("No se pudo crear el evento", `⚠️ No he aprobado nada: Google Calendar no me ha dejado crear el evento (${msg(e)}).\n\n`);
+      return volver("No se pudo crear el evento", `⚠️ No he aprobado nada: Google Calendar no me ha dejado crear el evento (${describirFalloGoogle(e)}).\n\n`);
     }
 
-    // 4. Hecho.
-    if (r.conversation_id) await deps.actualizarConversacion(r.conversation_id, { status: "esperando_cliente" });
+    // 4. Hecho. Primero lo importante (los botones); después, lo secundario, que si falla solo deja constancia.
+    await ofrecerBotonesCita(b.chatId, r, nonceCita, "", ids);
+    await responder(b.callbackId, "✅ Aprobada · evento creado");
+    await editarMensaje(`${marca}✅ APROBADA\n\n${resumenDecision(r)}\n\nReserva provisional creada en tu calendario (ver abajo).`);
+    if (r.conversation_id) {
+      const conv = r.conversation_id;
+      await mejorEsfuerzo("estado de la conversación", ids, () => deps.actualizarConversacion(conv, { status: "esperando_cliente" }));
+    }
     try {
       await deps.guardarRegistro({ ...r, status: "pendiente_pago" });
     } catch (e) {
       await deps.logEvent({ source: "system", kind: "registro_servicio_fallo", level: "error", summary: msg(e), ...ids });
     }
-    await deps.responderCallback(b.callbackId, "✅ Aprobada · evento creado");
-    await editarMensaje(`${marca}✅ APROBADA\n\n${resumenDecision(r)}\n\nReserva provisional creada en tu calendario (ver abajo).`);
     await deps.logEvent({ source: "telegram", kind: "propuesta_aprobada", summary: "Propuesta aprobada por Blake", detail: { precio_centimos: r.price_cents }, ...ids });
     await deps.logEvent({ source: "calendar", kind: "evento_provisional_creado", summary: "Evento provisional (amarillo) creado en Google Calendar", ...ids });
     await deps.logEvent({ source: "system", kind: "respuesta_lista_sin_enviar", summary: "Respuesta aprobada pero sin enviar: el canal de Instagram no está conectado", ...ids });
-    const id = await deps.enviar(b.chatId, textoProvisional(r), tecladoCita(nonceCita));
-    if (id !== null) await deps.actualizarReserva(r.id, { telegram_message_id: id });
   }
 
   const textoProvisional = (r: Reserva, aviso = "") => {
@@ -641,11 +721,11 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
   async function botonCita(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "pay" | "del" }) {
     const r = await deps.verReservaPorNonce(b.nonce);
     if (!r || r.status !== "pendiente_pago") {
-      await deps.responderCallback(b.callbackId, "Ya procesado");
+      await responder(b.callbackId, "Ya procesado");
       return;
     }
     if (!(await deps.tomarNonce(b.nonce, "pendiente_pago"))) {
-      await deps.responderCallback(b.callbackId, "Ya procesado");
+      await responder(b.callbackId, "Ya procesado");
       return;
     }
     const ids = { conversation_id: r.conversation_id, booking_id: r.id };
@@ -655,22 +735,27 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       try {
         await deps.editar(b.chatId, b.messageId, texto);
       } catch (e) {
-        await deps.logEvent({ source: "telegram", kind: "editar_mensaje_fallo", level: "warn", summary: msg(e), ...ids });
+        await deps.logEvent({ source: "telegram", kind: "editar_mensaje_fallo", level: "warn", summary: msg(e), ...ids }).catch(() => undefined);
       }
     };
     /** Algo falló: el botón se había gastado, así que se ofrece uno nuevo con el motivo. Nada queda sin salida. */
     const reofrecer = async (cb: string, aviso: string) => {
-      await deps.responderCallback(b.callbackId, cb);
+      await responder(b.callbackId, cb);
       const nuevo = deps.newNonce();
+      let fresca: Reserva;
       try {
-        const fresca = await deps.actualizarReserva(r.id, { proposal_nonce: nuevo });
-        await editarMensaje(`${marca}↩️ No se ha podido: te vuelvo a ofrecer los botones (ver abajo).`);
-        const id = await deps.enviar(b.chatId, textoProvisional(fresca, `⚠️ ${aviso}`), tecladoCita(nuevo));
-        if (id !== null) await deps.actualizarReserva(r.id, { telegram_message_id: id });
+        fresca = await deps.actualizarReserva(r.id, { proposal_nonce: nuevo });
       } catch (e) {
-        await deps.logEvent({ source: "system", kind: "botones_cita_fallo", level: "error", summary: msg(e), ...ids });
-        await deps.enviar(b.chatId, `⚠️ ${aviso}\nY no he podido volver a ofrecerte los botones (${msg(e)}). Mira la reserva en Fallos del panel.`);
+        await deps.logEvent({ source: "system", kind: "botones_cita_fallo", level: "error", summary: msg(e), ...ids }).catch(() => undefined);
+        try {
+          await deps.enviar(b.chatId, `⚠️ ${aviso}\nY no he podido volver a ofrecerte los botones (${msg(e)}). Escribe /pendientes para recibirlos.`);
+        } catch {
+          /* queda registrado */
+        }
+        return;
       }
+      await editarMensaje(`${marca}↩️ No se ha podido: te vuelvo a ofrecer los botones (ver abajo).`);
+      await ofrecerBotonesCita(b.chatId, fresca, nuevo, `⚠️ ${aviso}`, ids);
     };
 
     const eventoId = r.calendar_event_id;
@@ -684,8 +769,8 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       try {
         ({ invitado } = await deps.agenda.pasarAPagada(eventoId, r.id, { email: r.client_email, esPrueba: r.is_test }));
       } catch (e) {
-        await deps.logEvent({ source: "calendar", kind: "evento_pagado_fallo", level: "error", summary: msg(e), ...ids });
-        return reofrecer("No se pudo actualizar el evento", `No he podido pasar el evento a morado (${msg(e)}). Sigue amarillo; inténtalo otra vez.`);
+        await deps.logEvent({ source: "calendar", kind: "evento_pagado_fallo", level: "error", summary: describirFalloGoogle(e), ...ids });
+        return reofrecer("No se pudo actualizar el evento", `No he podido pasar el evento a morado (${describirFalloGoogle(e)}). Puede que Google sí lo haya aplicado (incluida la invitación): míralo en tu calendario antes de reintentar.`);
       }
       try {
         await deps.actualizarReserva(r.id, { status: "pagada" });
@@ -693,7 +778,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
         await deps.logEvent({ source: "system", kind: "reserva_pagada_fallo", level: "error", summary: msg(e), ...ids });
         return reofrecer("No se pudo guardar", `El evento ya está morado, pero no he podido guardar el pago (${msg(e)}). Pulsa otra vez.`);
       }
-      await deps.responderCallback(b.callbackId, "💜 Señal recibida");
+      await responder(b.callbackId, "💜 Señal recibida");
       await editarMensaje(`${marca}💜 SEÑAL RECIBIDA · RESERVA CONFIRMADA\n\n${resumenDecision(r)}\n\nEl evento está en morado en tu calendario${invitado ? ` y he invitado a ${r.client_email} (Google le envía la invitación)` : r.client_email ? ` (no he invitado a ${r.client_email}${r.is_test ? ": es una prueba y no es tu cuenta" : ""})` : " (no tengo su email, así que no hay invitación)"}.`);
       await deps.logEvent({ source: "telegram", kind: "senal_confirmada_por_blake", summary: "Blake confirmó la señal: reserva pagada", detail: { invitado }, ...ids });
       await deps.logEvent({ source: "calendar", kind: "evento_pagado", summary: `Evento pasado a morado${invitado ? " e invitada la clienta" : ""}`, ...ids });
@@ -704,8 +789,8 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     try {
       await deps.agenda.borrar(eventoId, r.id);
     } catch (e) {
-      await deps.logEvent({ source: "calendar", kind: "evento_borrado_fallo", level: "error", summary: msg(e), ...ids });
-      return reofrecer("No se pudo borrar el evento", `No he podido borrar el evento (${msg(e)}). Sigue en tu calendario; inténtalo otra vez.`);
+      await deps.logEvent({ source: "calendar", kind: "evento_borrado_fallo", level: "error", summary: describirFalloGoogle(e), ...ids });
+      return reofrecer("No se pudo borrar el evento", `No he podido borrar el evento (${describirFalloGoogle(e)}). Puede que Google sí lo haya borrado: míralo en tu calendario antes de reintentar.`);
     }
     try {
       await deps.actualizarReserva(r.id, { status: "cancelada" });
@@ -713,28 +798,72 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       await deps.logEvent({ source: "system", kind: "reserva_cancelada_fallo", level: "error", summary: msg(e), ...ids });
       return reofrecer("No se pudo guardar", `El evento ya está borrado, pero no he podido cerrar la reserva (${msg(e)}). Pulsa otra vez.`);
     }
-    if (r.conversation_id) await deps.actualizarConversacion(r.conversation_id, { status: "cerrada" });
-    await deps.responderCallback(b.callbackId, "🗑 Cita cancelada");
+    await responder(b.callbackId, "🗑 Cita cancelada");
     await editarMensaje(`${marca}🗑 CITA CANCELADA\n\n${resumenDecision(r)}\n\nHe borrado el evento de tu calendario. No se envía nada al cliente.`);
+    if (r.conversation_id) {
+      const conv = r.conversation_id;
+      await mejorEsfuerzo("cerrar la conversación", ids, () => deps.actualizarConversacion(conv, { status: "cerrada" }));
+    }
+    // Una cita cancelada no cuenta para calibrar horas y materiales: su registro se retira.
+    await mejorEsfuerzo("retirar el registro del servicio", ids, () => deps.retirarRegistro(r.id));
     await deps.logEvent({ source: "telegram", kind: "cita_cancelada_por_blake", summary: "Blake canceló la cita: evento borrado", ...ids });
     await deps.logEvent({ source: "calendar", kind: "evento_borrado", summary: "Evento provisional borrado del calendario", ...ids });
+  }
+
+  /**
+   * /pendientes: por si se perdió un mensaje con botones (Telegram falló), te los vuelve a mandar. Reservas provisionales
+   * esperando señal (botones nuevos) y propuestas que se quedaron sin botones.
+   */
+  async function pendientes(chatId: number): Promise<void> {
+    let lista: Reserva[];
+    try {
+      lista = await deps.listarPendientes();
+    } catch (e) {
+      await deps.logEvent({ source: "system", kind: "pendientes_fallo", level: "error", summary: msg(e) });
+      await deps.enviar(chatId, "No he podido leer las reservas pendientes. Prueba otra vez en un momento.");
+      return;
+    }
+    const dePago = lista.filter((x) => x.status === "pendiente_pago").slice(0, 6);
+    const sinBotones = lista.filter((x) => x.status === "propuesta" && !x.proposal_nonce && !x.edit_requested_at).slice(0, 6);
+    if (!dePago.length && !sinBotones.length) {
+      await deps.enviar(chatId, "No tienes ninguna reserva provisional esperando la señal ni propuestas sin botones.");
+      return;
+    }
+    await deps.enviar(chatId, `Te mando otra vez los botones de ${dePago.length + sinBotones.length} ${dePago.length + sinBotones.length === 1 ? "reserva" : "reservas"}.`);
+    for (const r of dePago) {
+      const ids = { conversation_id: r.conversation_id, booking_id: r.id };
+      const nonce = deps.newNonce();
+      try {
+        const fresca = await deps.actualizarReserva(r.id, { proposal_nonce: nonce });
+        await ofrecerBotonesCita(chatId, fresca, nonce, "", ids);
+      } catch (e) {
+        await deps.logEvent({ source: "system", kind: "pendientes_fallo", level: "error", summary: msg(e), ...ids });
+      }
+    }
+    for (const r of sinBotones) {
+      try {
+        await enviarPropuesta(chatId, r, "↩️ Esta propuesta se había quedado sin botones:\n\n");
+      } catch (e) {
+        await deps.logEvent({ source: "system", kind: "pendientes_fallo", level: "error", summary: msg(e), conversation_id: r.conversation_id, booking_id: r.id });
+      }
+    }
   }
 
   async function boton(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "ok" | "ed" | "no" }) {
     const r = await deps.verReservaPorNonce(b.nonce);
     if (!r || r.status !== "propuesta") {
-      await deps.responderCallback(b.callbackId, "Ya procesado");
+      await responder(b.callbackId, "Ya procesado");
       return;
     }
     const ids = { conversation_id: r.conversation_id, booking_id: r.id };
 
     if (b.accion === "ok" && !aprobable(r)) {
-      await deps.responderCallback(b.callbackId, "Faltan datos: pulsa Editar");
+      await responder(b.callbackId, "Faltan datos: pulsa Editar");
       return;
     }
     const tomada = await deps.tomarNonce(b.nonce);
     if (!tomada) {
-      await deps.responderCallback(b.callbackId, "Ya procesado");
+      await responder(b.callbackId, "Ya procesado");
       return;
     }
 
@@ -761,7 +890,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
         // Que no se pueda anotar el registro no impide aprobar: queda a la vista en Fallos.
         await deps.logEvent({ source: "system", kind: "registro_servicio_fallo", level: "error", summary: msg(e), ...ids });
       }
-      await deps.responderCallback(b.callbackId, "✅ Aprobada");
+      await responder(b.callbackId, "✅ Aprobada");
       await editarMensaje(
         `${r.is_test ? "🧪 PRUEBA · " : ""}✅ APROBADA\n\n${resumenDecision(r)}\n\nNo se ha enviado nada al cliente (el canal de Instagram no está conectado).\nSiguientes pasos pendientes de conectar: calendario (reserva provisional) y enlace de pago de la señal.`,
       );
@@ -773,7 +902,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     if (b.accion === "no") {
       await deps.actualizarReserva(r.id, { status: "cancelada" });
       if (r.conversation_id) await deps.actualizarConversacion(r.conversation_id, { status: "cerrada" });
-      await deps.responderCallback(b.callbackId, "❌ Rechazada");
+      await responder(b.callbackId, "❌ Rechazada");
       await editarMensaje(`${r.is_test ? "🧪 PRUEBA · " : ""}❌ RECHAZADA\n\n${resumenDecision(r)}\n\nNo se envía nada al cliente. Si quieres retomarla, escribe de nuevo con /simular.`);
       await deps.logEvent({ source: "telegram", kind: "propuesta_rechazada", summary: "Propuesta rechazada por Blake", ...ids });
       return;
@@ -781,7 +910,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
 
     // Editar
     await deps.actualizarReserva(r.id, { edit_requested_at: deps.now().toISOString() });
-    await deps.responderCallback(b.callbackId, "✏️ Dime los cambios");
+    await responder(b.callbackId, "✏️ Dime los cambios");
     await editarMensaje(`${r.is_test ? "🧪 PRUEBA · " : ""}✏️ EDITANDO\n\n${resumenDecision(r)}\n\nEscribe los cambios en el siguiente mensaje.`);
     await deps.enviar(b.chatId, AYUDA_EDICION);
     await deps.logEvent({ source: "telegram", kind: "edicion_solicitada", summary: "Blake pulsó Editar", ...ids });
@@ -829,7 +958,8 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     if (recalcular || r.pricing.origen === "sin_calcular" || r.pricing.origen === "error") {
       guardado = (await calcularPrecio(spec, perfil, ids)).guardado;
     } else if (spec.precio_manual_centimos !== null) {
-      guardado = { origen: "manual", perfil, moneda: lugar.moneda };
+      // Se conserva lo último que calculó Legacy (para el registro: lo que Kira sugería frente a lo que Blake puso).
+      guardado = { ...r.pricing, origen: "manual", perfil, moneda: lugar.moneda };
     }
     await deps.actualizarReserva(r.id, { spec, pricing: guardado });
     await deps.logEvent({ source: "telegram", kind: "propuesta_editada", summary: `Blake editó la propuesta (${cambios.map((c) => etiquetaCambio(c.k)).join(", ")})`, detail: { cambios: cambios.map((c) => c.k), recalculado: recalcular }, ...ids });
@@ -848,5 +978,5 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     return true;
   }
 
-  return { simular, boton, botonCita, textoLibre, cancelarEdicion };
+  return { simular, boton, botonCita, pendientes, textoLibre, cancelarEdicion };
 }

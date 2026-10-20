@@ -35,6 +35,14 @@ describe("registroDesdeReserva: la foto fija de la cita al aprobarla", () => {
     expect(texto).not.toMatch(/correo|Hola|ana_t|López/);
   });
 
+  it("el precio de Legacy se conserva aunque Blake haya puesto el suyo (origen manual)", () => {
+    const spec = { ...specDesdeClasificacion(clas(), "x"), precio_manual_centimos: 8000 };
+    const r = registroDesdeReserva(reserva(spec, { pricing: { origen: "manual", moneda: "EUR", legacy: { totalCentimos: 7565, manoObra: 70, materiales: 5, tarifaHora: 23, valorConocimiento: 42, costeTiempo: 28 } } }));
+    expect(r).toMatchObject({ precio_legacy_cents: 7565, precio_aprobado_cents: 8000, precio_origen: "manual" });
+    const sin = registroDesdeReserva(reserva(spec, { pricing: { origen: "manual", moneda: "EUR" } }));
+    expect(sin.precio_legacy_cents).toBeNull();
+  });
+
   it("lo que Blake cambió (horas, materiales) se guarda como aprobado y lo sugerido sigue siendo lo de Kira", () => {
     const spec = { ...specDesdeClasificacion(clas(), "x"), horas: 3.5, materiales: 9 };
     const r = registroDesdeReserva(reserva(spec));
@@ -67,6 +75,12 @@ describe("parsearReal: «horas 3,5; materiales 9; precio 80»", () => {
   it("la nota se limpia y se recorta", () => {
     expect(parsearReal("nota fue\u0000 muy   rápido").datos.nota).toBe("fue muy rápido");
     expect(parsearReal(`nota ${"a".repeat(700)}`).datos.nota).toHaveLength(500);
+  });
+
+  it("menos de 0,25 h no vale (se redondearía a 0 y la base de datos lo rechazaría)", () => {
+    expect(parsearReal("horas 0,1").datos).toEqual({});
+    expect(parsearReal("horas 0,1").errores).toHaveLength(1);
+    expect(parsearReal("horas 0,25").datos.horas).toBe(0.25);
   });
 
   it("rechaza lo que no cuadra y lo dice", () => {

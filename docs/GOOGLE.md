@@ -31,6 +31,8 @@ Una sola vez, unos 10 minutos. Al final Kira mira tu agenda de verdad antes de p
 7. Entra en el panel (`/panel`) → pestaña **Calendario** → **Conectar Google Calendar**. Google te pedirá permiso. Si dice «Google no ha verificado esta aplicación» es tu propia app: *Avanzado → Ir a Kira (no seguro)* y acepta.
 8. Vuelves al panel y verás «Conectado con …». Pulsa **Comprobar ahora**: debe decir que lee tu agenda.
 
+`GOOGLE_CUENTA_ESPERADA` (ya puesta: `info@blakebraider.com`) hace que Kira **solo acepte esa cuenta**: si en la pantalla de Google eliges otra, la conexión se rechaza y no se guarda nada (con otra cuenta el calendario podría estar vacío y todos los huecos saldrían libres). Google propone esa cuenta primero.
+
 Opcional: `GOOGLE_CALENDAR_ID` fija otro calendario (por defecto, el principal de la cuenta conectada).
 
 ## Si algo falla
@@ -41,7 +43,11 @@ Opcional: `GOOGLE_CALENDAR_ID` fija otro calendario (por defecto, el principal d
 | «Este enlace ya no vale» | Empezaste la conexión hace más de 10 min, ya la usaste o no empezó desde tu panel. Vuelve a pulsar Conectar. |
 | «Google no entregó permiso permanente» | Al aceptar, desmarcaste algún permiso. Vuelve a conectar y marca todos. |
 | Las propuestas dicen «comprobar la agenda (…)» y no dejan aprobar | Google no responde o la conexión se perdió (cambiaste la contraseña, quitaste el acceso, caducó). Mira Fallos y, si hace falta, **Reconectar**. |
-| Dejó de funcionar tras rotar `SUPABASE_SERVICE_ROLE_KEY` | El permiso guardado se cifra con una clave derivada de esa. Pulsa **Reconectar**. |
+| Dejó de funcionar tras rotar `SUPABASE_SERVICE_ROLE_KEY` | El permiso guardado se cifra con una clave derivada de esa. Kira lo detecta («ya no se puede leer»), no aprueba nada y el panel te pide **Reconectar**. |
+| «Has conectado X, pero tus citas están en info@…» | Elegiste otra cuenta en Google. No se ha guardado nada: vuelve a conectar y elige la de las citas. |
+| «Comprobar ahora» dice que el calendario no tiene ningún evento | Probablemente es la cuenta equivocada (o un calendario vacío): con un calendario vacío todos los huecos salen libres. Reconecta con la cuenta de las citas. |
+| «No entiendo un evento de tu agenda («…»)» | Hay un evento con fechas raras que Kira no sabe leer y no puede asegurar que no ocupe el hueco: arréglalo en Google o cámbialo de día. |
+| Se perdió el mensaje con los botones de una reserva | Escribe `/pendientes` y te los mando otra vez. |
 
 ## Dónde vive el permiso (seguridad)
 

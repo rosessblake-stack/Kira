@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   GoogleError,
   SCOPES,
+  cuentaEsperada,
+  describirFalloGoogle,
   cifrar,
   configGoogle,
   descifrar,
@@ -72,6 +74,13 @@ describe("cifrado del refresh token", () => {
   it("cada cifrado es distinto (iv nuevo)", () => {
     expect(cifrar("x", "k")).not.toBe(cifrar("x", "k"));
   });
+  it("una etiqueta de autenticación más corta de 16 bytes se rechaza (no se acepta una más fácil de falsificar)", () => {
+    const c = cifrar("secreto", "clave-a").split(".");
+    const corta = Buffer.from(c[2], "base64url").subarray(0, 4).toString("base64url");
+    expect(descifrar([c[0], c[1], corta, c[3]].join("."), "clave-a")).toBeNull();
+    expect(descifrar(c.join("."), "clave-a")).toBe("secreto");
+  });
+
   it("con otra clave, manipulado o con otro formato NO descifra (y no lanza)", () => {
     const c = cifrar("secreto", "clave-a");
     expect(descifrar(c, "clave-b")).toBeNull();
@@ -259,6 +268,25 @@ describe("ClienteCalendario.listar", () => {
     expect(e.desconectado).toBe(true);
   });
 
+  it("un evento vivo que no se entiende PARA la comprobación (no se da por libre) y dice cuál es", async () => {
+    const raro = { id: "r", status: "confirmed", summary: "Trenzas Misteriosa", start: { dateTime: "2026-10-22T11:00:00+02:00" } };
+    const { c } = cliente([{ status: 200, json: { items: [e1, raro] } }]);
+    await expect(c.listar(new Date(0), new Date(1))).rejects.toThrow("No entiendo un evento de tu agenda («Trenzas Misteriosa»)");
+  });
+
+  it("los cancelados no estorban aunque vengan sin fechas", async () => {
+    const { c } = cliente([{ status: 200, json: { items: [cancelado, e1] } }]);
+    expect(await c.listar(new Date(0), new Date(1))).toHaveLength(1);
+  });
+
+  it("permisos retirados (403 insufficientPermissions) cuenta como conexión perdida", async () => {
+    const { c } = cliente([{ status: 403, json: { error: { errors: [{ reason: "insufficientPermissions" }] } } }]);
+    const e = await fallo(c.listar(new Date(0), new Date(1)));
+    expect(e.desconectado).toBe(true);
+    const { c: c2 } = cliente([{ status: 403, json: { error: { errors: [{ reason: "rateLimitExceeded" }] } } }]);
+    expect((await fallo(c2.listar(new Date(0), new Date(1)))).desconectado).toBe(false);
+  });
+
   it("errores de Google: mensaje corto con el motivo, sin el cuerpo ni tokens", async () => {
     const { c } = cliente([{ status: 403, json: { error: { errors: [{ reason: "insufficientPermissions" }], message: "Bearer tok1 secreto" } } }]);
     const e = await fallo(c.listar(new Date(0), new Date(1)));
@@ -305,21 +333,48 @@ describe("ClienteCalendario.crear", () => {
     expect(JSON.parse(llamadas[0].body!).location).toBeUndefined();
   });
 
-  it("si ya existe el evento de ESTA reserva (reintento tras un corte), no lo duplica", async () => {
+  it("si ya existe el evento de ESTA reserva (reintento tras un corte), no crea otro: lo deja como se pide ahora", async () => {
     const { c, llamadas } = cliente([
       { status: 409, json: {} },
       { status: 200, json: { id: "k", status: "confirmed", extendedProperties: { private: { kira_booking_id: "61dba233-632a-4ee4-b9b2-1a72a18895d2" } } } },
+      { status: 200, json: {} },
     ]);
     await expect(c.crear(evento())).resolves.toBeUndefined();
-    expect(llamadas).toHaveLength(2);
-    expect(llamadas[1].method).toBe("GET");
+    expect(llamadas.map((l) => l.method)).toEqual(["POST", "GET", "PATCH"]);
+    const b = JSON.parse(llamadas[2].body!);
+    expect(b.id).toBeUndefined();
+    expect(b).toMatchObject({ summary: "Trenzas Michael", colorId: COLOR_AMARILLO, status: "confirmed", start: { dateTime: "2026-10-22T15:00:00.000Z" }, end: { dateTime: "2026-10-22T17:30:00.000Z" } });
+    expect(new URL(llamadas[2].url).searchParams.get("sendUpdates")).toBe("none");
   });
 
-  it("si el identificador lo usa otro evento (o uno borrado), falla en vez de pisarlo", async () => {
-    for (const marca of [{ status: 200, json: { id: "k", status: "confirmed", extendedProperties: { private: { kira_booking_id: "otra" } } } }, { status: 200, json: { id: "k", status: "cancelled", extendedProperties: { private: { kira_booking_id: "61dba233-632a-4ee4-b9b2-1a72a18895d2" } } } }]) {
-      const { c } = cliente([{ status: 409, json: {} }, marca]);
-      await expect(c.crear(evento())).rejects.toThrow(/no se puede reutilizar/);
+  it("si el huérfano tenía otra hora (se cambió la fecha antes de reaprobar), se corrige a la hora nueva", async () => {
+    const { c, llamadas } = cliente([
+      { status: 409, json: {} },
+      { status: 200, json: { id: "k", status: "confirmed", start: { dateTime: "2026-10-21T10:00:00Z" }, end: { dateTime: "2026-10-21T12:00:00Z" }, extendedProperties: { private: { kira_booking_id: "61dba233-632a-4ee4-b9b2-1a72a18895d2" } } } },
+      { status: 200, json: {} },
+    ]);
+    await c.crear(evento());
+    expect(JSON.parse(llamadas[2].body!).start.dateTime).toBe("2026-10-22T15:00:00.000Z");
+  });
+
+  it("si el evento de esta reserva se borró antes (Google guarda el identificador), se revive con los datos nuevos", async () => {
+    const { c, llamadas } = cliente([{ status: 409, json: {} }, { status: 200, json: { id: "k", status: "cancelled" } }, { status: 200, json: {} }]);
+    await expect(c.crear(evento())).resolves.toBeUndefined();
+    expect(llamadas.map((l) => l.method)).toEqual(["POST", "GET", "PATCH"]);
+    expect(JSON.parse(llamadas[2].body!)).toMatchObject({ status: "confirmed", summary: "Trenzas Michael", colorId: COLOR_AMARILLO });
+  });
+
+  it("si otro evento VIVO usa el identificador, falla en vez de pisarlo", async () => {
+    for (const marca of [{ status: 200, json: { id: "k", status: "confirmed", extendedProperties: { private: { kira_booking_id: "otra" } } } }, { status: 200, json: { id: "k", status: "confirmed" } }]) {
+      const { c, llamadas } = cliente([{ status: 409, json: {} }, marca]);
+      await expect(c.crear(evento())).rejects.toThrow(/no es suyo/);
+      expect(llamadas.filter((l) => l.method === "PATCH")).toHaveLength(0);
     }
+  });
+
+  it("si Google dice que existe y luego no lo encuentra, falla con claridad", async () => {
+    const { c } = cliente([{ status: 409, json: {} }, { status: 404, json: {} }]);
+    await expect(c.crear(evento())).rejects.toThrow(/ya existe pero no lo encuentra/);
   });
 
   it("otros errores de Google se cuentan sin inventar nada", async () => {
@@ -387,5 +442,24 @@ describe("ClienteCalendario.borrar: solo lo propio", () => {
   it("un error al borrar se cuenta", async () => {
     const { c } = cliente([MARCA_OK, { status: 500, json: {} }]);
     await expect(c.borrar(EID, BOOKING)).rejects.toThrow("Google Calendar respondió 500 al borrar el evento");
+  });
+});
+
+describe("cuenta esperada, login_hint y texto de los fallos", () => {
+  it("GOOGLE_CUENTA_ESPERADA: solo un email válido, en minúsculas", () => {
+    expect(cuentaEsperada({ GOOGLE_CUENTA_ESPERADA: " Info@BlakeBraider.com " })).toBe("info@blakebraider.com");
+    expect(cuentaEsperada({ GOOGLE_CUENTA_ESPERADA: "no-es-un-email" })).toBeNull();
+    expect(cuentaEsperada({})).toBeNull();
+  });
+  it("login_hint propone esa cuenta en la pantalla de Google (y solo si se sabe)", () => {
+    const con = new URL(urlDeAutorizacion(CFG, "https://k.test/cb", "s", "info@blakebraider.com"));
+    expect(con.searchParams.get("login_hint")).toBe("info@blakebraider.com");
+    expect(new URL(urlDeAutorizacion(CFG, "https://k.test/cb", "s")).searchParams.has("login_hint")).toBe(false);
+  });
+  it("si la conexión se perdió, el motivo dice cómo arreglarlo; si no, solo el motivo", () => {
+    expect(describirFalloGoogle(new GoogleError("Google rechazó la conexión (400: invalid_grant)", 400, true))).toBe("Google rechazó la conexión (400: invalid_grant). Reconecta en el panel → Calendario");
+    expect(describirFalloGoogle(new GoogleError("Google Calendar no respondió a tiempo"))).toBe("Google Calendar no respondió a tiempo");
+    expect(describirFalloGoogle(new Error("otro"))).toBe("otro");
+    expect(describirFalloGoogle("raro")).toBe("error desconocido");
   });
 });

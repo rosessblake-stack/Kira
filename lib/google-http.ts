@@ -1,7 +1,7 @@
-import { logEvent, logSecurity } from "./db";
+import { getDb, logEvent, logSecurity } from "./db";
 import type { DepsGoogleFlujo } from "./google-flujo";
-import { configGoogle, intercambiarCodigo } from "./google-oauth";
-import { gastarState, guardarConexion, guardarState } from "./google-store";
+import { configGoogle, cuentaEsperada, intercambiarCodigo, revocarPermiso } from "./google-oauth";
+import { gastarState, guardarConexion, guardarState, leerConexion } from "./google-store";
 
 /** Piezas reales (red, base de datos, cookies) de la conexión con Google, para las rutas /api/google/*. */
 
@@ -25,6 +25,22 @@ export function depsGoogleFlujo(): DepsGoogleFlujo {
     intercambiar: (cfg, code, redirect) => intercambiarCodigo(cfg, code, redirect),
     guardarConexion,
     calendarioPorDefecto: () => process.env.GOOGLE_CALENDAR_ID?.trim() || "primary",
+    cuentaEsperada: () => cuentaEsperada(),
+    async conexionPrevia() {
+      const c = await leerConexion();
+      return c ? { refreshToken: c.refreshToken } : null;
+    },
+    async revocar(refreshToken) {
+      await revocarPermiso(refreshToken);
+    },
+    async incidentesRecientes() {
+      const { count } = await getDb()
+        .from("security_events")
+        .select("id", { count: "exact", head: true })
+        .eq("source", "google_callback")
+        .gte("at", new Date(Date.now() - 3_600_000).toISOString());
+      return count ?? 0;
+    },
     logEvent: ({ source, ...e }) => logEvent(source, e),
     logSecurity,
   };

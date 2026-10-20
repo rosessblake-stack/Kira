@@ -7,6 +7,7 @@ import { LIMITES } from "../lib/intents";
 import { leerBasico } from "../lib/lectura-basica";
 import { LegacyError, type PeticionLegacy, type PrecioLegacy } from "../lib/pricing";
 import { CONFIG_UBICACION } from "../lib/ubicacion";
+import { GoogleError } from "../lib/google-oauth";
 import { crearFlujoPropuestas, EDICION_CADUCA_MIN, type FlowDeps, type NuevaReserva, type Reserva } from "../lib/proposal-flow";
 import type { EventoAgenda } from "../lib/agenda-eventos";
 import type { AgendaPort } from "../lib/evento";
@@ -46,6 +47,10 @@ type Opciones = {
   calendario?: OpcionesCalendario;
   /** La base de datos rechaza reservar el hueco (bookings_no_overlap). */
   fallaReservarHueco?: boolean;
+  /** Telegram rechaza contestar a los botones (pasa si se tarda: «query is too old»). */
+  fallaResponder?: boolean;
+  /** Telegram falla al mandar un mensaje (se le pasa el teclado: así se puede fallar solo los que llevan botones). */
+  fallaEnviar?: (markup: unknown) => boolean;
   claude?: (texto: string) => Promise<RespuestaClaude>;
   legacy?: (p: PeticionLegacy) => Promise<PrecioLegacy>;
   pausada?: boolean;
@@ -86,11 +91,16 @@ function mundo(op: Opciones = {}) {
     fotos: new Map<string, ResumenFoto[]>(),
     albumes: [] as { chat: number; conv: string; antesDeLosMensajes: number }[],
     registros: [] as Reserva[],
+    registrosRetirados: [] as string[],
+    /** Mientras sea true, escribir un botón nuevo (proposal_nonce) en la base de datos falla. */
+    fallaNonce: false,
+    /** Mientras sea true, leer las reservas pendientes falla. */
+    fallaListar: false,
     cal: {
       eventos: structuredClone(op.calendario?.eventos ?? []) as EventoAgenda[],
       lecturas: 0,
-      /** Fallos del calendario; se pueden cambiar a mitad de una prueba. */
-      fallas: { estado: oc0?.fallaEstado ?? false, leer: oc0?.fallaLeer ?? false, crear: oc0?.fallaCrear ?? false, pagar: oc0?.fallaPagar ?? false, borrar: oc0?.fallaBorrar ?? false },
+      /** Fallos del calendario; se pueden cambiar a mitad de una prueba (leer puede ser un error concreto). */
+      fallas: { estado: oc0?.fallaEstado ?? false, leer: (oc0?.fallaLeer ?? false) as boolean | Error, crear: oc0?.fallaCrear ?? false, pagar: oc0?.fallaPagar ?? false, borrar: oc0?.fallaBorrar ?? false },
       creados: [] as NuevoEvento[],
       pagados: [] as { id: string; bookingId: string; email: string | null; esPrueba: boolean; invitado: boolean }[],
       borrados: [] as string[],
@@ -106,6 +116,7 @@ function mundo(op: Opciones = {}) {
         async eventosEntre() {
           w.cal.lecturas++;
           // Si ni se puede leer la conexión, tampoco la agenda (es lo mismo que pasa en la realidad).
+          if (w.cal.fallas.leer instanceof Error) throw w.cal.fallas.leer;
           if (w.cal.fallas.leer || w.cal.fallas.estado) throw new Error("Google Calendar respondió 500 al leer la agenda (INTERNAL)");
           return structuredClone(w.cal.eventos);
         },
@@ -160,6 +171,7 @@ function mundo(op: Opciones = {}) {
       return structuredClone(fila);
     },
     async actualizarReserva(id, patch) {
+      if (w.fallaNonce && typeof patch.proposal_nonce === "string") throw new Error("fallo de la base de datos al guardar el botón");
       if (op.fallaReservarHueco && patch.status === "pendiente_pago") throw new Error('conflicting key value violates exclusion constraint "bookings_no_overlap"');
       const fila = w.reservas.get(id)!;
       Object.assign(fila, structuredClone(patch));
@@ -204,9 +216,15 @@ function mundo(op: Opciones = {}) {
       if (op.fallaRegistro) throw new Error("fallo guardando service_records");
       w.registros.push(structuredClone(r));
     },
+    async retirarRegistro(bookingId) { w.registrosRetirados.push(bookingId); },
+    async listarPendientes() {
+      if (w.fallaListar) throw new Error("fallo leyendo bookings");
+      return [...w.reservas.values()].filter((x) => x.status === "propuesta" || x.status === "pendiente_pago").map((x) => structuredClone(x)).reverse();
+    },
     async logEvent(e) { w.eventos.push(e); },
     async logSecurity(e) { w.seguridad.push(e); },
     async enviar(chat, texto, markup) {
+      if (op.fallaEnviar?.(markup)) throw new Error("Telegram sendMessage: Bad Gateway (502)");
       const id = 1000 + w.enviados.length + 1;
       w.enviados.push({ chat, texto, markup, id });
       return id;
@@ -215,7 +233,10 @@ function mundo(op: Opciones = {}) {
       if (op.fallaEditar) throw new Error("Telegram editMessageText: message can't be edited");
       w.editados.push({ chat, id, texto });
     },
-    async responderCallback(id, texto) { w.respuestas.push({ id, texto }); },
+    async responderCallback(id, texto) {
+      if (op.fallaResponder) throw new Error("Telegram answerCallbackQuery: query is too old and response timeout expired (400)");
+      w.respuestas.push({ id, texto });
+    },
   };
   const flujo = crearFlujoPropuestas(deps);
   const boton = (nonce: string, accion: "ok" | "ed" | "no", messageId: number | null = 1001) =>
@@ -1464,15 +1485,19 @@ describe("calendario conectado: señal recibida y cancelar", () => {
 
   it("si Google falla al pasar a morado, la reserva sigue pendiente y se ofrecen botones nuevos", async () => {
     const m = await conProvisional({ calendario: { fallaPagar: true } });
-    await m.botonCita(m.nonceCita(), "pay", m.ultimo().id);
     const antes = m.ultimo();
+    const enviadosAntes = m.w.enviados.length;
+    await m.botonCita(m.nonceCita(), "pay", m.ultimo().id);
     expect(m.reserva().status).toBe("pendiente_pago");
     const t = m.ultimo();
     expect(t.texto).toContain("No he podido pasar el evento a morado");
+    expect(t.texto).toContain("Puede que Google sí lo haya aplicado (incluida la invitación): míralo en tu calendario antes de reintentar.");
     expect(m.botones(t)).toEqual(["💜 Señal recibida", "🗑 Cancelar cita"]);
     expect(m.reserva().proposal_nonce).toBe(m.nonceCita(t));
     expect(m.tipos()).toContain("evento_pagado_fallo");
-    expect(antes).toBe(t);
+    expect(t).not.toBe(antes); // se mandó un mensaje NUEVO con botones nuevos
+    expect(m.w.enviados.length).toBe(enviadosAntes + 1);
+    expect(m.nonceCita(t)).not.toBe(m.nonceCita(antes));
     // y el botón nuevo funciona en cuanto Google vuelve
     m.w.cal.fallas.pagar = false;
     await m.botonCita(m.nonceCita(t), "pay", t.id);
@@ -1495,5 +1520,232 @@ describe("calendario conectado: señal recibida y cancelar", () => {
     expect(m.w.cal.pagados).toHaveLength(0);
     expect(m.ultimo().texto).toContain("No encuentro el evento de esta reserva");
     expect(m.reserva().status).toBe("pendiente_pago");
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Robustez: Telegram o Google fallan a mitad. Blake nunca se queda sin salida.
+// ---------------------------------------------------------------------------
+
+describe("fallos de Telegram a mitad: nunca se queda sin botones", () => {
+  async function lista(op: Opciones) {
+    const m = mundo(op);
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo pegadas\nnombre Michael");
+    return m;
+  }
+
+  it("si Telegram no deja contestar al botón (se tardó), igualmente se aprueba, se crea el evento y llegan los botones", async () => {
+    const m = await lista({ calendario: {}, fallaResponder: true });
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    expect(m.w.cal.creados).toHaveLength(1);
+    expect(m.reserva().status).toBe("pendiente_pago");
+    expect(m.botones()).toEqual(["💜 Señal recibida", "🗑 Cancelar cita"]);
+    expect(m.tipos()).toContain("responder_boton_fallo");
+    expect(m.w.registros).toHaveLength(1);
+  });
+
+  it("si Telegram no deja contestar y hay un choque, la propuesta vuelve igualmente", async () => {
+    const m = await lista({ calendario: {}, fallaResponder: true });
+    m.w.cal.eventos.push(LUX_LIBRE);
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    expect(m.w.cal.creados).toHaveLength(0);
+    expect(m.ultimo().texto).toContain("hueco ocupado por «Trenzas Lux»");
+    expect(m.botones()).toEqual(["✏️ Editar", "❌ Rechazar"]);
+  });
+
+  it("si Telegram falla al mandar los botones de la cita recién creada, avisa con un texto simple y /pendientes los recupera", async () => {
+    const falla = { activa: false };
+    const m = await lista({ calendario: {}, fallaEnviar: (mk) => falla.activa && JSON.stringify(mk ?? "").includes('"c:') });
+    falla.activa = true;
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    expect(m.w.cal.creados).toHaveLength(1); // el evento SÍ está creado
+    expect(m.reserva().status).toBe("pendiente_pago");
+    expect(m.ultimo().texto).toContain("no he podido mandarte sus botones");
+    expect(m.ultimo().texto).toContain("/pendientes");
+    expect(m.ultimo().markup).toBeUndefined();
+    expect(m.tipos()).toContain("botones_cita_fallo");
+    expect(m.w.registros).toHaveLength(1); // y lo secundario se hizo igual
+
+    falla.activa = false;
+    await m.flujo.pendientes(CHAT);
+    expect(m.botones()).toEqual(["💜 Señal recibida", "🗑 Cancelar cita"]);
+    await m.botonCita(m.nonceCita(), "pay", m.ultimo().id);
+    expect(m.reserva().status).toBe("pagada");
+  });
+
+  it("si falla el paso secundario justo tras crear el evento (registro), los botones ya han llegado", async () => {
+    const m = await lista({ calendario: {}, fallaRegistro: true });
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    expect(m.botones()).toEqual(["💜 Señal recibida", "🗑 Cancelar cita"]);
+    expect(m.reserva().status).toBe("pendiente_pago");
+    expect(m.tipos()).toContain("registro_servicio_fallo");
+  });
+
+  it("si al volver con la propuesta Telegram falla, se manda un texto simple que dice cómo recuperarla, y /pendientes la recupera", async () => {
+    const falla = { activa: false };
+    const m = await lista({ calendario: {}, fallaEnviar: (mk) => falla.activa && JSON.stringify(mk ?? "").includes('"p:') });
+    m.w.cal.eventos.push(LUX_LIBRE);
+    falla.activa = true;
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    expect(m.reserva().status).toBe("propuesta");
+    expect(m.reserva().proposal_nonce).toBeNull(); // la propuesta se quedó sin botones...
+    expect(m.ultimo().texto).toContain("Escribe /pendientes para recibirla");
+    expect(m.tipos()).toContain("devolver_propuesta_fallo");
+
+    falla.activa = false;
+    await m.flujo.pendientes(CHAT);
+    expect(m.ultimo().texto).toContain("Esta propuesta se había quedado sin botones");
+    expect(m.reserva().proposal_nonce).toMatch(/^[0-9a-f]{32}$/); // ...y ya vuelve a tener
+    expect(m.botones()).toEqual(["✏️ Editar", "❌ Rechazar"]); // sigue chocando con Lux
+  });
+
+  it("si Google falla y además la base de datos no deja guardar el botón nuevo, avisa con texto simple y /pendientes lo arregla después", async () => {
+    const m = await lista({ calendario: { fallaPagar: true } });
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    const msgCita = m.ultimo();
+    m.w.fallaNonce = true;
+    await m.botonCita(m.nonceCita(msgCita), "pay", msgCita.id);
+    expect(m.reserva().status).toBe("pendiente_pago");
+    expect(m.ultimo().texto).toContain("no he podido volver a ofrecerte los botones");
+    expect(m.ultimo().texto).toContain("/pendientes");
+    expect(m.ultimo().markup).toBeUndefined();
+    expect(m.tipos()).toContain("botones_cita_fallo");
+
+    m.w.fallaNonce = false;
+    m.w.cal.fallas.pagar = false;
+    await m.flujo.pendientes(CHAT);
+    await m.botonCita(m.nonceCita(), "pay", m.ultimo().id);
+    expect(m.reserva().status).toBe("pagada");
+  });
+
+  it("al pulsar «Señal recibida» con Telegram rechazando contestar, igualmente se pasa a morado y se cierra", async () => {
+    const m = await lista({ calendario: {}, fallaResponder: true });
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    await m.botonCita(m.nonceCita(), "pay", m.ultimo().id);
+    expect(m.reserva().status).toBe("pagada");
+    expect(m.w.cal.pagados).toHaveLength(1);
+  });
+});
+
+describe("/pendientes", () => {
+  it("sin nada pendiente, lo dice", async () => {
+    const m = mundo({ calendario: {} });
+    await m.flujo.pendientes(CHAT);
+    expect(m.ultimo().texto).toContain("No tienes ninguna reserva provisional esperando la señal ni propuestas sin botones");
+  });
+
+  it("reenvía los botones de las reservas provisionales con un botón NUEVO (el viejo deja de valer)", async () => {
+    const m = mundo({ calendario: {} });
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo pegadas\nnombre Michael");
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    const viejo = m.nonceCita();
+    await m.flujo.pendientes(CHAT);
+    expect(m.w.enviados.some((e) => e.texto.startsWith("Te mando otra vez los botones de 1 reserva"))).toBe(true);
+    const nuevo = m.nonceCita();
+    expect(nuevo).not.toBe(viejo);
+    await m.botonCita(viejo, "pay");
+    expect(m.w.respuestas.at(-1)!.texto).toBe("Ya procesado");
+    expect(m.reserva().status).toBe("pendiente_pago");
+    await m.botonCita(nuevo, "pay");
+    expect(m.reserva().status).toBe("pagada");
+  });
+
+  it("no toca una propuesta que se está editando ni una que ya tiene botones", async () => {
+    const m = mundo({ calendario: {} });
+    await m.flujo.simular(CHAT, MENSAJE); // con botones
+    const propuesta = m.ultimo();
+    const nonce = m.reserva().proposal_nonce;
+    await m.flujo.pendientes(CHAT);
+    expect(m.ultimo().texto).toContain("No tienes ninguna reserva provisional");
+    expect(m.reserva().proposal_nonce).toBe(nonce);
+    await m.boton(m.nonceDe(propuesta), "ed", propuesta.id); // en edición: tampoco
+    await m.flujo.pendientes(CHAT);
+    expect(m.ultimo().texto).toContain("No tienes ninguna reserva provisional");
+  });
+
+  it("si no puede leer las reservas, lo dice y lo anota", async () => {
+    const m = mundo({ calendario: {} });
+    m.w.fallaListar = true;
+    await m.flujo.pendientes(CHAT);
+    expect(m.ultimo().texto).toContain("No he podido leer las reservas pendientes");
+    expect(m.tipos()).toContain("pendientes_fallo");
+  });
+});
+
+describe("cancelar y registro; precio a mano conserva lo que sugirió Legacy", () => {
+  async function conProvisional(op: Opciones = { calendario: {} }, edicion = "tipo pegadas\nnombre Michael") {
+    const m = mundo(op);
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, edicion);
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    return m;
+  }
+
+  it("cancelar retira el registro del servicio (una cita cancelada no cuenta para calibrar)", async () => {
+    const m = await conProvisional();
+    expect(m.w.registros).toHaveLength(1);
+    await m.botonCita(m.nonceCita(), "del", m.ultimo().id);
+    expect(m.w.registrosRetirados).toEqual(["res-1"]);
+  });
+
+  it("pagar NO retira el registro", async () => {
+    const m = await conProvisional();
+    await m.botonCita(m.nonceCita(), "pay", m.ultimo().id);
+    expect(m.w.registrosRetirados).toEqual([]);
+  });
+
+  it("un precio puesto a mano después de ver el de Legacy conserva lo que Legacy calculó (para el registro)", async () => {
+    const m = mundo({ calendario: {} });
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo pegadas"); // Legacy calcula 60,15 €
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "precio 80"); // Blake lo cambia a mano
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    const reg = m.w.registros[0];
+    expect(reg.price_cents).toBe(8000);
+    expect(reg.spec.precio_manual_centimos).toBe(8000);
+    expect(reg.pricing.origen).toBe("manual");
+    expect(reg.pricing.legacy?.totalCentimos).toBe(6015);
+  });
+});
+
+describe("alternativas cuando hay un choque", () => {
+  it("la propuesta que choca enseña los huecos libres de ese día", async () => {
+    const m = mundo({ calendario: { eventos: [LUX_LIBRE] } });
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo pegadas");
+    expect(m.ultimo().texto).toMatch(/Huecos libres ese día para 3 h: \d\d:\d\d–\d\d:\d\d/);
+    expect(m.botones()).toEqual(["✏️ Editar", "❌ Rechazar"]);
+  });
+});
+
+describe("conexión perdida o ilegible: el motivo dice cómo arreglarlo", () => {
+  it("si Google dice que la conexión ya no vale, la propuesta pide reconectar y no deja aprobar", async () => {
+    const m = mundo({ calendario: {} });
+    m.w.cal.fallas.leer = new GoogleError("Google rechazó la conexión (400: invalid_grant)", 400, true);
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo pegadas");
+    expect(m.ultimo().texto).toContain("comprobar la agenda (Google rechazó la conexión (400: invalid_grant). Reconecta en el panel → Calendario)");
+    expect(m.botones()).toEqual(["✏️ Editar", "❌ Rechazar"]);
+  });
+
+  it("y si se pierde justo al aprobar, el aviso también dice que hay que reconectar", async () => {
+    const m = mundo({ calendario: {} });
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo pegadas");
+    m.w.cal.fallas.leer = new GoogleError("La conexión guardada con Google ya no se puede leer (¿cambió la clave de servidor?)", undefined, true);
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    expect(m.w.cal.creados).toHaveLength(0);
+    expect(m.ultimo().texto).toContain("Reconecta en el panel → Calendario");
   });
 });

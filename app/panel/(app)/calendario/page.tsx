@@ -12,6 +12,7 @@ const AVISOS: Record<string, { tono: "ok" | "mal" | "espera"; texto: string }> =
   "e:sin_configurar": { tono: "mal", texto: "Todavía no están puestos GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET en Vercel." },
   "c:desconectado": { tono: "espera", texto: "Calendario desconectado. Las propuestas vuelven a avisar de que la disponibilidad no está comprobada." },
   "c:error": { tono: "mal", texto: "No he podido leer tu agenda. Mira la pestaña Fallos para ver el motivo." },
+  "c:vacio": { tono: "mal", texto: "Leo el calendario, pero NO tiene ningún evento en los últimos 30 ni en los próximos 60 días. ¿Es la cuenta donde tienes tus citas? Si no lo es, pulsa Reconectar y elige la correcta: con un calendario vacío, todos los huecos saldrían libres." },
 };
 
 export default async function Calendario({ searchParams }: { searchParams: Promise<{ e?: string; c?: string; n?: string }> }) {
@@ -32,7 +33,7 @@ export default async function Calendario({ searchParams }: { searchParams: Promi
     }
   }
 
-  const aviso = q.c === "ok" ? { tono: "ok" as const, texto: `Todo bien: Kira lee tu agenda. Hay ${Number(q.n) >= 0 ? Number(q.n) : 0} eventos en los próximos 7 días.` } : (q.e ? AVISOS[`e:${q.e}`] : q.c ? AVISOS[`c:${q.c}`] : undefined);
+  const aviso = q.c === "ok" ? { tono: "ok" as const, texto: `Todo bien: Kira lee tu agenda. Hay ${Number(q.n) >= 0 ? Number(q.n) : 0} eventos entre los últimos 30 y los próximos 60 días.` } : (q.e ? AVISOS[`e:${q.e}`] : q.c ? AVISOS[`c:${q.c}`] : undefined);
 
   return (
     <>
@@ -57,13 +58,9 @@ export default async function Calendario({ searchParams }: { searchParams: Promi
       {configurado && (
         <section className="tarjeta">
           <div className="fila">
-            <a className="boton" href="/api/google/conectar">{conectado ? "Reconectar" : "Conectar Google Calendar"}</a>
-            {conectado && (
-              <>
-                <form action={comprobar}><button type="submit">Comprobar ahora</button></form>
-                <form action={desconectar}><button type="submit" className="enlace">Desconectar</button></form>
-              </>
-            )}
+            <a className="boton" href="/api/google/conectar">{conectado || ilegible ? "Reconectar" : "Conectar Google Calendar"}</a>
+            {conectado && <form action={comprobar}><button type="submit">Comprobar ahora</button></form>}
+            {(conectado || ilegible) && <form action={desconectar}><button type="submit" className="enlace">Desconectar</button></form>}
           </div>
         </section>
       )}

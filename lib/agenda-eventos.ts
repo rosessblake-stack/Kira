@@ -1,4 +1,4 @@
-import { duracionLegible, partesEn } from "./agenda";
+import { aUtc, duracionLegible, partesEn } from "./agenda";
 import { limpiarTexto } from "./intents";
 
 /**
@@ -37,16 +37,24 @@ type Cru = Record<string, unknown>;
 const obj = (v: unknown): Cru | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Cru) : null);
 const texto = (v: unknown) => (typeof v === "string" ? v : null);
 
-/** Convierte un evento tal como lo devuelve Google. Devuelve null si está cancelado o no se entiende (no se inventa nada). */
-export function interpretarEventoGoogle(raw: unknown): EventoAgenda | null {
+/** Lo que se lee de un elemento de la agenda: un evento, uno cancelado (se puede ignorar) o uno que NO se entiende (no se puede ignorar). */
+export type LecturaEvento = { tipo: "evento"; evento: EventoAgenda } | { tipo: "cancelado" } | { tipo: "ilegible"; titulo: string };
+
+/**
+ * Convierte un evento tal como lo devuelve Google. Un evento cancelado se ignora sin más; uno que no se entiende NO: ignorarlo
+ * sería dar por libre un hueco que quizá no lo está (la misma familia de fallo que la cita de Lux marcada «libre»).
+ */
+export function leerEventoGoogle(raw: unknown): LecturaEvento {
   const e = obj(raw);
-  if (!e) return null;
-  if (e.status === "cancelled") return null;
+  const titulo = limpiarTexto(texto(e?.summary) ?? "(sin título)", 40) || "(sin título)";
+  const ilegible: LecturaEvento = { tipo: "ilegible", titulo };
+  if (!e) return ilegible;
+  if (e.status === "cancelled") return { tipo: "cancelado" };
   const id = texto(e.id);
-  if (!id) return null;
+  if (!id) return ilegible;
   const inicio = obj(e.start);
   const fin = obj(e.end);
-  if (!inicio || !fin) return null;
+  if (!inicio || !fin) return ilegible;
 
   const priv = obj(obj(e.extendedProperties)?.private);
   const bookingId = texto(priv?.kira_booking_id);
@@ -64,15 +72,21 @@ export function interpretarEventoGoogle(raw: unknown): EventoAgenda | null {
   if (dtIni && dtFin) {
     const a = new Date(dtIni);
     const b = new Date(dtFin);
-    if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
-    return { ...base, inicio: a, fin: b, dias: null };
+    if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return ilegible;
+    return { tipo: "evento", evento: { ...base, inicio: a, fin: b, dias: null } };
   }
   const dIni = texto(inicio.date)?.slice(0, 10);
   const dFin = texto(fin.date)?.slice(0, 10);
   if (dIni && dFin && fechaIso.test(dIni) && fechaIso.test(dFin)) {
-    return { ...base, inicio: null, fin: null, dias: { desde: dIni, hasta: dFin > dIni ? dFin : dIni } };
+    return { tipo: "evento", evento: { ...base, inicio: null, fin: null, dias: { desde: dIni, hasta: dFin > dIni ? dFin : dIni } } };
   }
-  return null;
+  return ilegible;
+}
+
+/** Como leerEventoGoogle pero solo devuelve el evento (null si está cancelado o no se entiende). */
+export function interpretarEventoGoogle(raw: unknown): EventoAgenda | null {
+  const l = leerEventoGoogle(raw);
+  return l.tipo === "evento" ? l.evento : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +104,8 @@ export type Hueco = {
   siguiente: Contigua | null;
   /** Eventos de todo el día que caen en el día de la cita (aviso, no bloquean). */
   todoElDia: EventoAgenda[];
+  /** Si la cita choca: hasta 3 huecos libres ese mismo día, con la misma duración y respetando el margen y el horario. */
+  alternativas: { inicio: Date; fin: Date }[];
   /** Eventos con hora de ese día (en la hora de la cita), para enseñar la agenda. */
   delDia: EventoAgenda[];
   margenMin: number;
@@ -97,6 +113,8 @@ export type Hueco = {
 
 export type OpcionesHueco = {
   margenMin?: number;
+  /** Horario del día (para proponer alternativas); sin él, 11:00–22:00. */
+  horario?: { aperturaMin: number; cierreMin: number } | null;
   /** La reserva que se está comprobando: su propio evento no cuenta como choque. */
   excluirBookingId?: string | null;
 };
@@ -125,7 +143,39 @@ export function evaluarHueco(inicio: Date, fin: Date, eventos: EventoAgenda[], z
     .filter((e) => partesEn(e.inicio, zona).fecha === dia || (e.inicio < inicio && e.fin > inicio))
     .sort((a, b) => a.inicio.getTime() - b.inicio.getTime());
 
-  return { choques, anterior, siguiente, todoElDia, delDia, margenMin: margen };
+  const alternativas = choques.length ? huecosAlternativos(inicio, fin, conHora, zona, opts.horario ?? null, margen) : [];
+  return { choques, anterior, siguiente, todoElDia, alternativas, delDia, margenMin: margen };
+}
+
+/** Los huecos libres más cercanos a la hora pedida, ese mismo día, cada 30 min; sin solaparse entre sí y respetando el margen. */
+function huecosAlternativos(
+  inicio: Date,
+  fin: Date,
+  eventos: { inicio: Date; fin: Date }[],
+  zona: string,
+  horario: { aperturaMin: number; cierreMin: number } | null,
+  margenMin: number,
+): { inicio: Date; fin: Date }[] {
+  const duracion = fin.getTime() - inicio.getTime();
+  const durMin = Math.round(duracion / 60_000);
+  const dia = partesEn(inicio, zona).fecha;
+  const abre = horario?.aperturaMin ?? 11 * 60;
+  const cierra = horario?.cierreMin ?? 22 * 60;
+  const margen = margenMin * 60_000;
+  const libres: { inicio: Date; fin: Date }[] = [];
+  for (let m = abre; m + durMin <= cierra; m += 30) {
+    const s = aUtc(dia, `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`, zona);
+    const f = new Date(s.getTime() + duracion);
+    const choca = eventos.some((e) => e.inicio.getTime() < f.getTime() + margen && e.fin.getTime() > s.getTime() - margen);
+    if (!choca) libres.push({ inicio: s, fin: f });
+  }
+  libres.sort((a, b) => Math.abs(a.inicio.getTime() - inicio.getTime()) - Math.abs(b.inicio.getTime() - inicio.getTime()));
+  const elegidos: { inicio: Date; fin: Date }[] = [];
+  for (const c of libres) {
+    if (elegidos.every((x) => c.inicio >= x.fin || c.fin <= x.inicio)) elegidos.push(c);
+    if (elegidos.length === 3) break;
+  }
+  return elegidos.sort((a, b) => a.inicio.getTime() - b.inicio.getTime());
 }
 
 /** Lo que sabe Kira de la agenda cuando prepara una propuesta. */
@@ -187,6 +237,13 @@ export function textoAgendaDelDia(h: Hueco, inicio: Date, fin: Date, zona: strin
   if (desde > 0) l.push("• …");
   for (const f of trozo) l.push(`• ${f.txt}`);
   if (idx + 4 < filas.length) l.push("• …");
+  if (h.choques.length > 0) {
+    l.push(
+      h.alternativas.length
+        ? `Huecos libres ese día para ${duracionLegible(Math.round((fin.getTime() - inicio.getTime()) / 60_000))}: ${h.alternativas.map((a) => `${hora(a.inicio, zona)}–${hora(a.fin, zona)}`).join(" · ")}`
+        : `No veo ningún hueco libre ese día con margen de ${duracionLegible(h.margenMin)}: prueba otro día.`,
+    );
+  }
   if (h.choques.length === 0) {
     const partes: string[] = [];
     if (h.anterior) partes.push(`con la anterior: ${duracionLegible(Math.max(0, h.anterior.margenMin))}`);

@@ -185,12 +185,13 @@ const servidorTelegram = http.createServer(async (req, res) => {
 const g = {
   refresh: "refresh-falso-ABCDEF123456", n: 0, codigos: new Set(), accesos: new Set(), eventos: new Map(),
   auth: [], tokens: [], revocados: [], llamadas: [], deniega: false, caeLeer: false, caeCrear: false,
+  email: "info@blakebraider.com", sinEventos: false,
 };
 const evGoogle = (id, summary, inicio, fin, extra = {}) => ({ id, status: "confirmed", summary, start: { dateTime: inicio, timeZone: "Europe/Madrid" }, end: { dateTime: fin, timeZone: "Europe/Madrid" }, ...extra });
 const jwtFalso = (email) => `cabecera.${Buffer.from(JSON.stringify({ email })).toString("base64url")}.firma`;
 const solapaG = (e, desde, hasta) => {
   const a = e.start.dateTime ? Date.parse(e.start.dateTime) : Date.parse(e.start.date);
-  const b = e.end.dateTime ? Date.parse(e.end.dateTime) : Date.parse(e.end.date);
+  const b = e.end ? (e.end.dateTime ? Date.parse(e.end.dateTime) : Date.parse(e.end.date)) : a + 1; // un evento mal formado (sin fin) también llega a Kira
   return a < hasta && b > desde;
 };
 const servidorGoogle = http.createServer(async (req, res) => {
@@ -212,7 +213,7 @@ const servidorGoogle = http.createServer(async (req, res) => {
       if (!g.codigos.delete(f.code)) return json(res, 400, { error: "invalid_grant" });
       const acc = `acceso-falso-${++g.n}`;
       g.accesos.add(acc);
-      return json(res, 200, { access_token: acc, refresh_token: g.refresh, expires_in: 3599, scope: "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.events", id_token: jwtFalso("info@blakebraider.com") });
+      return json(res, 200, { access_token: acc, refresh_token: g.refresh, expires_in: 3599, scope: "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.events", id_token: jwtFalso(g.email) });
     }
     if (f.grant_type === "refresh_token") {
       if (f.refresh_token !== g.refresh) return json(res, 400, { error: "invalid_grant" });
@@ -235,6 +236,7 @@ const servidorGoogle = http.createServer(async (req, res) => {
   if (req.method === "GET" && !id) {
     if (g.caeLeer) return json(res, 500, { error: { code: 500, status: "INTERNAL", errors: [{ reason: "backendError" }] } });
     const desde = Date.parse(url.searchParams.get("timeMin")), hasta = Date.parse(url.searchParams.get("timeMax"));
+    if (g.sinEventos) return json(res, 200, { items: [] });
     return json(res, 200, { items: [...g.eventos.values()].filter((e) => e.status !== "cancelled" && solapaG(e, desde, hasta)) });
   }
   if (req.method === "POST" && !id) {
@@ -298,6 +300,7 @@ const app = spawn("node", ["node_modules/next/dist/bin/next", "start", "-p", "31
     TELEGRAM_ADMIN_USER_ID: String(ADMIN),
     ...(SIN_CLAVE ? {} : { ANTHROPIC_API_KEY: "clave-falsa-anthropic", ANTHROPIC_BASE_URL: "http://127.0.0.1:54331" }),
     LEGACY_API_URL: "http://127.0.0.1:54333/api/calculate",
+    GOOGLE_CUENTA_ESPERADA: "info@blakebraider.com",
     GOOGLE_CLIENT_ID: "cliente-falso",
     GOOGLE_CLIENT_SECRET: "secreto-cliente-falso",
     GOOGLE_AUTH_URL: "http://127.0.0.1:54334/auth",
@@ -892,7 +895,18 @@ try {
 
   // Un retorno colado desde fuera (sin haber empezado desde el panel) no vale.
   const rMala = await fetch(`${BASE}/api/google/callback?code=robado&state=inventado`);
-  check("L3. un retorno de Google que no empezó en tu panel (state inventado) se rechaza y queda en seguridad, sin hablar con Google", rMala.status === 400 && tables.security_events.some((x) => x.source === "google_callback") && g.tokens.length === 0 && !cal());
+  check("L3. un retorno de Google que no empezó en tu panel (sin cookie) se rechaza sin hablar con Google ni anotar nada (es ruido de fuera)", rMala.status === 400 && g.tokens.length === 0 && !cal() && !tables.security_events.some((x) => x.source === "google_callback"));
+  const rCookieInventada = await fetch(`${BASE}/api/google/callback?code=robado&state=inventado`, { headers: { cookie: "__Host-kira_google=inventado" } });
+  check("L3a. y uno que trae una cookie inventada con el mismo state también se rechaza, esta vez ANOTADO en seguridad, sin hablar con Google", rCookieInventada.status === 400 && g.tokens.length === 0 && !cal() && tables.security_events.filter((x) => x.source === "google_callback").length === 1);
+
+  // Blake elige en Google OTRA cuenta (la de rosessblake@gmail.com, con el calendario vacío): no se guarda nada.
+  g.email = "rosessblake@gmail.com";
+  await page.getByRole("link", { name: "Conectar Google Calendar" }).click();
+  await page.waitForURL("**/api/google/callback**");
+  const malaCuenta = await hoyPanel();
+  check("L3b. si Blake conecta OTRA cuenta de Google, se rechaza: no se guarda nada, se anula ese permiso en Google y se le dice cuál debe elegir", malaCuenta.includes("No se ha conectado") && malaCuenta.includes("Has conectado rosessblake@gmail.com") && malaCuenta.includes("tus citas están en info@blakebraider.com") && !cal() && g.revocados.length === 1 && g.revocados[0] === g.refresh && tables.security_events.some((x) => x.detail?.razon === "cuenta_distinta_de_la_esperada"));
+  g.email = "info@blakebraider.com";
+  await page.goto(`${BASE}/panel/calendario`);
 
   // Conectar de verdad, con el navegador: panel → Google → de vuelta → panel.
   await page.getByRole("link", { name: "Conectar Google Calendar" }).click();
@@ -900,13 +914,14 @@ try {
   const urlRetorno = page.url();
   const pagRetorno = await hoyPanel();
   check("L4. Google devuelve a Blake y la página dice «Listo» con su cuenta", pagRetorno.includes("✅ Listo") && pagRetorno.includes("Conectado con info@blakebraider.com"));
-  const sol = g.auth[0];
-  check("L5. a Google solo se le pidió ver y editar eventos (+ identidad), permiso permanente, y el secreto no viaja en la URL", sol.scope === "https://www.googleapis.com/auth/calendar.events openid email" && sol.access_type === "offline" && sol.prompt === "consent" && !JSON.stringify(sol).includes("secreto-cliente-falso") && sol.redirect_uri === "http://localhost:3100/api/google/callback");
-  check("L6. el código se cambió por el permiso con el secreto en el cuerpo y la misma dirección de retorno", g.tokens[0].grant_type === "authorization_code" && g.tokens[0].client_secret === "secreto-cliente-falso" && g.tokens[0].redirect_uri === "http://localhost:3100/api/google/callback");
+  const sol = g.auth[1];
+  check("L5. a Google solo se le pidió ver y editar eventos (+ identidad), permiso permanente, y el secreto no viaja en la URL", sol.scope === "https://www.googleapis.com/auth/calendar.events openid email" && sol.access_type === "offline" && sol.prompt === "consent" && !JSON.stringify(sol).includes("secreto-cliente-falso") && sol.redirect_uri === "http://localhost:3100/api/google/callback" && sol.login_hint === "info@blakebraider.com");
+  check("L6. el código se cambió por el permiso con el secreto en el cuerpo y la misma dirección de retorno", g.tokens[1].grant_type === "authorization_code" && g.tokens[1].client_secret === "secreto-cliente-falso" && g.tokens[1].redirect_uri === "http://localhost:3100/api/google/callback");
   check("L7. el permiso permanente se guardó CIFRADO (nunca en claro), con la cuenta y el calendario principal", /^v1\./.test(cal()?.value.refresh ?? "") && !JSON.stringify(cal()).includes(g.refresh) && cal().value.email === "info@blakebraider.com" && cal().value.calendario === "primary");
   check("L8. el «state» de un solo uso ya no existe y la cookie de la conexión se borró", !tables.app_settings.some((a) => a.key === "google_oauth_state") && !(await ctx.cookies()).some((c) => c.name.includes("kira_google")));
+  const tokensAntes = g.tokens.length;
   const retornoRepetido = await ctx.request.get(urlRetorno);
-  check("L9. repetir el mismo enlace de retorno no vale (ni cambia nada)", retornoRepetido.status() === 400 && g.tokens.length === 1);
+  check("L9. repetir el mismo enlace de retorno no vale (ni cambia nada)", retornoRepetido.status() === 400 && g.tokens.length === tokensAntes);
 
   await page.getByRole("link", { name: "Volver al panel" }).click();
   await page.waitForURL("**/panel/calendario");
@@ -914,7 +929,7 @@ try {
   check("L10. de vuelta en el panel, con la sesión intacta: Conectado con su cuenta", conCal.includes("Conectado") && conCal.includes("info@blakebraider.com") && conCal.includes("Reconectar") && conCal.includes("Desconectar"));
   await page.getByRole("button", { name: "Comprobar ahora" }).click();
   await page.waitForURL("**/panel/calendario?c=ok**");
-  check("L11. «Comprobar ahora» lee la agenda de verdad (renovando el acceso con el permiso guardado)", (await hoyPanel()).includes("Kira lee tu agenda") && g.tokens.some((t) => t.grant_type === "refresh_token") && g.llamadas.some((x) => x.metodo === "GET" && x.calendario === "primary"));
+  check("L11. «Comprobar ahora» lee la agenda de verdad (renovando el acceso con el permiso guardado)", (await hoyPanel()).includes("Kira lee tu agenda") && (await hoyPanel()).includes("entre los últimos 30 y los próximos 60 días") && g.tokens.some((t) => t.grant_type === "refresh_token") && g.llamadas.some((x) => x.metodo === "GET" && x.calendario === "primary"));
   await escribe("/calendario");
   check("L12. /calendario ahora dice conectado con su cuenta", ultimo().text.includes("conectado con info@blakebraider.com"));
   const salud2 = await (await fetch(`${BASE}/api/health`)).json();
@@ -989,6 +1004,7 @@ try {
   await escribe(`/simular ${MSG_LOLA}`);
   const pL = conBotones();
   anota("Kira (propuesta Lola, choca con Lux)", `${pL.text}\n[botones: ${botones(pL).join(" | ")}]`);
+  check("L33a. y le propone huecos libres ese día", /Huecos libres ese día para 3 h: \d\d:\d\d–\d\d:\d\d/.test(pL.text));
   check("L33. Lola pide un hueco que ocupa Lux (marcada «libre»): lo detecta, lo explica y no ofrece Aprobar", pL.text.includes("hueco ocupado por «Trenzas Lux» 14:00–17:00 (marcado «libre» en tu calendario, pero cuenta)") && pL.text.includes("⛔ CHOCA") && botones(pL).join("|") === "✏️ Editar|❌ Rechazar");
   await pulsa(dato(pL, "Editar"), pL.message_id);
   await escribe("hora 17:30");
@@ -1042,6 +1058,69 @@ try {
   await page.waitForURL("**/api/google/callback**");
   check("L43. si Blake cancela el permiso en Google no se conecta nada y se explica", (await hoyPanel()).includes("No se ha conectado") && (await hoyPanel()).includes("cancelaste el permiso") && !cal());
   g.deniega = false;
+
+  // --- Reconectar bien y probar las averías de la conexión
+  await page.goto(`${BASE}/panel/calendario`);
+  await page.getByRole("link", { name: "Conectar Google Calendar" }).click();
+  await page.waitForURL("**/api/google/callback**");
+  await page.getByRole("link", { name: "Volver al panel" }).click();
+  await page.waitForURL("**/panel/calendario");
+  check("L44. se puede volver a conectar después de desconectar", Boolean(cal()) && (await hoyPanel()).includes("Conectado"));
+
+  g.sinEventos = true;
+  await page.getByRole("button", { name: "Comprobar ahora" }).click();
+  await page.waitForURL("**/panel/calendario?c=vacio");
+  check("L45. «Comprobar ahora» con un calendario SIN ningún evento avisa en rojo (puede ser la cuenta equivocada)", (await hoyPanel()).includes("NO tiene ningún evento") && (await hoyPanel()).includes("¿Es la cuenta donde tienes tus citas?"));
+  g.sinEventos = false;
+
+  // Un evento de la agenda que Kira no entiende: no se da el hueco por libre
+  g.eventos.set("raro", { id: "raro", status: "confirmed", summary: "Evento raro", start: { dateTime: isoMadrid(D_JUE, "12:00") } });
+  await escribe(`/simular ${MSG_MICHAEL}`);
+  await pulsa(dato(conBotones(), "Editar"), conBotones().message_id);
+  await escribe("tipo pegadas");
+  check("L46. un evento de tu agenda que no se entiende NO se ignora: la propuesta no deja aprobar y dice cuál es", conBotones().text.includes("comprobar la agenda (No entiendo un evento de tu agenda («Evento raro»)") && !botones(conBotones()).includes("✅ Aprobar"));
+  g.eventos.delete("raro");
+
+  // La conexión muere en Google (se retiró el permiso): fail-closed y se dice cómo arreglarlo
+  const refreshBueno = g.refresh;
+  g.refresh = "refresh-revocado";
+  g.accesos.clear();
+  await pulsa(dato(conBotones(), "Editar"), conBotones().message_id);
+  await escribe("hora 17:00");
+  check("L47. si Google ya no acepta el permiso guardado: no se aprueba nada y la propuesta dice que hay que reconectar en el panel", conBotones().text.includes("Reconecta en el panel → Calendario") && !botones(conBotones()).includes("✅ Aprobar"));
+  g.refresh = refreshBueno;
+  g.accesos.clear();
+
+  // La conexión guardada se corrompe (p. ej. cambió la clave de servidor): ilegible NO es «sin conectar»
+  const guardadaOk = structuredClone(cal().value);
+  cal().value.refresh = "v1.AAAA.BBBB.CCCC";
+  await pulsa(dato(conBotones(), "Editar"), conBotones().message_id);
+  await escribe("hora 17:00");
+  check("L48. con la conexión guardada ilegible no se aprueba a ciegas: lo dice y pide reconectar (NO dice «sin conectar»)", conBotones().text.includes("La conexión guardada con Google ya no se puede leer") && !conBotones().text.includes("el calendario todavía no está conectado") && !botones(conBotones()).includes("✅ Aprobar"));
+  const saludIlegible = await (await fetch(`${BASE}/api/health`)).json();
+  check("L49. /api/health: configurado y estado desconocido (null), nunca «conectado» ni «sin conectar»", saludIlegible.calendario.configurado === true && saludIlegible.calendario.conectado === null);
+  await page.goto(`${BASE}/panel/calendario`);
+  check("L50. el panel dice que no se pudo leer la conexión y ofrece reconectar", (await hoyPanel()).includes("No se pudo leer") && (await hoyPanel()).includes("Reconectar"));
+  Object.assign(cal().value, guardadaOk);
+  await pulsa(dato(conBotones(), "Editar"), conBotones().message_id);
+  await escribe("hora 17:00");
+  check("L51. al restaurarse la conexión vuelve a funcionar (y deja aprobar)", botones(conBotones()).includes("✅ Aprobar"));
+
+  // /pendientes: botones recuperables
+  await pulsa(dato(conBotones(), "Aprobar"), conBotones().message_id);
+  const citaPend = conBotones();
+  const nonceViejo = citaPend.reply_markup.inline_keyboard[0][0].callback_data;
+  await escribe("/pendientes");
+  const citaNueva = conBotones();
+  check("L52. /pendientes vuelve a mandar los botones de la reserva provisional, con un botón NUEVO", ultimo().text.includes("RESERVA PROVISIONAL") && citaNueva.reply_markup.inline_keyboard[0][0].callback_data !== nonceViejo);
+  await pulsa(nonceViejo, citaPend.message_id);
+  check("L53. el botón antiguo ya no hace nada", tg.respuestas.at(-1)?.text === "Ya procesado" && reservas().at(-1).status === "pendiente_pago");
+  const eventosAntesCancelar = [...g.eventos.values()].filter((e) => e.status !== "cancelled").length;
+  const registrosAntesCancelar = tables.service_records.length;
+  await pulsa(dato(citaNueva, "Cancelar"), citaNueva.message_id);
+  check("L54. con el botón nuevo se puede cancelar: se borra su evento y se retira su registro (una cita cancelada no cuenta para calibrar)", reservas().at(-1).status === "cancelada" && [...g.eventos.values()].filter((e) => e.status !== "cancelled").length === eventosAntesCancelar - 1 && tables.service_records.length === registrosAntesCancelar - 1);
+  await escribe("/pendientes");
+  check("L55. sin nada pendiente, /pendientes lo dice", ultimo().text.includes("No tienes ninguna reserva provisional"));
 
   // ============================================================================ H. Sin secretos en los registros
   const volcado = JSON.stringify({ e: tables.event_log, s: tables.security_events });

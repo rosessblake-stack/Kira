@@ -16,6 +16,12 @@ export async function guardarRegistro(r: Reserva): Promise<void> {
   ok("No se pudo guardar el registro del servicio", error);
 }
 
+/** Quita el registro de una cita (p. ej. al cancelarla): no debe contar para calibrar. */
+export async function retirarRegistro(bookingId: string): Promise<void> {
+  const { error } = await getDb().from("service_records").delete().eq("booking_id", bookingId);
+  ok("No se pudo retirar el registro del servicio", error);
+}
+
 export async function listarRegistros(limite: number): Promise<RegistroGuardado[]> {
   const { data, error } = await getDb().from("service_records").select("*").order("seq", { ascending: false }).limit(limite);
   ok("No se pudieron leer los servicios", error);

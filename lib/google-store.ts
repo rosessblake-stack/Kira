@@ -1,5 +1,5 @@
 import { getDb } from "./db";
-import { cifrar, descifrar, secretoDeCifrado } from "./google-oauth";
+import { GoogleError, cifrar, descifrar, secretoDeCifrado } from "./google-oauth";
 
 /**
  * Dónde se guarda la conexión con Google (tabla app_settings, solo servidor):
@@ -23,14 +23,19 @@ function ok(what: string, error: { message: string } | null) {
   if (error) throw new Error(`${what}: ${error.message}`);
 }
 
-/** null = sin conectar (o la conexión guardada ya no se puede leer: hay que volver a conectar). */
+/**
+ * null = nunca se conectó. Si hay una conexión guardada pero NO se puede leer (cambió la clave de servidor, texto manipulado),
+ * lanza: «conectado pero ilegible» no es lo mismo que «sin conectar», y con calendario ilegible no se aprueba nada.
+ */
 export async function leerConexion(): Promise<ConexionGuardada | null> {
   const { data, error } = await getDb().from("app_settings").select("value").eq("key", CLAVE_CONEXION).maybeSingle();
   ok("No se pudo leer la conexión con Google", error);
   const v = (data as { value?: Record<string, unknown> } | null)?.value;
   if (!v || typeof v.refresh !== "string") return null;
   const refreshToken = descifrar(v.refresh, secretoDeCifrado());
-  if (!refreshToken) return null;
+  if (!refreshToken) {
+    throw new GoogleError("La conexión guardada con Google ya no se puede leer (¿cambió la clave de servidor?). Reconecta en el panel → Calendario", undefined, true);
+  }
   return {
     refreshToken,
     email: typeof v.email === "string" ? v.email : null,

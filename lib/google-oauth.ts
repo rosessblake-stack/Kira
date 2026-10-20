@@ -36,7 +36,13 @@ export function configGoogle(env: Record<string, string | undefined> = process.e
 /** En producción siempre https; solo las pruebas de extremo a extremo (KIRA_E2E=1) usan http contra localhost. */
 export const redirectUri = (host: string) => `${e2e() ? "http" : "https"}://${host}/api/google/callback`;
 
-export function urlDeAutorizacion(cfg: ConfigGoogle, redirect: string, state: string): string {
+/** Cuenta de Google donde Blake tiene sus citas (GOOGLE_CUENTA_ESPERADA). Si está puesta, solo se acepta conectar esa cuenta. */
+export function cuentaEsperada(env: Record<string, string | undefined> = process.env): string | null {
+  const c = env.GOOGLE_CUENTA_ESPERADA?.trim().toLowerCase();
+  return c && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c) ? c : null;
+}
+
+export function urlDeAutorizacion(cfg: ConfigGoogle, redirect: string, state: string, loginHint?: string | null): string {
   const q = new URLSearchParams({
     client_id: cfg.clientId,
     redirect_uri: redirect,
@@ -47,6 +53,8 @@ export function urlDeAutorizacion(cfg: ConfigGoogle, redirect: string, state: st
     prompt: "consent",
     include_granted_scopes: "false",
     state,
+    // Google propone esa cuenta primero (Blake puede cambiarla; si conecta otra distinta, Kira la rechaza).
+    ...(loginHint ? { login_hint: loginHint } : {}),
   });
   return `${urlAutorizacionBase()}?${q.toString()}`;
 }
@@ -72,8 +80,11 @@ export function descifrar(valor: string, secreto: string): string | null {
   try {
     const [v, iv, tag, dato] = valor.split(".");
     if (v !== "v1" || !iv || !tag || !dato) return null;
-    const d = createDecipheriv("aes-256-gcm", claveDeCifrado(secreto), Buffer.from(iv, "base64url"));
-    d.setAuthTag(Buffer.from(tag, "base64url"));
+    // Etiqueta de 16 bytes exactos: Node acepta etiquetas más cortas (y por tanto más fáciles de falsificar).
+    const etiqueta = Buffer.from(tag, "base64url");
+    if (etiqueta.length !== 16) return null;
+    const d = createDecipheriv("aes-256-gcm", claveDeCifrado(secreto), Buffer.from(iv, "base64url"), { authTagLength: 16 });
+    d.setAuthTag(etiqueta);
     return Buffer.concat([d.update(Buffer.from(dato, "base64url")), d.final()]).toString("utf8");
   } catch {
     return null;
@@ -206,4 +217,10 @@ export async function revocarPermiso(refreshToken: string, fetchImpl: FetchGoogl
   } finally {
     clearTimeout(t);
   }
+}
+
+/** El motivo de un fallo de Google para enseñárselo a Blake; si la conexión se perdió, le dice cómo arreglarlo. */
+export function describirFalloGoogle(e: unknown): string {
+  if (e instanceof GoogleError) return e.desconectado ? `${e.message}. Reconecta en el panel → Calendario` : e.message;
+  return e instanceof Error ? e.message : "error desconocido";
 }

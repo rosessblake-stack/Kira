@@ -1,5 +1,5 @@
 import { GoogleError, urlCalendarioBase, type FetchGoogle } from "./google-oauth";
-import { interpretarEventoGoogle, type EventoAgenda } from "./agenda-eventos";
+import { leerEventoGoogle, type EventoAgenda } from "./agenda-eventos";
 
 /**
  * Cliente mínimo de Google Calendar (API REST v3), sin SDK. Solo servidor.
@@ -88,8 +88,8 @@ export class ClienteCalendario {
     const err = json.error as { status?: unknown; errors?: { reason?: unknown }[] } | undefined;
     const motivo = typeof err?.errors?.[0]?.reason === "string" ? err.errors[0].reason : typeof err?.status === "string" ? err.status : "";
     const limpio = motivo.replace(/[^A-Za-z_]/g, "").slice(0, 40);
-    // 401/403 con permisos retirados: hay que volver a conectar.
-    return new GoogleError(`Google Calendar respondió ${status} al ${accion}${limpio ? ` (${limpio})` : ""}`, status, status === 401);
+    // 401, o 403 por permisos retirados: la conexión ya no vale y hay que volver a conectar.
+    return new GoogleError(`Google Calendar respondió ${status} al ${accion}${limpio ? ` (${limpio})` : ""}`, status, status === 401 || limpio === "insufficientPermissions");
   }
 
   /** TODOS los eventos entre dos instantes (recurrentes ya expandidos), con y sin «libre». */
@@ -114,8 +114,10 @@ export class ClienteCalendario {
       if (status !== 200) throw this.fallo("leer la agenda", status, json);
       const items = Array.isArray(json.items) ? json.items : [];
       for (const it of items) {
-        const e = interpretarEventoGoogle(it);
-        if (e) out.push(e);
+        const l = leerEventoGoogle(it);
+        if (l.tipo === "evento") out.push(l.evento);
+        // Un evento que no se entiende NO se ignora (sería dar por libre un hueco que quizá no lo está): se para y se dice cuál.
+        else if (l.tipo === "ilegible") throw new GoogleError(`No entiendo un evento de tu agenda («${l.titulo}») y no puedo saber si ocupa ese hueco`);
       }
       pagina = typeof json.nextPageToken === "string" ? json.nextPageToken : undefined;
       if (!pagina) return out;
@@ -150,13 +152,28 @@ export class ClienteCalendario {
     // Sin conferenceDataVersion: no se añade Google Meet (las citas son presenciales). sendUpdates=none: no se avisa a nadie.
     const { status, json } = await this.llamar("POST", this.url("/events", { sendUpdates: "none" }), cuerpo);
     if (status === 200 || status === 201) return;
-    if (status === 409) {
-      // Ya existe un evento con ese identificador: vale solo si es el de esta misma reserva y sigue vivo.
-      const m = await this.leerMarca(e.id);
-      if (m.existe && !m.cancelado && m.bookingId === e.bookingId) return;
-      throw new GoogleError("Ya existe un evento con el identificador de esta reserva y no se puede reutilizar");
-    }
+    if (status === 409) return this.rehacer(e, cuerpo);
     throw this.fallo("crear el evento", status, json);
+  }
+
+  /**
+   * Google dice que el identificador ya existe (se reintenta tras una respuesta perdida, o el evento se borró antes: Google
+   * conserva el identificador de los borrados). El identificador lleva el UUID de la reserva, así que es siempre de esta reserva
+   * salvo que otro evento vivo lo use: en ese caso se para. Si es el de esta reserva, se deja EXACTAMENTE como se pide ahora
+   * (misma hora, color y datos), reviviéndolo si estaba borrado.
+   */
+  private async rehacer(e: NuevoEvento, cuerpo: Record<string, unknown>): Promise<void> {
+    const { status, json } = await this.llamar("GET", this.url(`/events/${encodeURIComponent(e.id)}`, { fields: "id,status,extendedProperties/private" }));
+    if (status === 404 || status === 410) throw new GoogleError("Google dice que el identificador del evento ya existe pero no lo encuentra");
+    if (status !== 200) throw this.fallo("leer el evento", status, json);
+    const priv = (json.extendedProperties as { private?: Record<string, unknown> } | undefined)?.private;
+    const cancelado = json.status === "cancelled";
+    if (!cancelado && priv?.kira_booking_id !== e.bookingId) {
+      throw new GoogleError("Ya existe un evento vivo con el identificador de esta reserva y no es suyo");
+    }
+    const { id: _id, ...resto } = cuerpo;
+    const r = await this.llamar("PATCH", this.url(`/events/${encodeURIComponent(e.id)}`, { sendUpdates: "none" }), { ...resto, status: "confirmed" });
+    if (r.status !== 200) throw this.fallo("rehacer el evento", r.status, r.json);
   }
 
   /** Reserva pagada: pasa a morado y, si se pide, se añade el email de la clienta (Google le envía la invitación). */

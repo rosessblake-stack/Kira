@@ -74,7 +74,8 @@ export function registroDesdeReserva(r: Reserva): NuevoRegistro {
     largo_extensiones: s.largo_extensiones,
     horas_sugeridas: positivo(horasPorDefecto(s)),
     materiales_sugeridos: s.tipo_trenzado ? materialesPorDefecto(s) : null,
-    precio_legacy_cents: r.pricing?.origen === "legacy" && r.pricing.legacy ? r.pricing.legacy.totalCentimos : null,
+    // Lo último que calculó Legacy para esta cita (se conserva aunque Blake acabe poniendo el precio a mano).
+    precio_legacy_cents: r.pricing?.legacy?.totalCentimos ?? null,
     horas_aprobadas: positivo(spec.horas ?? horasPorDefecto(s)),
     materiales_aprobados: s.tipo_trenzado ? (spec.materiales ?? materialesPorDefecto(s)) : null,
     precio_aprobado_cents: r.price_cents,
@@ -114,7 +115,7 @@ export function parsearReal(texto: string): { datos: DatosReales; errores: strin
       case "horas":
       case "hora": {
         const n = importe(valor);
-        if (n === null || n <= 0 || n > 24) err("las horas deben estar entre 0,25 y 24, por ejemplo «horas 3,5».");
+        if (n === null || n < 0.25 || n > 24) err("las horas deben estar entre 0,25 y 24, por ejemplo «horas 3,5».");
         else datos.horas = Math.round(n * 4) / 4;
         break;
       }

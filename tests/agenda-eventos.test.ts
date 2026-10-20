@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ZONA_MADRID, ZONA_MIAMI, aUtc } from "../lib/agenda";
+import { ZONA_MADRID, ZONA_MIAMI, aUtc, partesEn, partesMadrid } from "../lib/agenda";
 import {
   avisosDeHueco,
   describirEvento,
   evaluarHueco,
   interpretarEventoGoogle,
+  leerEventoGoogle,
   textoAgendaDelDia,
   textoChoques,
   type EventoAgenda,
@@ -215,7 +216,7 @@ describe("textoAgendaDelDia", () => {
     const h = evaluarHueco(i, f, muchos, ZONA_MADRID);
     const t = textoAgendaDelDia(h, i, f, ZONA_MADRID, "mié 28 oct");
     expect(t.filter((x) => x.startsWith("• …"))).toHaveLength(2);
-    expect(t.length).toBeLessThan(11);
+    expect(t.filter((x) => x.startsWith("•")).length).toBeLessThanOrEqual(9);
   });
 
   it("en Miami las horas son las de Miami", () => {
@@ -226,5 +227,78 @@ describe("textoAgendaDelDia", () => {
     expect(t).toContain("11:00–13:00 Trenzas Dani");
     expect(t).toContain("14:00–16:00 ◀ esta cita");
     expect(describirEvento(e, ZONA_MIAMI)).toBe("«Trenzas Dani» 11:00–13:00");
+  });
+});
+
+describe("leerEventoGoogle: lo que no se entiende NO se ignora", () => {
+  it("un cancelado se ignora; uno bien formado es un evento", () => {
+    expect(leerEventoGoogle({ ...cita, status: "cancelled" })).toEqual({ tipo: "cancelado" });
+    expect(leerEventoGoogle(cita)).toMatchObject({ tipo: "evento", evento: { titulo: "Trenzas Yeray" } });
+  });
+
+  it("un evento vivo que no se puede leer se marca como ilegible (con su título), no como libre", () => {
+    const sinFin = { id: "x", status: "confirmed", summary: "Trenzas Misteriosa", start: { dateTime: "2026-10-30T11:30:00+01:00" } };
+    expect(leerEventoGoogle(sinFin)).toEqual({ tipo: "ilegible", titulo: "Trenzas Misteriosa" });
+    expect(leerEventoGoogle({ id: "x", summary: "Raro", start: { dateTime: "ayer" }, end: { dateTime: "mañana" } })).toEqual({ tipo: "ilegible", titulo: "Raro" });
+    expect(leerEventoGoogle({ id: "x", summary: "Mezcla", start: { date: "2026-10-30" }, end: { dateTime: "2026-10-30T11:30:00+01:00" } })).toMatchObject({ tipo: "ilegible" });
+    expect(leerEventoGoogle(null)).toEqual({ tipo: "ilegible", titulo: "(sin título)" });
+    expect(leerEventoGoogle({ summary: "Sin id", start: cita.start, end: cita.end })).toEqual({ tipo: "ilegible", titulo: "Sin id" });
+  });
+});
+
+describe("huecos alternativos cuando la cita choca", () => {
+  const dia = (hi: string, hf: string, titulo = "Cita") => ev({ id: titulo + hi, summary: titulo, start: { dateTime: `2026-10-28T${hi}:00+01:00` }, end: { dateTime: `2026-10-28T${hf}:00+01:00` } });
+
+  it("propone hasta 3 huecos libres ese día, los más cercanos a la hora pedida, con la misma duración y respetando el margen", () => {
+    const i = at("2026-10-28", "14:00"), f = at("2026-10-28", "16:00");
+    const h = evaluarHueco(i, f, [dia("13:00", "15:00", "Ocupada")], ZONA_MADRID);
+    expect(h.choques).toHaveLength(1);
+    const franjas = h.alternativas.map((a) => `${a.inicio.toISOString().slice(11, 16)}–${a.fin.toISOString().slice(11, 16)}`);
+    expect(h.alternativas).toHaveLength(3);
+    expect(franjas).toHaveLength(3);
+    for (const a of h.alternativas) {
+      expect(a.fin.getTime() - a.inicio.getTime()).toBe(2 * 3_600_000);
+      // ninguna choca con la cita de las 13:00–15:00 ni deja menos de 1 h de margen
+      const ocupada = { ini: at("2026-10-28", "13:00").getTime(), fin: at("2026-10-28", "15:00").getTime() };
+      expect(a.inicio.getTime() < ocupada.fin + 3_600_000 && a.fin.getTime() > ocupada.ini - 3_600_000).toBe(false);
+    }
+    // no se solapan entre sí y salen ordenados
+    for (let k = 1; k < h.alternativas.length; k++) expect(h.alternativas[k].inicio.getTime()).toBeGreaterThanOrEqual(h.alternativas[k - 1].fin.getTime());
+  });
+
+  it("dentro del horario (11:00–22:00 por defecto) y sin nada si el día está lleno", () => {
+    const i = at("2026-10-28", "12:00"), f = at("2026-10-28", "15:00");
+    const lleno = [dia("11:00", "16:00", "A"), dia("16:30", "22:00", "B")];
+    expect(evaluarHueco(i, f, lleno, ZONA_MADRID).alternativas).toEqual([]);
+    const h = evaluarHueco(i, f, [dia("11:30", "13:30", "A")], ZONA_MADRID);
+    for (const a of h.alternativas) {
+      const hh = partesMadrid(a.inicio).minutosDelDia;
+      expect(hh).toBeGreaterThanOrEqual(11 * 60);
+      expect(partesMadrid(a.fin).minutosDelDia).toBeLessThanOrEqual(22 * 60);
+    }
+  });
+
+  it("sin choque no hay alternativas; las pruebas de Kira no cuentan", () => {
+    const i = at("2026-10-28", "12:00"), f = at("2026-10-28", "15:00");
+    expect(evaluarHueco(i, f, [], ZONA_MADRID).alternativas).toEqual([]);
+    const prueba = ev({ id: "kp", summary: "🧪 P", start: { dateTime: "2026-10-28T12:00:00+01:00" }, end: { dateTime: "2026-10-28T15:00:00+01:00" }, extendedProperties: { private: { kira_booking_id: "r", kira_test: "1" } } });
+    expect(evaluarHueco(i, f, [prueba], ZONA_MADRID).choques).toEqual([]);
+  });
+
+  it("el texto de la agenda las enseña, o dice que no hay hueco", () => {
+    const i = at("2026-10-28", "12:00"), f = at("2026-10-28", "15:00");
+    const h = evaluarHueco(i, f, [dia("11:00", "13:00", "Ocupada")], ZONA_MADRID);
+    const t = textoAgendaDelDia(h, i, f, ZONA_MADRID, "mié 28 oct").join("\n");
+    expect(t).toMatch(/Huecos libres ese día para 3 h: \d\d:\d\d–\d\d:\d\d/);
+    const lleno = evaluarHueco(i, f, [dia("11:00", "16:00", "A"), dia("16:30", "22:00", "B")], ZONA_MADRID);
+    expect(textoAgendaDelDia(lleno, i, f, ZONA_MADRID, "mié 28 oct").join("\n")).toContain("No veo ningún hueco libre ese día con margen de 1 h: prueba otro día.");
+  });
+
+  it("en Miami propone en hora de Miami", () => {
+    const e = ev({ id: "m", summary: "Trenzas", start: { dateTime: "2026-10-22T13:00:00-04:00" }, end: { dateTime: "2026-10-22T16:00:00-04:00" } });
+    const i = at("2026-10-22", "14:00", ZONA_MIAMI), f = at("2026-10-22", "16:00", ZONA_MIAMI);
+    const h = evaluarHueco(i, f, [e], ZONA_MIAMI);
+    expect(h.alternativas.length).toBeGreaterThan(0);
+    for (const a of h.alternativas) expect(partesEn(a.inicio, ZONA_MIAMI).fecha).toBe("2026-10-22");
   });
 });

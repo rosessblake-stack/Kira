@@ -96,6 +96,19 @@ export async function reservaEnEdicion(): Promise<Reserva | null> {
   return filas[0] ?? null;
 }
 
+/** Reservas que pueden haberse quedado sin botones: propuestas y citas provisionales de los últimos días, las más recientes primero. */
+export async function listarPendientes(): Promise<Reserva[]> {
+  const { data, error } = await getDb()
+    .from("bookings")
+    .select("*")
+    .in("status", ["propuesta", "pendiente_pago"])
+    .gte("created_at", new Date(Date.now() - 3 * 86_400_000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(30);
+  ok("No se pudieron consultar las reservas pendientes", error);
+  return (data as Reserva[] | null) ?? [];
+}
+
 /** Llamadas a Claude en las últimas 24 h (para el tope diario de gasto). */
 export async function contarLlamadasClaudeHoy(): Promise<number> {
   const { count, error } = await getDb()

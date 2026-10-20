@@ -17,6 +17,7 @@ type Calls = {
     libres: string[];
     cancelar: number;
     citas: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: string }[];
+    pendientes: number[];
   };
   trips: { k: string; chatId: number; texto?: string }[];
   records: { k: string; chatId: number; texto: string }[];
@@ -28,7 +29,7 @@ type Calls = {
 };
 
 function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } = {}) {
-  const calls: Calls = { sent: [], links: 0, prop: { simular: [], botones: [], libres: [], cancelar: 0, citas: [] }, trips: [], records: [], fotos: { recibir: [], reenviar: [] }, edited: [], answered: [], events: [], security: [] };
+  const calls: Calls = { sent: [], links: 0, prop: { simular: [], botones: [], libres: [], cancelar: 0, citas: [], pendientes: [] }, trips: [], records: [], fotos: { recibir: [], reenviar: [] }, edited: [], answered: [], events: [], security: [] };
   const seen = new Set<string>(opts.seen ?? []);
   const issued = new Set<string>(opts.issued ?? []);
   let counter = 0;
@@ -72,6 +73,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       },
       async boton(b) { calls.prop.botones.push(b); },
       async botonCita(b) { calls.prop.citas.push(b); },
+      async pendientes(chatId) { calls.prop.pendientes.push(chatId); },
       async textoLibre(_chatId, texto) { calls.prop.libres.push(texto); return opts.edicion ?? false; },
       async cancelarEdicion() { calls.prop.cancelar++; return opts.edicion ?? false; },
     },
@@ -631,5 +633,20 @@ describe("Google Calendar en Telegram", () => {
     const n = calls.sent.length;
     await handleTelegramRequest(SECRET, msg("/calendario", OTHER), admin(ADMIN), deps);
     expect(calls.sent.length).toBe(n);
+  });
+});
+
+describe("/pendientes: recuperar botones perdidos", () => {
+  it("solo Blake, y llega al flujo", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/pendientes"), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, msg("/pendientes", OTHER), admin(ADMIN), deps);
+    expect(calls.prop.pendientes).toEqual([ADMIN]);
+    expect(calls.security.map((x) => x.kind)).toEqual(["telegram_no_autorizado"]);
+  });
+  it("/start lo explica", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/start"), admin(ADMIN), deps);
+    expect(calls.sent[0].text).toContain("/pendientes");
   });
 });

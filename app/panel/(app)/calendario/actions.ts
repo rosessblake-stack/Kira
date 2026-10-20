@@ -19,14 +19,18 @@ export async function desconectar() {
   redirect("/panel/calendario?c=desconectado");
 }
 
-/** Prueba de verdad que Kira puede leer la agenda: cuenta los eventos de los próximos 7 días. */
+/**
+ * Prueba de verdad que Kira puede leer la agenda: cuenta los eventos de los últimos 30 y los próximos 60 días. Si no hay NINGUNO,
+ * lo avisa: lo más probable es que se haya conectado la cuenta equivocada (con el calendario vacío, todo hueco saldría libre).
+ */
 export async function comprobar() {
   await requireAdmin();
   let destino = "/panel/calendario?c=error";
   try {
     const ahora = Date.now();
-    const eventos = await crearAgendaGoogle().eventosEntre(new Date(ahora), new Date(ahora + 7 * 86_400_000));
-    destino = `/panel/calendario?c=ok&n=${eventos.filter((e) => !e.esPrueba).length}`;
+    const eventos = await crearAgendaGoogle().eventosEntre(new Date(ahora - 30 * 86_400_000), new Date(ahora + 60 * 86_400_000));
+    const n = eventos.filter((e) => !e.esPrueba).length;
+    destino = n === 0 ? "/panel/calendario?c=vacio" : `/panel/calendario?c=ok&n=${n}`;
   } catch (e) {
     await logEvent("calendar", { kind: "agenda_comprobacion_fallo", level: "error", summary: e instanceof Error ? e.message : "error desconocido" });
   }

@@ -86,6 +86,8 @@ function makeFlowDeps(photos: PhotoPort): FlowDeps {
     describirFoto: (conversationId, tipo, texto) => fotoStore.describirUltima(conversationId, tipo, texto, new Date()),
     enviarFotos: (chatId, conversationId) => photos.reenviar(chatId, conversationId, { silencioso: true }),
     guardarRegistro: registroStore.guardarRegistro,
+    retirarRegistro: registroStore.retirarRegistro,
+    listarPendientes: store.listarPendientes,
     logEvent: ({ source, ...e }) => db.logEvent(source, e),
     logSecurity: db.logSecurity,
     enviar: tg.sendMessage,
