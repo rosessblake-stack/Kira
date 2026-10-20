@@ -46,6 +46,14 @@ Estas reglas son parte del diseño, no un añadido final. Cada flujo nuevo las h
 ## 6. Instagram
 - Solo se puede escribir a una persona dentro de las 24 horas desde su último mensaje (`conversations.last_client_message_at`). Fuera de esa ventana, el sistema no envía y te avisa.
 
+## 6 bis. La entrada de ManyChat (`/api/manychat`)
+- Solo acepta peticiones con la clave compartida `MANYCHAT_WEBHOOK_SECRET` en la cabecera `x-kira-secret` (comparación en tiempo constante). Sin clave o con una mala: 401, y queda en Seguridad (`firma_invalida`, con tope de 20 por hora para que nadie llene el registro). Si la variable no está puesta, la entrada no funciona (500) y lo dice en Fallos. La pone Blake en Vercel, nunca por chat.
+- El cuerpo tiene tope (100 KB) y se lee con una forma tolerante pero con valores estrictos (`lib/manychat-entrada.ts`): id de contacto con caracteres seguros, email y usuario de Instagram con formato exacto, textos limpios y recortados. Lo que no cuadra: 400 y `payload_inesperado`.
+- Idempotencia: mismo contacto + mismos datos en la misma hora = misma solicitud (ManyChat reintenta si tarda). Se contesta 200 enseguida y el trabajo sigue después (`after`).
+- **Las direcciones de las fotos vienen de fuera** (`lib/descarga-segura.ts`): solo https y solo dominios de Meta/Instagram/ManyChat (`fbcdn.net`, `cdninstagram.com`, `fbsbx.com`, `manychat.com`), redirecciones a mano con tope y revisadas en cada salto, sin cabeceras con claves, tope de 4 MB y 10 s. Los errores solo llevan el dominio (la dirección puede llevar un permiso temporal). El tipo real lo deciden los bytes; un HTML que diga ser JPG se rechaza y queda en Seguridad.
+- **La visión** (`lib/lectura-foto.ts`): Claude solo describe, con salida JSON de esquema cerrado que el código valida campo a campo; una imagen es dato no fiable; órdenes dentro de una foto o un rechazo del modelo = manipulación, sin propuesta. Lo que rellena lleva aviso y nunca pisa un dato que escribió la clienta. Las fotos se mandan a Anthropic por decisión de Blake.
+- Modo sombra: ningún camino de esta entrada escribe a la clienta.
+
 ## 7. Qué vigila el panel
 - **Proceso:** línea de tiempo por conversación (mensaje, clasificación, propuesta, aprobación, pago, cita).
 - **Fallos:** errores y avisos, tareas fallidas o atascadas, reservas expiradas, aprobaciones pendientes demasiado tiempo.

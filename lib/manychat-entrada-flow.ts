@@ -1,0 +1,58 @@
+import type { ResultadoDescarga } from "./descarga-segura";
+import type { SolicitudManychat } from "./manychat-entrada";
+import type { PhotoPort } from "./photo-flow";
+import type { ProposalPort } from "./proposal-flow";
+
+/**
+ * La solicitud que llega de ManyChat al terminar el flujo «cita / agendar», de principio a fin y en MODO SOMBRA (decisión de Blake):
+ * Kira descarga las fotos, las guarda, las lee, calcula el precio y le manda a Blake la propuesta con las fotos. A la clienta NO se le
+ * escribe: Blake le contesta como siempre. Las fotos se descargan de forma segura (solo dominios de Meta/ManyChat, con topes).
+ */
+
+export interface EntradaDeps {
+  proposals: Pick<ProposalPort, "recibirSolicitud">;
+  photos: Pick<PhotoPort, "guardarDeClienta">;
+  descargar(direccion: string): Promise<ResultadoDescarga>;
+  /** Chat de Blake. */
+  chatIdAdmin: number;
+  enviar(chatId: number, texto: string): Promise<unknown>;
+  logEvent(e: { kind: string; level?: "info" | "warn" | "error"; summary: string; detail?: Record<string, unknown>; conversation_id?: string | null }): Promise<void>;
+}
+
+export interface EntradaPort {
+  procesar(s: SolicitudManychat): Promise<void>;
+}
+
+const msg = (e: unknown) => (e instanceof Error ? e.message : "error desconocido");
+
+export function crearEntradaManychat(deps: EntradaDeps): EntradaPort {
+  async function traerFoto(convId: string, tipo: "pelo" | "referencia", url: string | null) {
+    if (!url) {
+      await deps.logEvent({ kind: "foto_ausente", level: "warn", summary: `La solicitud no trae foto de ${tipo === "pelo" ? "pelo" : "referencia"}`, conversation_id: convId });
+      return;
+    }
+    const d = await deps.descargar(url);
+    if (!d.ok) {
+      // Solo el dominio: la dirección completa puede llevar un permiso temporal.
+      await deps.logEvent({ kind: "foto_descarga_fallo", level: "warn", summary: `No se pudo descargar la foto de ${tipo === "pelo" ? "pelo" : "referencia"} (${d.motivo}${d.dominio ? `, ${d.dominio}` : ""})`, detail: { motivo: d.motivo, dominio: d.dominio ?? null }, conversation_id: convId });
+      return;
+    }
+    await deps.photos.guardarDeClienta(convId, tipo, d.bytes);
+  }
+
+  async function procesar(s: SolicitudManychat): Promise<void> {
+    try {
+      await deps.proposals.recibirSolicitud(deps.chatIdAdmin, s, async (convId) => {
+        // Las dos fotos a la vez; un fallo con una no impide la propuesta (queda en Fallos y la propuesta avisa de que falta).
+        await Promise.all([traerFoto(convId, "referencia", s.fotoReferenciaUrl), traerFoto(convId, "pelo", s.fotoPeloUrl)]);
+      });
+    } catch (e) {
+      await deps.logEvent({ kind: "solicitud_fallo", level: "error", summary: msg(e) });
+      await deps
+        .enviar(deps.chatIdAdmin, `⚠️ Ha llegado una solicitud de Instagram${s.instagram ? ` (@${s.instagram})` : ""} pero no he podido prepararla (fallo técnico). Mira Fallos en el panel; la clienta no ha recibido nada.`)
+        .catch(() => undefined);
+    }
+  }
+
+  return { procesar };
+}

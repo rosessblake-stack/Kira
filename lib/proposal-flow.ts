@@ -7,6 +7,8 @@ import { describirFalloGoogle } from "./google-oauth";
 import { CONFIG_UBICACION, dinero, separarUbicacion, SIMBOLO, type Moneda, type Ubicacion } from "./ubicacion";
 import type { Estancia } from "./estancias";
 import type { ResumenFoto } from "./fotos";
+import { aplicarLecturaFoto, validarLecturaFoto, type LecturaGuardada } from "./lectura-foto";
+import type { SolicitudManychat } from "./manychat-entrada";
 import {
   INTENCION_EN_BD,
   MAX_CARACTERES_CLIENTE,
@@ -16,7 +18,7 @@ import {
   validarClasificacion,
   type Clasificacion,
 } from "./intents";
-import type { RespuestaClaude } from "./claude";
+import type { FotoParaLeer, RespuestaClaude } from "./claude";
 import { SinClaveError, describirErrorClaude } from "./claude";
 import {
   construirPeticion,
@@ -112,7 +114,14 @@ export interface FlowDeps {
   estaPausada(): Promise<boolean>;
   contarLlamadasClaudeHoy(): Promise<number>;
 
-  crearConversacion(canal: "prueba", ref: string, nombre: string): Promise<string>;
+  /** Crea la conversación; en el canal «instagram» reutiliza la que ya tenga ese contacto de ManyChat. */
+  crearConversacion(canal: "prueba" | "instagram", ref: string, nombre: string): Promise<string>;
+  /** Mensajes de la clienta en la última hora (para el límite de ritmo de las solicitudes reales). */
+  contarMensajesClienteUltimaHora?(conversationId: string): Promise<number>;
+  /** Visión: las fotos guardadas de la conversación (la última de referencia y la última del pelo), ya descargadas. */
+  fotosParaLeer?(conversationId: string): Promise<FotoParaLeer[]>;
+  /** Visión: Claude lee las fotos. Solo se llama en solicitudes reales (Instagram). */
+  leerFotos?(fotos: FotoParaLeer[]): Promise<RespuestaClaude>;
   guardarMensaje(conversationId: string, direccion: "in" | "out", cuerpo: string, marcado: boolean): Promise<void>;
   actualizarConversacion(id: string, patch: { intent?: string; status?: string; last_client_message_at?: string }): Promise<void>;
   crearReserva(r: NuevaReserva): Promise<Reserva>;
@@ -165,6 +174,11 @@ export interface ProposalPort {
    * (así una foto enviada junto al mensaje queda guardada antes de la propuesta). Devuelve el id de la conversación.
    */
   simular(chatId: number, texto: string, alCrear?: (conversationId: string) => Promise<void>): Promise<string | null>;
+  /**
+   * Solicitud real del formulario de Instagram (ManyChat), en MODO SOMBRA: se prepara la propuesta para Blake, con las fotos y su
+   * lectura, pero no se escribe a la clienta. `alCrear` guarda las fotos antes de la propuesta. Devuelve el id de la conversación.
+   */
+  recibirSolicitud(chatId: number, s: SolicitudManychat, alCrear?: (conversationId: string) => Promise<void>): Promise<string | null>;
   boton(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "ok" | "ed" | "no" }): Promise<void>;
   /** Botones de una cita ya aprobada con reserva provisional en el calendario: señal recibida / cancelar. */
   botonCita(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "pay" | "del" }): Promise<void>;
@@ -202,6 +216,22 @@ const tecladoCita = (nonce: string) => ({
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : "error desconocido");
 const DIA_MS = 86_400_000;
+
+type Canal = "prueba" | "instagram";
+
+/** Lo que pide procesar un mensaje, venga de /simular (Telegram) o del formulario de Instagram (ManyChat). */
+type Entrada = {
+  canal: Canal;
+  ref: string;
+  nombreConversacion: string;
+  texto: string;
+  ubicacion: Ubicacion;
+  /** Datos que el formulario ya trae estructurados (se validaron al leerlos): mandan sobre lo que interprete el clasificador. */
+  fijos?: { nombre: string | null; email: string | null; instagram: string | null };
+  /** Avisos propios de la entrada (p. ej. el país no era ni Miami ni España). */
+  avisos?: string[];
+  alCrear?: (conversationId: string) => Promise<void>;
+};
 
 export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
   // -------------------------------------------------------------------------
@@ -249,7 +279,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     return { origen: "sin_calcular", faltan: datosFaltantes(r.spec.servicio) };
   }
 
-  function filaDeReserva(prop: Propuesta, spec: SpecGuardada, guardado: PricingGuardado, nonce: string | null, conversationId: string | null): NuevaReserva {
+  function filaDeReserva(prop: Propuesta, spec: SpecGuardada, guardado: PricingGuardado, nonce: string | null, conversationId: string | null, esPrueba = true): NuevaReserva {
     return {
       conversation_id: conversationId,
       client_name: prop.nombreCliente,
@@ -266,7 +296,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       warnings: prop.avisos,
       reply_draft: prop.borrador,
       proposal_nonce: nonce,
-      is_test: true,
+      is_test: esPrueba,
     };
   }
 
@@ -279,16 +309,17 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     ].join("\n");
   };
 
-  async function avisarADerivar(chatId: number, convId: string, titulo: string, texto: string, detalle?: Record<string, unknown>) {
+  async function avisarADerivar(chatId: number, convId: string, titulo: string, texto: string, detalle?: Record<string, unknown>, canal: Canal = "prueba") {
     await deps.logEvent({ source: "system", kind: "derivado_a_blake", level: "warn", summary: titulo, detail: detalle, conversation_id: convId });
     await deps.actualizarConversacion(convId, { status: "esperando_aprobacion" });
+    if (canal === "instagram") await deps.enviarFotos(chatId, convId).catch(() => undefined);
     await deps.enviar(
       chatId,
-      `🧪 PRUEBA · DERIVADO A TI\n\n${titulo}\n\n💬 «${limpiarTexto(texto, 400)}»\n\nKira no ha preparado respuesta para el cliente.`,
+      `${canal === "prueba" ? "🧪 PRUEBA" : "📥 INSTAGRAM"} · DERIVADO A TI\n\n${titulo}\n\n💬 «${limpiarTexto(texto, 400)}»\n\nKira no ha preparado respuesta para el cliente.`,
     );
   }
 
-  async function marcarManipulacion(chatId: number, convId: string, texto: string, origen: "filtro" | "modelo", senales: string[]) {
+  async function marcarManipulacion(chatId: number, convId: string, texto: string, origen: "filtro" | "modelo", senales: string[], canal: Canal = "prueba") {
     await deps.marcarMensajeSospechoso(convId);
     await deps.logSecurity({
       kind: "posible_inyeccion",
@@ -299,7 +330,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     await deps.actualizarConversacion(convId, { status: "esperando_aprobacion" });
     await deps.enviar(
       chatId,
-      `🚩 POSIBLE MANIPULACIÓN (prueba)\n\nEl mensaje intenta dar órdenes al sistema${senales.length ? ` (${senales.join(", ")})` : ""}.\nNo se ha contestado nada ni se ha preparado propuesta.\n\n💬 «${limpiarTexto(texto, 400)}»`,
+      `🚩 POSIBLE MANIPULACIÓN (${canal === "prueba" ? "prueba" : "Instagram"})\n\nEl mensaje intenta dar órdenes al sistema${senales.length ? ` (${senales.join(", ")})` : ""}.\nNo se ha contestado nada ni se ha preparado propuesta.\n\n💬 «${limpiarTexto(texto, 400)}»`,
     );
   }
 
@@ -384,34 +415,53 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
   // -------------------------------------------------------------------------
 
   async function simular(chatId: number, textoBruto: string, alCrear?: (conversationId: string) => Promise<void>): Promise<string | null> {
-    let convId: string | null = null;
-    await procesarSimulacion(chatId, textoBruto, alCrear, (id) => {
-      convId = id;
-    });
-    return convId;
-  }
-
-  async function procesarSimulacion(
-    chatId: number,
-    textoBruto: string,
-    alCrear: ((conversationId: string) => Promise<void>) | undefined,
-    conversacionCreada: (id: string) => void,
-  ): Promise<void> {
-    const ahora = deps.now();
     // «miami: …» al principio elige dónde está la clienta (en ManyChat lo decide el primer botón); sin él, España.
     const { ubicacion, texto: sinPrefijo } = separarUbicacion(textoBruto);
-    const lugar = CONFIG_UBICACION[ubicacion];
     const texto = sinPrefijo.trim().slice(0, MAX_CARACTERES_CLIENTE);
     if (!texto) {
       await deps.enviar(chatId, "Escribe el mensaje del cliente después de /simular. Por ejemplo:\n\n/simular Hola, quiero 6 trenzas con extensiones para el sábado a las 12\n\nPara una clienta de Miami: /simular miami: Hola, quiero 6 trenzas…");
-      return;
+      return null;
     }
+    return procesarEntrada(chatId, { canal: "prueba", ref: `prueba-${deps.now().getTime().toString(36)}`, nombreConversacion: "Prueba", texto, ubicacion, alCrear });
+  }
 
-    const convId = await deps.crearConversacion("prueba", `prueba-${ahora.getTime().toString(36)}`, "Prueba");
-    conversacionCreada(convId);
+  async function recibirSolicitud(chatId: number, s: SolicitudManychat, alCrear?: (conversationId: string) => Promise<void>): Promise<string | null> {
+    return procesarEntrada(chatId, {
+      canal: "instagram",
+      ref: s.contactoId,
+      nombreConversacion: s.nombre ?? (s.instagram ? `@${s.instagram}` : "Instagram"),
+      texto: s.texto.slice(0, MAX_CARACTERES_CLIENTE),
+      ubicacion: s.ubicacion,
+      fijos: { nombre: s.nombre, email: s.email, instagram: s.instagram ? `@${s.instagram}` : null },
+      avisos: s.ubicacionDudosa ? ["El campo «país» de la clienta no era ni Miami ni España: se ha tomado España. Si es de Miami, rechaza esta propuesta y vuelve a lanzarla."] : [],
+      alCrear,
+    });
+  }
+
+  async function procesarEntrada(chatId: number, entrada: Entrada): Promise<string | null> {
+    const { canal, ubicacion, texto, alCrear } = entrada;
+    const real = canal === "instagram";
+    const ahora = deps.now();
+    const lugar = CONFIG_UBICACION[ubicacion];
+
+    const convId = await deps.crearConversacion(canal, entrada.ref, entrada.nombreConversacion);
     await deps.guardarMensaje(convId, "in", texto, false);
     await deps.actualizarConversacion(convId, { last_client_message_at: ahora.toISOString() });
-    await deps.logEvent({ source: "system", kind: "mensaje_simulado", summary: `Mensaje de cliente simulado recibido (${lugar.nombre})`, detail: { caracteres: texto.length, ubicacion }, conversation_id: convId });
+    await deps.logEvent({
+      source: real ? "manychat" : "system",
+      kind: real ? "solicitud_recibida" : "mensaje_simulado",
+      summary: real ? `Solicitud de Instagram recibida (${lugar.nombre})` : `Mensaje de cliente simulado recibido (${lugar.nombre})`,
+      detail: { caracteres: texto.length, ubicacion },
+      conversation_id: convId,
+    });
+    await procesarConversacion(chatId, convId, entrada, ahora);
+    return convId;
+  }
+
+  async function procesarConversacion(chatId: number, convId: string, entrada: Entrada, ahora: Date): Promise<void> {
+    const { canal, ubicacion, texto, alCrear } = entrada;
+    const real = canal === "instagram";
+    const lugar = CONFIG_UBICACION[ubicacion];
     if (alCrear) {
       try {
         await alCrear(convId);
@@ -424,7 +474,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     // 1. Pausa: solo avisa.
     if (await deps.estaPausada()) {
       await deps.logEvent({ source: "system", kind: "mensaje_con_kira_pausada", level: "warn", summary: "Kira está en pausa: no se prepara respuesta", conversation_id: convId });
-      await deps.enviar(chatId, `⏸ KIRA EN PAUSA\n\nHa llegado un mensaje (prueba) pero Kira está pausada: no se prepara respuesta.\n\n💬 «${limpiarTexto(texto, 400)}»\n\nReanuda Kira desde el panel.`);
+      await deps.enviar(chatId, `⏸ KIRA EN PAUSA\n\nHa llegado ${real ? "una solicitud de Instagram" : "un mensaje (prueba)"} pero Kira está pausada: no se prepara respuesta.\n\n💬 «${limpiarTexto(texto, 400)}»\n\nReanuda Kira desde el panel.`);
       return;
     }
 
@@ -433,13 +483,14 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
 
     // 2. Señales de manipulación: sin gastar una llamada a Claude y sin contestar.
     const senales = detectarInyeccion(texto);
-    if (senales.length) return marcarManipulacion(chatId, convId, texto, "filtro", senales);
+    if (senales.length) return marcarManipulacion(chatId, convId, texto, "filtro", senales, canal);
 
     // 3. Límites de gasto.
-    const limite = superaLimites({ mensajesClienteUltimaHora: 1, llamadasClaudeHoy: await deps.contarLlamadasClaudeHoy() });
+    const mensajesHora = real && deps.contarMensajesClienteUltimaHora ? await deps.contarMensajesClienteUltimaHora(convId) : 1;
+    const limite = superaLimites({ mensajesClienteUltimaHora: mensajesHora, llamadasClaudeHoy: await deps.contarLlamadasClaudeHoy() });
     if (limite) {
       await deps.logSecurity({ kind: "limite_de_peticiones", source: "claude", conversation_id: convId, detail: { motivo: limite } });
-      await avisarADerivar(chatId, convId, "Tope diario de llamadas a Claude alcanzado: no se clasifica.", texto, { motivo: limite });
+      await avisarADerivar(chatId, convId, limite === "ritmo_por_cliente" ? "Esta clienta ha mandado demasiadas solicitudes en poco tiempo: no se clasifica." : "Tope diario de llamadas a Claude alcanzado: no se clasifica.", texto, { motivo: limite }, canal);
       return;
     }
 
@@ -450,7 +501,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       respuesta = await deps.clasificar(texto, ahora, lugar.zonaHoraria);
     } catch (e) {
       const sinClave = e instanceof SinClaveError;
-      if (sinClave && deps.lecturaBasica) {
+      if (sinClave && deps.lecturaBasica && !real) {
         // Sin clave: se lee con reglas simples (solo pruebas) para poder ver todo el recorrido. Cualquier otro
         // fallo de Claude NO cae aquí: ahí lo correcto es derivar a Blake.
         basica = true;
@@ -458,7 +509,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
         await deps.logEvent({ source: "system", kind: "lectura_basica", level: "warn", summary: "Sin clave de Claude: mensaje leído con la lectura básica por reglas (solo pruebas)", conversation_id: convId });
       } else {
         await deps.logEvent({ source: "claude", kind: sinClave ? "sin_clave_anthropic" : "claude_error", level: "error", summary: describirErrorClaude(e), conversation_id: convId });
-        await avisarADerivar(chatId, convId, sinClave ? "Falta la clave de Claude (ANTHROPIC_API_KEY) en Vercel: no puedo clasificar." : "No he podido clasificar el mensaje (Claude no respondió).", texto);
+        await avisarADerivar(chatId, convId, sinClave ? "Falta la clave de Claude (ANTHROPIC_API_KEY) en Vercel: no puedo clasificar." : "No he podido clasificar el mensaje (Claude no respondió).", texto, undefined, canal);
         return;
       }
     }
@@ -476,7 +527,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       if (respuesta.tipo === "rechazo") {
         await deps.logSecurity({ kind: "posible_inyeccion", source: "claude", conversation_id: convId, detail: { origen: "rechazo_del_modelo" } });
       }
-      await avisarADerivar(chatId, convId, `Claude no devolvió una clasificación utilizable (${respuesta.tipo}).`, texto);
+      await avisarADerivar(chatId, convId, `Claude no devolvió una clasificación utilizable (${respuesta.tipo}).`, texto, undefined, canal);
       return;
     }
 
@@ -484,14 +535,14 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const validada = validarClasificacion(respuesta.raw, texto);
     if (!validada.ok) {
       await deps.logEvent({ source: "claude", kind: "clasificacion_invalida", level: "warn", summary: `Clasificación descartada: ${validada.motivo}`, conversation_id: convId });
-      await avisarADerivar(chatId, convId, "La clasificación de Claude no pasó la validación y se ha descartado.", texto, { motivo: validada.motivo });
+      await avisarADerivar(chatId, convId, "La clasificación de Claude no pasó la validación y se ha descartado.", texto, { motivo: validada.motivo }, canal);
       return;
     }
-    const c = validada.value;
+    let c = validada.value;
     await deps.actualizarConversacion(convId, { intent: INTENCION_EN_BD[c.intencion] });
     await deps.logEvent({ source: "claude", kind: "clasificado", summary: `Intención: ${c.intencion} (confianza ${c.confianza})${basica ? " · lectura básica" : ""}`, detail: { intencion: c.intencion, confianza: c.confianza, lector: basica ? "basica" : "claude" }, conversation_id: convId });
 
-    if (c.manipulacion) return marcarManipulacion(chatId, convId, texto, "modelo", ["marcado_por_el_modelo"]);
+    if (c.manipulacion) return marcarManipulacion(chatId, convId, texto, "modelo", ["marcado_por_el_modelo"], canal);
 
     if (c.intencion !== "cita_salon") {
       const aun = c.intencion === "info_formacion_online" || c.intencion === "info_formacion_presencial";
@@ -501,14 +552,88 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
         aun ? `Intención «${c.intencion}»: las formaciones todavía no están conectadas, te lo derivo.` : `Intención «${c.intencion}»: te lo derivo.`,
         texto,
         { intencion: c.intencion, notas: c.notas },
+        canal,
       );
       return;
     }
-    await proponerCita(chatId, convId, c, texto, basica, ubicacion);
+
+    let lectura: LecturaGuardada | undefined;
+    if (real) {
+      // Los datos que el formulario ya trae estructurados (nombre, email, Instagram) mandan sobre lo que interprete el clasificador.
+      const f = entrada.fijos;
+      if (f) c = { ...c, nombre: f.nombre ?? c.nombre, email: f.email ?? c.email, instagram: f.instagram ?? c.instagram };
+      if (entrada.avisos?.length) c = { ...c, avisosValidacion: [...c.avisosValidacion, ...entrada.avisos] };
+      const vista = await leerLasFotos(chatId, convId, c, texto);
+      if (vista === "manipulacion") return;
+      if (vista) {
+        c = vista.clasificacion;
+        lectura = vista.guardada;
+      }
+    }
+    await proponerCita(chatId, convId, c, texto, basica, ubicacion, { canal, lectura });
   }
 
-  async function proponerCita(chatId: number, convId: string, c: Clasificacion, texto: string, basica: boolean, ubicacion: Ubicacion) {
-    const spec = specDesdeClasificacion(c, texto, basica ? "basica" : "claude", ubicacion);
+  /**
+   * Visión (solo solicitudes reales): Claude describe las fotos y lo que vea rellena lo que la clienta no dijo, con aviso. Si falla,
+   * la propuesta sale igual sin esa ayuda y Blake lo ve en el aviso. Una foto con órdenes dentro se trata como manipulación.
+   */
+  async function leerLasFotos(chatId: number, convId: string, c: Clasificacion, texto: string): Promise<{ clasificacion: Clasificacion; guardada: LecturaGuardada | undefined } | "manipulacion" | null> {
+    if (!deps.fotosParaLeer || !deps.leerFotos) return null;
+    const aviso = (t: string) => ({ clasificacion: { ...c, avisosValidacion: [...c.avisosValidacion, t] }, guardada: undefined });
+    try {
+      const fotos = await deps.fotosParaLeer(convId);
+      if (fotos.length === 0) return aviso("La clienta no ha mandado fotos que se puedan leer: pídelas.");
+      if (superaLimites({ mensajesClienteUltimaHora: 1, llamadasClaudeHoy: await deps.contarLlamadasClaudeHoy() })) {
+        return aviso("No he leído las fotos (tope diario de llamadas a Claude alcanzado).");
+      }
+      const r = await deps.leerFotos(fotos);
+      await deps.logEvent({
+        source: "claude",
+        kind: "claude_llamada",
+        summary: `Claude leyó las fotos (${r.tipo})`,
+        detail: r.tipo === "ok" ? { entrada: r.entrada, salida: r.salida, fotos: fotos.length, uso: "vision" } : { resultado: r.tipo, uso: "vision" },
+        conversation_id: convId,
+      });
+      if (r.tipo === "rechazo") {
+        await deps.logSecurity({ kind: "posible_inyeccion", source: "claude", conversation_id: convId, detail: { origen: "rechazo_del_modelo", en: "fotos" } });
+        await marcarManipulacion(chatId, convId, texto, "modelo", ["rechazo_del_modelo_en_fotos"], "instagram");
+        return "manipulacion";
+      }
+      if (r.tipo !== "ok") return aviso(`No he podido leer las fotos (${r.tipo}): míralas tú.`);
+      const v = validarLecturaFoto(r.raw);
+      if (!v.ok) {
+        await deps.logEvent({ source: "claude", kind: "lectura_foto_invalida", level: "warn", summary: `Lectura de fotos descartada: ${v.motivo}`, conversation_id: convId });
+        return aviso("La lectura de las fotos no pasó la validación y se ha descartado: míralas tú.");
+      }
+      if (v.value.manipulacion) {
+        await deps.logSecurity({ kind: "posible_inyeccion", source: "claude", conversation_id: convId, detail: { origen: "marcado_por_el_modelo", en: "fotos" } });
+        await marcarManipulacion(chatId, convId, texto, "modelo", ["instruccion_en_una_foto"], "instagram");
+        return "manipulacion";
+      }
+      const hecho = aplicarLecturaFoto(c, v.value);
+      await deps.logEvent({ source: "claude", kind: "fotos_leidas", summary: `Fotos leídas (confianza ${v.value.confianza}); rellenó: ${hecho.guardada.rellenados.join(", ") || "nada"}`, detail: { rellenados: hecho.guardada.rellenados, confianza: v.value.confianza }, conversation_id: convId });
+      return hecho;
+    } catch (e) {
+      await deps.logEvent({ source: "claude", kind: "lectura_foto_fallo", level: "error", summary: describirErrorClaude(e), conversation_id: convId });
+      return aviso("No he podido leer las fotos (fallo técnico): míralas tú.");
+    }
+  }
+
+  async function proponerCita(
+    chatId: number,
+    convId: string,
+    c: Clasificacion,
+    texto: string,
+    basica: boolean,
+    ubicacion: Ubicacion,
+    origen: { canal: Canal; lectura?: LecturaGuardada } = { canal: "prueba" },
+  ) {
+    const real = origen.canal === "instagram";
+    const spec: SpecGuardada = {
+      ...specDesdeClasificacion(c, texto, basica ? "basica" : "claude", ubicacion),
+      ...(real ? { origen: "instagram" as const } : {}),
+      ...(origen.lectura ? { lectura_foto: origen.lectura } : {}),
+    };
     const perfil = await deps.perfil(ubicacion);
     const { resultado, guardado } = await calcularPrecio(spec, perfil, { conversation_id: convId });
     const fotos = await fotosParaPropuesta(convId);
@@ -516,9 +641,9 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const agenda = await agendaPara(spec, null, convId);
     const prop = componerPropuesta(spec, resultado, { ahora: deps.now(), perfil, agenda, fotos, estancias });
     const nonce = deps.newNonce();
-    const reserva = await deps.crearReserva(filaDeReserva(prop, spec, guardado, nonce, convId));
+    const reserva = await deps.crearReserva(filaDeReserva(prop, spec, guardado, nonce, convId, !real));
     await deps.actualizarConversacion(convId, { status: "esperando_aprobacion" });
-    const textoTg = textoPropuesta(prop, spec, { mensajeCliente: texto, esPrueba: true, perfil, fotos, agenda });
+    const textoTg = textoPropuesta(prop, spec, { mensajeCliente: texto, esPrueba: !real, perfil, fotos, agenda });
     // Las fotos llegan primero: así Blake las tiene delante al leer la propuesta (nada si el cliente no mandó ninguna).
     if (fotos?.length) {
       try {
@@ -1010,5 +1135,5 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     return true;
   }
 
-  return { simular, boton, botonCita, pendientes, textoLibre, cancelarEdicion };
+  return { simular, recibirSolicitud, boton, botonCita, pendientes, textoLibre, cancelarEdicion };
 }

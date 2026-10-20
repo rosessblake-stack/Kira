@@ -72,6 +72,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
         if (alCrear) await alCrear("conv-nueva");
         return "conv-nueva";
       },
+      async recibirSolicitud() { return null; },
       async boton(b) { calls.prop.botones.push(b); },
       async botonCita(b) { calls.prop.citas.push(b); },
       async pendientes(chatId) { calls.prop.pendientes.push(chatId); },
@@ -103,6 +104,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
     photos: {
       async recibir(chatId, media, conversationId, pie) { calls.fotos.recibir.push({ chatId, fileId: media.fileId, tamano: media.tamano, conversationId, pie }); },
       async reenviar(chatId, conversationId) { calls.fotos.reenviar.push({ chatId, conversationId }); },
+      async guardarDeClienta() { return { ok: true as const, repetida: false }; },
     },
   };
   return { calls, deps };

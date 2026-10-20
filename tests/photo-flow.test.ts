@@ -334,3 +334,46 @@ describe("retención: el pelo de la clienta se borra, el peinado de referencia s
     expect(m.fichas()[0].purged_at).toBeNull(); // no se borró al corregir
   });
 });
+
+describe("fotos de la clienta que llegan por ManyChat (guardarDeClienta)", () => {
+  it("guarda con origen manychat, sin escribir a nadie, y la de referencia no caduca", async () => {
+    const m = mundo();
+    expect(await m.flujo.guardarDeClienta(CONV, "referencia", JPG(1))).toEqual({ ok: true, repetida: false });
+    expect(await m.flujo.guardarDeClienta(CONV, "pelo", JPG(2))).toEqual({ ok: true, repetida: false });
+    const [ref, pelo] = m.fichas();
+    expect(ref).toMatchObject({ kind: "referencia", source: "manychat", expires_at: null });
+    expect(pelo).toMatchObject({ kind: "pelo", source: "manychat" });
+    expect(pelo.expires_at).not.toBeNull();
+    expect(m.w.enviados).toEqual([]); // nada a Blake ni a la clienta
+    expect(m.w.eventos.some((e) => e.source === "manychat" && e.kind === "foto_recibida")).toBe(true);
+  });
+
+  it("lo que no es una imagen (aunque venga con otra extensión) se rechaza y queda en Seguridad", async () => {
+    const m = mundo();
+    const html = new TextEncoder().encode("<html><script>alert(1)</script></html>");
+    expect(await m.flujo.guardarDeClienta(CONV, "pelo", html)).toEqual({ ok: false, motivo: "no_es_imagen" });
+    expect(await m.flujo.guardarDeClienta(CONV, "pelo", new Uint8Array(0))).toEqual({ ok: false, motivo: "no_es_imagen" });
+    expect(m.fichas()).toHaveLength(0);
+    expect(m.w.seguridad).toHaveLength(2);
+    expect(m.w.seguridad[0].source).toBe("manychat");
+  });
+
+  it("la misma foto no se duplica", async () => {
+    const m = mundo();
+    await m.flujo.guardarDeClienta(CONV, "pelo", JPG(1));
+    expect(await m.flujo.guardarDeClienta(CONV, "pelo", JPG(1))).toEqual({ ok: true, repetida: true });
+    expect(m.fichas()).toHaveLength(1);
+  });
+
+  it("respeta el máximo de fotos por conversación", async () => {
+    const m = mundo();
+    for (let i = 0; i < MAX_FOTOS_POR_CONVERSACION; i++) await m.flujo.guardarDeClienta(CONV, "otra" as never, JPG(i + 1));
+    expect(await m.flujo.guardarDeClienta(CONV, "pelo", JPG(99))).toEqual({ ok: false, motivo: "limite" });
+  });
+
+  it("un fallo del almacén no lanza: devuelve error y lo registra", async () => {
+    const m = mundo({ fallaGuardar: true });
+    expect(await m.flujo.guardarDeClienta(CONV, "pelo", JPG(1))).toEqual({ ok: false, motivo: "error" });
+    expect(m.w.eventos.some((e) => e.kind === "foto_guardado_fallo" && e.level === "error")).toBe(true);
+  });
+});

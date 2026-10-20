@@ -117,7 +117,7 @@ const tecladoRevertir = (nonce: string) => ({ inline_keyboard: [[{ text: "❌ No
 
 const MOTIVOS: Record<string, string> = {
   ventana_24h: "han pasado más de 24 h desde su último mensaje y Instagram no deja escribirle",
-  canal_no_conectado: "el canal de Instagram todavía no está conectado",
+  canal_no_conectado: "Kira todavía no escribe a las clientas por Instagram (modo sombra)",
 };
 
 export function crearFlujoCliente(deps: ClienteDeps): ClientePort {

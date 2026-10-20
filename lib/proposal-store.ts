@@ -9,14 +9,45 @@ function ok(what: string, error: { message: string } | null) {
   if (error) throw new Error(`${what}: ${error.message}`);
 }
 
-export async function crearConversacion(canal: "prueba", ref: string, nombre: string): Promise<string> {
-  const { data, error } = await getDb()
-    .from("conversations")
-    .insert({ channel: canal, contact_ref: ref, display_name: nombre })
-    .select("id")
-    .single();
+export async function crearConversacion(canal: "prueba" | "instagram", ref: string, nombre: string): Promise<string> {
+  const db = getDb();
+  if (canal === "instagram") {
+    // Un contacto de ManyChat = una conversación: si vuelve a pedir cita se reutiliza (unique canal+contacto).
+    const buscar = async () => {
+      const { data, error } = await db.from("conversations").select("id").eq("channel", "instagram").eq("contact_ref", ref).maybeSingle();
+      ok("No se pudo buscar la conversación", error);
+      return (data as { id: string } | null)?.id ?? null;
+    };
+    const existente = await buscar();
+    if (existente) {
+      const { error } = await db.from("conversations").update({ display_name: nombre, status: "abierta" }).eq("id", existente);
+      ok("No se pudo reabrir la conversación", error);
+      return existente;
+    }
+    const { data, error } = await db.from("conversations").insert({ channel: canal, contact_ref: ref, display_name: nombre }).select("id").single();
+    if (error?.code === "23505") {
+      // Dos solicitudes a la vez del mismo contacto: la otra ganó la carrera.
+      const id = await buscar();
+      if (id) return id;
+    }
+    ok("No se pudo crear la conversación", error);
+    return (data as { id: string }).id;
+  }
+  const { data, error } = await db.from("conversations").insert({ channel: canal, contact_ref: ref, display_name: nombre }).select("id").single();
   ok("No se pudo crear la conversación", error);
   return (data as { id: string }).id;
+}
+
+/** Mensajes de la clienta en la última hora (límite de ritmo). */
+export async function contarMensajesClienteUltimaHora(conversationId: string): Promise<number> {
+  const { count, error } = await getDb()
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("conversation_id", conversationId)
+    .eq("direction", "in")
+    .gte("created_at", new Date(Date.now() - 3_600_000).toISOString());
+  ok("No se pudo contar los mensajes", error);
+  return count ?? 0;
 }
 
 export async function guardarMensaje(conversationId: string, direccion: "in" | "out", cuerpo: string, marcado: boolean) {

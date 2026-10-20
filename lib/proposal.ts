@@ -12,6 +12,7 @@ import {
   type Clasificacion,
 } from "./intents";
 import { ETIQUETA_FOTO, limpiarDescripcion, type ResumenFoto } from "./fotos";
+import type { LecturaGuardada } from "./lectura-foto";
 import { avisoDeEstancia, type Estancia } from "./estancias";
 import { CONFIG_UBICACION, dinero, interpretarUbicacion, type Moneda, type Ubicacion } from "./ubicacion";
 import {
@@ -51,6 +52,10 @@ export type SpecGuardada = {
   avisos_validacion: string[];
   /** Quién interpretó el mensaje: Claude, o la lectura básica por reglas (solo pruebas, sin clave). */
   clasificador?: "claude" | "basica";
+  /** De dónde viene: solicitud real del formulario de Instagram (ManyChat). Sin dato = prueba de Telegram. */
+  origen?: "instagram";
+  /** Lo que Claude vio en las fotos de la clienta (solo describe; los datos que rellenó llevan su aviso). */
+  lectura_foto?: LecturaGuardada;
   /** Horas fijadas por Blake; null = las de por defecto. */
   horas: number | null;
   /** Materiales fijados por Blake (en la moneda de la ubicación); null/ausente = los de por defecto. */
@@ -336,7 +341,8 @@ export function textoPropuesta(
 ): string {
   const lugar = contextoDe(spec);
   const l: string[] = [];
-  l.push(`${ctx.esPrueba ? "🧪 PRUEBA · " : ""}PROPUESTA DE CITA`);
+  l.push(`${ctx.esPrueba ? "🧪 PRUEBA · " : ""}${spec.origen === "instagram" ? "📥 SOLICITUD DE INSTAGRAM · " : ""}PROPUESTA DE CITA`);
+  if (spec.origen === "instagram") l.push("👀 Modo sombra: Kira NO ha escrito a la clienta. Respóndele tú como siempre.");
   l.push("");
   l.push(`📍 ${lugar.nombre} · ${lugar.moneda === "USD" ? "dólares · hora de Miami" : "euros · hora de Madrid"}`);
   l.push(`🏠 Dirección: ${spec.direccion ? recorte(limpiarTexto(spec.direccion, 200), 200) : "sin indicar"}`);
@@ -365,6 +371,12 @@ export function textoPropuesta(
     }
     const otras = ctx.fotos.filter((x) => x.tipo === "otra").length;
     if (otras) l.push(`• Otras fotos: ${otras}`);
+  }
+  if (spec.lectura_foto && (spec.lectura_foto.referencia || spec.lectura_foto.pelo)) {
+    l.push("");
+    l.push("🔎 Lo que veo en las fotos (lectura de Claude, confírmala tú)");
+    if (spec.lectura_foto.referencia) l.push(`• Referencia: ${recorte(spec.lectura_foto.referencia, 220)}`);
+    if (spec.lectura_foto.pelo) l.push(`• Pelo: ${recorte(spec.lectura_foto.pelo, 220)}`);
   }
   l.push("");
   if (p.precioCentimos !== null) {

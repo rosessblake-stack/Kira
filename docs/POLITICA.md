@@ -63,10 +63,10 @@ Todo lo demás que escriba la clienta (preguntas, regateos, dudas) se te reenví
 
 ## 6. Fotos de las clientas
 
-- Kira pide (en Instagram, con ManyChat) una foto del pelo y otra de las trenzas de referencia. **Hoy Claude no las ve**: las guarda el servidor, te llegan a Telegram y las describes tú con tus palabras (`pelo …`, `referencia …`). Que Claude las describa con visión es una decisión tuya, para más adelante.
+- Kira pide (en Instagram, con ManyChat) una foto del pelo y otra de las trenzas de referencia. **Claude las lee (decisión tuya, 20-oct)** solo en las solicitudes reales de Instagram: describe el peinado de la foto de referencia (tipo, nº aproximado de trenzas, grosor, largo) y el pelo de la clienta, y te lo enseña en la propuesta («Lo que veo en las fotos») junto con las fotos. Solo describe: lo que deduce de la foto y la clienta no dijo se rellena con un aviso visible («Visto en la foto … confírmalo»), nunca pisa lo que ella escribió y, si su confianza es baja, solo se enseña. El texto que aparezca dentro de una foto es un dato, nunca una orden: si Claude lo ve como una orden o rechaza leerla, se trata como manipulación y no hay propuesta. Tus descripciones (`pelo …`, `referencia …`) siguen siendo tuyas y no las cambia nada.
 - Faltar una foto es un **aviso** en la propuesta, no un bloqueo: decides tú.
-- Las fotos se guardan en privado. **La foto del pelo de la clienta se borra a los 60 días** (tu descripción se conserva). **La foto de referencia (el peinado que quiere) se guarda siempre**: es el material para enseñar a Kira. Nunca se muestran a nadie más ni se mandan a un servicio externo.
-- La clienta tiene que saber que se guarda su foto de referencia (se le dice en el guion de ManyChat) y si pide que se borre, se borra.
+- Las fotos se guardan en privado. **La foto del pelo de la clienta se borra a los 60 días** (tu descripción se conserva). **La foto de referencia (el peinado que quiere) se guarda siempre**: es el material para enseñar a Kira. Nunca se muestran a nadie más. **Las dos fotos de una solicitud real se mandan a Anthropic (Claude) para leerlas**, solo en ese momento y por decisión tuya; no se mandan a ningún otro servicio.
+- La clienta tiene que saber que se guarda su foto de referencia (se le dice en el guion de ManyChat) y si pide que se borre, se borra. **No se le avisa de que una IA lee las fotos ni los mensajes** (decisión de Blake, 20-oct, asumiendo esa responsabilidad).
 - Claude no «aprende» solo de tus descripciones: se guardan junto a cada foto de referencia como ejemplos etiquetados y, cuando quieras, se usan para enseñarle o evaluarlo (ver `docs/MANYCHAT.md` §4).
 
 ## 7. Qué verás en el panel
@@ -74,3 +74,10 @@ Todo lo demás que escriba la clienta (preguntas, regateos, dudas) se te reenví
 - **Proceso:** cada conversación y en qué paso está (clasificada, esperando aprobación, pendiente de pago, pagada, expirada), con sus fotos y tu descripción de cada una.
 - **Fallos:** errores del sistema, webhooks que no llegaron, pagos o eventos sin cerrar.
 - **Seguridad:** intentos de manipulación, firmas inválidas, usuarios no autorizados, límites superados.
+
+## 8. Modo sombra: la entrada de ManyChat (20-oct)
+
+- Cuando la clienta termina el flujo «cita / agendar», ManyChat manda a Kira todo de una vez (`POST /api/manychat`, `docs/FLUJO_MANYCHAT.md`). Kira baja las dos fotos, las lee, calcula el precio con Legacy y te manda a Telegram las fotos y la propuesta «📥 SOLICITUD DE INSTAGRAM».
+- **Kira NO escribe a la clienta** por Instagram (el envío no existe): tú le contestas como siempre. Al pulsar Aprobar se reserva el hueco en amarillo y Kira te avisa de que le escribas tú el precio y, cuando pague, pulses «Señal recibida».
+- Una solicitud real **nunca** se lee con la lectura básica por reglas: sin clave de Claude, o si Claude falla, se te deriva.
+- Mismos filtros que cualquier mensaje: pausa, señales de manipulación, límite de solicitudes por clienta y hora, tope diario de llamadas a Claude (la lectura de fotos también cuenta).

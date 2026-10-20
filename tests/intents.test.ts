@@ -312,3 +312,14 @@ describe("regla de Blake: el número de trenzas decide el tipo cuando el mensaje
     expect(asumirTipoTrenzado(-3, "trenzas")).toBeNull();
   });
 });
+
+describe("asumirTipoTrenzado: usuarios y correos no cuentan como hablar de trenzas", () => {
+  it("«@lucia.trenzas» o «trenzas@correo.com» no activan la regla de «trenzas = sueltas»", () => {
+    expect(asumirTipoTrenzado(null, "Instagram: @lucia.trenzas\nEmail: trenzas@correo.com")).toBeNull();
+    expect(asumirTipoTrenzado(null, "Mi usuario es @trenzas_ana y quiero un peinado")).toBeNull();
+  });
+  it("lo que sí dice la clienta se sigue aplicando aunque haya un usuario delante", () => {
+    expect(asumirTipoTrenzado(null, "@lucia.trenzas quiero trenzas")?.tipo).toBe("sueltas");
+    expect(asumirTipoTrenzado(6, "@lucia quiero 6 trenzas")?.tipo).toBe("pegadas");
+  });
+});

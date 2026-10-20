@@ -88,6 +88,11 @@ export interface PhotoPort {
   recibir(chatId: number, media: MediaTelegram, conversationId: string | null, pie: string): Promise<void>;
   /** Vuelve a enviar a Blake las fotos de una conversación (null = la prueba más reciente). */
   reenviar(chatId: number, conversationId: string | null, opts?: { silencioso?: boolean }): Promise<void>;
+  /**
+   * Guarda una foto que ya se descargó (la de una clienta, vía ManyChat): comprueba los bytes, el tope y las repetidas y no escribe a
+   * nadie. `ok` también cuando la foto ya estaba guardada.
+   */
+  guardarDeClienta(conversationId: string, tipo: "pelo" | "referencia", bytes: Uint8Array): Promise<{ ok: true; repetida: boolean } | { ok: false; motivo: "no_es_imagen" | "limite" | "error" }>;
 }
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : "error desconocido");
@@ -280,7 +285,48 @@ export function crearFlujoFotos(deps: PhotoDeps): PhotoPort {
     }
   }
 
-  return { recibir, reenviar };
+  async function guardarDeClienta(conversationId: string, tipo: "pelo" | "referencia", bytes: Uint8Array) {
+    const ahora = deps.now();
+    const ids = { conversation_id: conversationId };
+    const imagen = detectarImagen(bytes);
+    if (!imagen || bytes.length === 0 || bytes.length > MAX_BYTES_FOTO) {
+      await deps.logSecurity({ kind: "payload_inesperado", source: "manychat", ...ids, detail: { reason: "archivo_no_imagen", bytes: bytes.length } });
+      return { ok: false as const, motivo: "no_es_imagen" as const };
+    }
+    try {
+      const existentes = (await deps.fotosDe(conversationId)).filter((f) => !f.purged_at);
+      const sha256 = sha256Hex(bytes);
+      if (existentes.some((f) => f.sha256 === sha256)) return { ok: true as const, repetida: true };
+      if (existentes.length >= MAX_FOTOS_POR_CONVERSACION) {
+        await deps.logEvent({ source: "manychat", kind: "foto_limite", level: "warn", summary: `Ya hay ${MAX_FOTOS_POR_CONVERSACION} fotos en la conversación: no se guarda otra`, ...ids });
+        return { ok: false as const, motivo: "limite" as const };
+      }
+      const id = deps.newId();
+      await deps.guardar(
+        {
+          id,
+          conversationId,
+          tipo,
+          origen: "manychat",
+          storagePath: rutaAlmacenamiento(conversationId, id, EXT_DE_MIME[imagen.mime]),
+          mime: imagen.mime,
+          sha256,
+          descripcion: null,
+          creadaEn: ahora.toISOString(),
+          caducaEn: caducidadPara(tipo, ahora)?.toISOString() ?? null,
+        },
+        bytes,
+      );
+      await deps.logEvent({ source: "manychat", kind: "foto_recibida", summary: `Foto de la clienta guardada: ${ETIQUETA_FOTO[tipo]}`, detail: { tipo, bytes: bytes.length, mime: imagen.mime }, ...ids });
+      await avisoDeCaducidad();
+      return { ok: true as const, repetida: false };
+    } catch (e) {
+      await deps.logEvent({ source: "manychat", kind: "foto_guardado_fallo", level: "error", summary: msg(e), ...ids });
+      return { ok: false as const, motivo: "error" as const };
+    }
+  }
+
+  return { recibir, reenviar, guardarDeClienta };
 }
 
 function tipoSugerido(tipo: TipoFoto, loFijoBlake: boolean): string {

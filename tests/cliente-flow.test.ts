@@ -171,7 +171,7 @@ describe("tras Aprobar: el precio a la clienta", () => {
     const m = await conPrecioEnviado({ canal: "instagram" });
     expect(m.w.paraClienta).toEqual([]);
     expect(m.w.reserva.client_phase).toBeNull();
-    expect(m.avisos().at(-1)).toContain("todavía no está conectado");
+    expect(m.avisos().at(-1)).toContain("modo sombra");
   });
 
   it("sin borrador completo no manda nada", async () => {

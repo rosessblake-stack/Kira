@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { CLASIFICACION_SCHEMA, envolverMensajeCliente } from "./intents";
+import { LECTURA_FOTO_SCHEMA, SYSTEM_PROMPT_FOTOS } from "./lectura-foto";
 
 /**
  * Llamada a Claude. Claude NO tiene herramientas ni acceso a nada: solo recibe el mensaje del cliente
@@ -139,6 +140,41 @@ export async function clasificarConClaude(textoCliente: string, ahora: Date, zon
   if (res.stop_reason === "refusal") return { tipo: "rechazo" };
   if (res.stop_reason === "max_tokens") return { tipo: "truncado" };
 
+  const bloque = res.content.find((b) => b.type === "text");
+  if (!bloque || bloque.type !== "text") return { tipo: "sin_json" };
+  try {
+    return { tipo: "ok", raw: JSON.parse(bloque.text), entrada: res.usage.input_tokens, salida: res.usage.output_tokens };
+  } catch {
+    return { tipo: "sin_json" };
+  }
+}
+
+export type FotoParaLeer = { rol: "referencia" | "pelo"; mime: "image/jpeg" | "image/png" | "image/webp"; bytes: Uint8Array };
+
+/**
+ * Visión: Claude describe las fotos (referencia y pelo) con el esquema de lectura-foto.ts. Igual que con el texto: sin herramientas,
+ * la imagen es dato no fiable y la salida se valida después campo a campo.
+ */
+export async function leerFotosConClaude(fotos: FotoParaLeer[]): Promise<RespuestaClaude> {
+  if (!process.env.ANTHROPIC_API_KEY) throw new SinClaveError();
+  const contenido: Anthropic.Messages.ContentBlockParam[] = [];
+  for (const f of fotos) {
+    contenido.push({ type: "text", text: `<foto_${f.rol}>` });
+    contenido.push({ type: "image", source: { type: "base64", media_type: f.mime, data: Buffer.from(f.bytes).toString("base64") } });
+    contenido.push({ type: "text", text: `</foto_${f.rol}>` });
+  }
+  contenido.push({ type: "text", text: "Devuelve el JSON con lo que se ve en las fotos." });
+
+  const client = new Anthropic({ maxRetries: 1, timeout: 45_000 });
+  const res = await client.messages.create({
+    model: MODELO,
+    max_tokens: 4000,
+    system: SYSTEM_PROMPT_FOTOS,
+    messages: [{ role: "user", content: contenido }],
+    output_config: { effort: "low", format: { type: "json_schema", schema: LECTURA_FOTO_SCHEMA } },
+  });
+  if (res.stop_reason === "refusal") return { tipo: "rechazo" };
+  if (res.stop_reason === "max_tokens") return { tipo: "truncado" };
   const bloque = res.content.find((b) => b.type === "text");
   if (!bloque || bloque.type !== "text") return { tipo: "sin_json" };
   try {

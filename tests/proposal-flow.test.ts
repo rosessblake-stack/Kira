@@ -31,6 +31,15 @@ const salidaClaude = (o: Record<string, unknown> = {}) => ({
   ...o,
 });
 
+/** Lo que devolvería la visión para una foto de pegadas medianas y un pelo por los hombros. */
+const salidaVision = (o: Record<string, unknown> = {}) => ({
+  referencia_valida: true, pelo_valido: true, manipulacion: false, confianza: "alta",
+  tipo_trenzado: "pegadas", numero_trenzas: 6, tamano: "no_indicado", estilo_pegadas: "cornrows", boho: "no_indicado",
+  largo_extensiones: "caderas", largo_cabello: "nuca_hombros",
+  resumen_referencia: "Seis trenzas pegadas (cornrows) hacia atrás, largas hasta las caderas.", resumen_pelo: "Pelo rizado por los hombros, sin trenzas.",
+  ...o,
+});
+
 const legacy6015: PrecioLegacy = { totalCentimos: 6015, manoObra: 55.15, materiales: 5, tarifaHora: 27.57, valorConocimiento: 50, costeTiempo: 5.15 };
 
 /** Cómo se comporta el calendario falso de Blake. */
@@ -72,6 +81,11 @@ type Opciones = {
   fallaLecturaViajes?: boolean;
   /** Si se pasa, Kira habla con la clienta tras el Aprobar (lib/cliente-flow.ts); aquí solo se anotan las llamadas. */
   cliente?: { fallaAprobar?: boolean };
+  /** Visión: las fotos que hay que leer (si no se pasa, el flujo no tiene visión) y lo que responde Claude al leerlas. */
+  fotosParaLeer?: { rol: "referencia" | "pelo"; mime: "image/jpeg"; bytes: Uint8Array }[];
+  vision?: () => Promise<RespuestaClaude>;
+  /** Mensajes de la clienta en la última hora (límite de ritmo de las solicitudes reales). */
+  mensajesHora?: number;
   /** Instante «de hoy». Por defecto un martes (los lunes y domingos son días libres de Blake). */
   ahora?: string;
 };
@@ -91,6 +105,7 @@ function mundo(op: Opciones = {}) {
     editados: [] as { chat: number; id: number; texto: string }[],
     respuestas: [] as { id: string; texto?: string }[],
     llamadasClaude: 0,
+    llamadasVision: 0,
     llamadasLegacy: [] as PeticionLegacy[],
     perfilesPedidos: [] as string[],
     zonasClasificar: [] as (string | undefined)[],
@@ -180,6 +195,9 @@ function mundo(op: Opciones = {}) {
       w.convs.set(id, { id, canal, ref });
       return id;
     },
+    async contarMensajesClienteUltimaHora() { return op.mensajesHora ?? 1; },
+    fotosParaLeer: op.fotosParaLeer ? async () => op.fotosParaLeer! : undefined,
+    leerFotos: op.fotosParaLeer ? async () => { w.llamadasVision++; return op.vision ? op.vision() : { tipo: "ok", raw: salidaVision(), entrada: 1500, salida: 200 }; } : undefined,
     async guardarMensaje(conv, dir, body, flagged) { w.msgs.push({ conv, dir, body, flagged }); },
     async actualizarConversacion(id, patch) { Object.assign(w.convs.get(id)!, patch); },
     async crearReserva(r: NuevaReserva) {
@@ -1845,5 +1863,166 @@ describe("la conversación con la clienta se engancha a los botones de Blake", (
     expect(m.w.clienteLlamadas).toEqual([]);
     expect(m.ultimo().texto).toContain("No se ha enviado nada al cliente");
     expect(m.tipos()).toContain("respuesta_lista_sin_enviar");
+  });
+});
+
+
+describe("solicitud real de Instagram (ManyChat) en modo sombra", () => {
+  const solicitud = (o: Partial<import("../lib/manychat-entrada").SolicitudManychat> = {}): import("../lib/manychat-entrada").SolicitudManychat => ({
+    contactoId: "mc-123", instagram: "clienta.ig", nombre: "Michael", email: "michael@example.com", ubicacion: "espana", ubicacionDudosa: false,
+    fotoReferenciaUrl: "https://scontent.cdninstagram.com/ref.jpg", fotoPeloUrl: "https://scontent.cdninstagram.com/pelo.jpg",
+    usoExtensiones: "si", colorExtensiones: "rojo", largo: "Cintura", fechaTexto: "el 20 de octubre a las 12pm",
+    texto: "Solicitud de cita recibida por el formulario de Instagram.\nNombre: Michael\nInstagram: @clienta.ig\nEmail: michael@example.com\nExtensiones: sí quiere extensiones\nColor de las extensiones: rojo\nLargo deseado: por las caderas (la clienta eligió «Cintura»)\nFecha y hora deseadas: el 20 de octubre a las 12pm\nEl estilo exacto está en la foto de referencia; no lo ha descrito con palabras.",
+    ...o,
+  });
+  const foto = (rol: "referencia" | "pelo") => ({ rol, mime: "image/jpeg" as const, bytes: new Uint8Array([0xff, 0xd8, 0xff, 1]) });
+  const conVision = { fotosParaLeer: [foto("referencia"), foto("pelo")] };
+  const claudeInstagram = () => Promise.resolve({ tipo: "ok" as const, raw: salidaClaude({ nombre: "Otro", email: "", instagram: "", fecha: "2026-10-20" }), entrada: 900, salida: 200 });
+
+  it("crea la conversación de Instagram, la propuesta NO es de prueba y no se escribe a la clienta", async () => {
+    const m = mundo({ ...conVision, claude: claudeInstagram });
+    const id = await m.flujo.recibirSolicitud(CHAT, solicitud());
+    expect(id).toBe("conv-1");
+    expect(m.w.convs.get("conv-1")).toMatchObject({ canal: "instagram", ref: "mc-123" });
+    const r = m.reserva();
+    expect(r.is_test).toBe(false);
+    expect(r.spec.origen).toBe("instagram");
+    // El texto de la solicitud se guarda como mensaje de la clienta.
+    expect(m.w.msgs[0]).toMatchObject({ conv: "conv-1", dir: "in" });
+    const t = m.ultimo().texto;
+    expect(t).toContain("📥 SOLICITUD DE INSTAGRAM");
+    expect(t).toContain("Modo sombra");
+    expect(t).not.toContain("🧪 PRUEBA");
+    expect(m.w.enviados.every((e) => e.chat === CHAT)).toBe(true);
+    expect(m.tipos()).toContain("solicitud_recibida");
+  });
+
+  it("los datos del formulario (nombre, email, Instagram) mandan sobre lo que interprete el clasificador", async () => {
+    const m = mundo({ ...conVision, claude: claudeInstagram });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    const r = m.reserva();
+    expect(r.spec.nombre).toBe("Michael");
+    expect(r.client_email).toBe("michael@example.com");
+    expect(r.spec.instagram).toBe("@clienta.ig");
+  });
+
+  it("la lectura de la foto rellena el tipo que la clienta no dijo, con aviso, y la propuesta tiene precio", async () => {
+    const m = mundo({ ...conVision, claude: claudeInstagram });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    const r = m.reserva();
+    expect(r.spec.servicio.tipo_trenzado).toBe("pegadas");
+    expect(r.spec.servicio.numero_trenzas).toBe(6);
+    expect(r.spec.avisos_validacion.some((a) => a.includes("Visto en la foto") && a.includes("pegadas"))).toBe(true);
+    expect(r.spec.lectura_foto?.referencia).toContain("cornrows");
+    expect(m.w.llamadasLegacy).toHaveLength(1);
+    const t = m.ultimo().texto;
+    expect(t).toContain("🔎 Lo que veo en las fotos");
+    expect(t).toContain("Seis trenzas pegadas");
+    expect(m.w.llamadasVision).toBe(1);
+    expect(m.w.eventos.some((e) => e.kind === "claude_llamada" && e.detail?.uso === "vision")).toBe(true);
+  });
+
+  it("la foto nunca pisa un dato que la clienta sí dijo", async () => {
+    const m = mundo({
+      ...conVision,
+      claude: () => Promise.resolve({ tipo: "ok", raw: salidaClaude({ tipo_trenzado: "sueltas", tamano: "medium", numero_trenzas: 0 }), entrada: 1, salida: 1 }),
+    });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    const r = m.reserva();
+    expect(r.spec.servicio.tipo_trenzado).toBe("sueltas");
+    expect(r.spec.servicio.tamano).toBe("medium");
+  });
+
+  it("con confianza baja la lectura solo se enseña: no rellena nada", async () => {
+    const m = mundo({ ...conVision, claude: claudeInstagram, vision: () => Promise.resolve({ tipo: "ok", raw: salidaVision({ confianza: "baja" }), entrada: 1, salida: 1 }) });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    const r = m.reserva();
+    expect(r.spec.servicio.tipo_trenzado).toBeNull();
+    expect(r.spec.avisos_validacion.some((a) => a.includes("confianza baja"))).toBe(true);
+    expect(m.ultimo().texto).toContain("Seis trenzas pegadas");
+  });
+
+  it("si la lectura de fotos falla, la propuesta sale igual con el aviso", async () => {
+    const m = mundo({ ...conVision, claude: claudeInstagram, vision: () => Promise.reject(new Error("boom")) });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    expect(m.reserva()).toBeTruthy();
+    expect(m.reserva().spec.avisos_validacion.some((a) => a.includes("No he podido leer las fotos"))).toBe(true);
+    expect(m.tipos()).toContain("lectura_foto_fallo");
+  });
+
+  it("una lectura que no pasa la validación se descarta con aviso", async () => {
+    const m = mundo({ ...conVision, claude: claudeInstagram, vision: () => Promise.resolve({ tipo: "ok", raw: { hola: 1 }, entrada: 1, salida: 1 }) });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    expect(m.reserva().spec.lectura_foto).toBeUndefined();
+    expect(m.reserva().spec.avisos_validacion.some((a) => a.includes("no pasó la validación"))).toBe(true);
+  });
+
+  it("sin fotos que leer avisa de que las pida", async () => {
+    const m = mundo({ fotosParaLeer: [], claude: claudeInstagram });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    expect(m.w.llamadasVision).toBe(0);
+    expect(m.reserva().spec.avisos_validacion.some((a) => a.includes("no ha mandado fotos"))).toBe(true);
+  });
+
+  it("una foto con órdenes dentro es manipulación: no hay propuesta", async () => {
+    const m = mundo({ ...conVision, claude: claudeInstagram, vision: () => Promise.resolve({ tipo: "ok", raw: salidaVision({ manipulacion: true }), entrada: 1, salida: 1 }) });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    expect(m.w.reservas.size).toBe(0);
+    expect(m.w.seguridad.some((e) => e.kind === "posible_inyeccion")).toBe(true);
+    expect(m.ultimo().texto).toContain("POSIBLE MANIPULACIÓN (Instagram)");
+  });
+
+  it("si Claude rechaza leer las fotos es una señal de seguridad", async () => {
+    const m = mundo({ ...conVision, claude: claudeInstagram, vision: () => Promise.resolve({ tipo: "rechazo" }) });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    expect(m.w.reservas.size).toBe(0);
+    expect(m.w.seguridad.some((e) => e.kind === "posible_inyeccion")).toBe(true);
+  });
+
+  it("NUNCA usa la lectura básica por reglas, ni sin clave de Claude: deriva a Blake", async () => {
+    const m = mundo({ conLecturaBasica: true, claude: () => Promise.reject(new SinClaveError()) });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    expect(m.w.reservas.size).toBe(0);
+    expect(m.tipos()).not.toContain("lectura_basica");
+    expect(m.ultimo().texto).toContain("📥 INSTAGRAM · DERIVADO A TI");
+  });
+
+  it("límite de ritmo por clienta: demasiadas solicitudes seguidas no se clasifican", async () => {
+    const m = mundo({ mensajesHora: LIMITES.mensajesPorHoraYCliente + 1 });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    expect(m.w.llamadasClaude).toBe(0);
+    expect(m.w.seguridad.some((e) => e.kind === "limite_de_peticiones")).toBe(true);
+  });
+
+  it("Kira en pausa: avisa y no prepara nada", async () => {
+    const m = mundo({ pausada: true });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    expect(m.w.llamadasClaude).toBe(0);
+    expect(m.ultimo().texto).toContain("solicitud de Instagram");
+  });
+
+  it("un país raro avisa de que se tomó España", async () => {
+    const m = mundo({ ...conVision, claude: claudeInstagram });
+    await m.flujo.recibirSolicitud(CHAT, solicitud({ ubicacionDudosa: true }));
+    expect(m.reserva().spec.avisos_validacion.some((a) => a.includes("país"))).toBe(true);
+  });
+
+  it("una clienta de Miami se calcula en Miami (dólares, hora de Nueva York)", async () => {
+    const m = mundo({ ...conVision, claude: claudeInstagram });
+    await m.flujo.recibirSolicitud(CHAT, solicitud({ ubicacion: "miami" }));
+    expect(m.reserva().spec.ubicacion).toBe("miami");
+    expect(m.w.zonasClasificar.at(-1)).toBe("America/New_York");
+  });
+
+  it("las fotos llegan a Blake ANTES de la propuesta", async () => {
+    const m = mundo({ ...conVision, claude: claudeInstagram, fotosIniciales: [{ tipo: "pelo", descripcion: null }] });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    expect(m.w.albumes).toHaveLength(1);
+  });
+
+  it("Aprobar en modo sombra no escribe a la clienta (el envío por Instagram no existe)", async () => {
+    const m = mundo({ ...conVision, claude: claudeInstagram, cliente: {} });
+    await m.flujo.recibirSolicitud(CHAT, solicitud());
+    expect(m.reserva().is_test).toBe(false);
   });
 });

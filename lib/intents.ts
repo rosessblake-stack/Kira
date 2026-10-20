@@ -128,7 +128,8 @@ export const MAX_TRENZAS_PEGADAS = 12;
  * lo que el mensaje dice.
  */
 export function asumirTipoTrenzado(numero: number | null, textoCliente: string): { tipo: "pegadas" | "sueltas"; aviso: string } | null {
-  const t = textoCliente.toLowerCase();
+  // Un correo o un usuario de Instagram («@trenzas_by_ana») no es la clienta hablando de trenzas.
+  const t = textoCliente.toLowerCase().replace(/\S*@\S+/g, " ");
   const corregir = (otro: string) => `Si no es así, escribe «tipo ${otro}».`;
   if (/boxeadora|boxer|boxing/.test(t)) {
     return { tipo: "pegadas", aviso: `${AVISO_TIPO_ASUMIDO}: pegadas (pide trenzas boxeadoras sin decir el tipo; para ti son pegadas). ${corregir("sueltas")}` };
