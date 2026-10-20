@@ -78,7 +78,8 @@ export interface PhotoDeps {
   /** Borra los archivos caducados (de mejor esfuerzo). */
   purgarCaducadas(ahora: Date): Promise<number>;
   enviar(chatId: number, texto: string): Promise<number | null>;
-  enviarFotos(chatId: number, fotos: { bytes: Uint8Array; mime: string; ext: string; pie: string }[]): Promise<void>;
+  /** `silent`: sin sonido ni notificación (las fotos de una solicitud van antes de la propuesta, que es la que avisa). */
+  enviarFotos(chatId: number, fotos: { bytes: Uint8Array; mime: string; ext: string; pie: string }[], opts?: { silent?: boolean }): Promise<void>;
   logEvent(e: { source: Fuente; kind: string; level?: "info" | "warn" | "error"; summary: string; detail?: Record<string, unknown>; conversation_id?: string | null }): Promise<void>;
   logSecurity(e: { kind: "payload_inesperado"; source: string; conversation_id?: string | null; detail?: Record<string, unknown> }): Promise<void>;
 }
@@ -278,7 +279,7 @@ export function crearFlujoFotos(deps: PhotoDeps): PhotoPort {
       return;
     }
     try {
-      await deps.enviarFotos(chatId, listas);
+      await deps.enviarFotos(chatId, listas, { silent: Boolean(opts.silencioso) });
     } catch (e) {
       await deps.logEvent({ source: "telegram", kind: "foto_envio_fallo", level: "error", summary: msg(e), conversation_id: convId });
       if (!opts.silencioso) await deps.enviar(chatId, "No he podido enviarte las fotos. Mira Fallos en el panel.");

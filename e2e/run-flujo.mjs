@@ -1196,7 +1196,7 @@ try {
   const paraClienta = () => tg.enviados.filter((m) => m.text.startsWith("📤 PARA LA CLIENTA"));
   const reservaM = () => reservas().at(-1);
   const salidasM = () => tables.messages.filter((m) => m.direction === "out");
-  const eventoDeR = (r) => { const e = g.eventos.get(`kira${r.id.replace(/-/g, "")}`); return e && e.status !== "cancelled" ? e : undefined; };
+  const eventoDeR = (r) => { const e = g.eventos.get(r.calendar_event_id ?? `kira${r.id.replace(/-/g, "")}`); return e && e.status !== "cancelled" ? e : undefined; };
   const llamadasDelete = () => g.llamadas.filter((x) => x.metodo === "DELETE");
   /** /simular de Michael + Aprobar: deja la reserva en amarillo con el precio ya «enviado» a la clienta. */
   const aprobarMichael = async () => {
@@ -1240,16 +1240,25 @@ try {
   await escribe("/clienta confirmado");
   const avisoC = conBotones();
   anota("Kira (aviso a Blake tras «confirmado»)", `${avisoC.text}\n[botones: ${botones(avisoC).join(" | ")}]`);
-  check("M13. «confirmado» → la cita pasa a morado sin esperar a Blake (reserva pagada, fase confirmada)", reservaM().status === "pagada" && reservaM().client_phase === "confirmada" && eventoDeR(reservaM())?.colorId === "3" && g.llamadas.filter((x) => x.metodo === "PATCH").length > antesPagado);
-  check("M14. Blake recibe el aviso al momento con el botón «No me ha llegado nada» (la palabra de la clienta no prueba un pago)", avisoC.text.includes("ha escrito «confirmado»") && avisoC.text.includes("Mira tu Bizum") && botones(avisoC).join("|") === "❌ No me ha llegado nada");
-  check("M15. la clienta recibe la confirmación (en pruebas no se invita a un email que no sea el de Blake)", paraClienta().at(-1).text.includes("¡Confirmado!") && !eventoDeR(reservaM())?.attendees);
+  check("M13. «confirmado» NO confirma nada: la reserva sigue en amarillo, en fase «pago_declarado», y el calendario no se toca", reservaM().status === "pendiente_pago" && reservaM().client_phase === "pago_declarado" && eventoDeR(reservaM())?.colorId === "5" && g.llamadas.filter((x) => x.metodo === "PATCH").length === antesPagado);
+  check("M14. Blake recibe el mensaje con los dos botones: «Sí, me ha llegado» y «No me ha llegado» (la palabra de la clienta no prueba un pago)", avisoC.text.includes("dice que ya ha hecho el Bizum") && avisoC.text.includes("Mira tu banco") && botones(avisoC).join("|") === "✅ Sí, me ha llegado|❌ No me ha llegado");
+  check("M15. a la clienta se le dice que se está comprobando (y no se le confirma la cita)", paraClienta().at(-1).text.includes("Lo compruebo y te confirmo") && !paraClienta().some((m) => m.text.includes("¡Confirmado!") && m.seq > avisoC.seq - 5));
 
-  const botonRev = avisoC.reply_markup.inline_keyboard[0][0].callback_data;
-  await pulsa(botonRev, avisoC.message_id);
-  check("M16. «No me ha llegado nada» revierte: evento borrado AVISANDO a la clienta, reserva cancelada, conversación cerrada", reservaM().status === "cancelada" && reservaM().client_phase === "cerrada" && !eventoDeR(reservaM()) && llamadasDelete().at(-1)?.query.sendUpdates === "all" && tables.conversations.at(-1).status === "cerrada");
-  check("M17. la clienta recibe el aviso de que no consta el Bizum y se libera el hueco", paraClienta().at(-1).text.includes("Todavía no me consta el Bizum"));
-  await pulsa(botonRev, avisoC.message_id);
-  check("M18. el botón de revertir es de un solo uso", tg.respuestas.at(-1)?.text === "Ya procesado" && llamadasDelete().length === g.llamadas.filter((x) => x.metodo === "DELETE").length);
+  const botonNo = dato(avisoC, "No me ha llegado");
+  const botonSi = dato(avisoC, "Sí, me ha llegado");
+  await pulsa(botonNo, avisoC.message_id);
+  check("M16. «No me ha llegado»: evento borrado (sin avisar a nadie, aún no estaba invitada), reserva cancelada y fase «liberada»; la conversación sigue abierta", reservaM().status === "cancelada" && reservaM().client_phase === "liberada" && !eventoDeR(reservaM()) && llamadasDelete().at(-1)?.query.sendUpdates === "none" && tables.conversations.at(-1).status !== "cerrada");
+  check("M17. la clienta recibe «Todavía no me consta el Bizum…» y el mensaje de Blake se edita a «NO LLEGÓ»", paraClienta().at(-1).text.includes("Todavía no me consta el Bizum") && tg.editados.at(-1).text.includes("NO LLEGÓ"));
+  await pulsa(botonNo, avisoC.message_id);
+  check("M18. los botones son de un solo uso", tg.respuestas.at(-1)?.text === "Ya procesado" && reservaM().client_phase === "liberada");
+
+  await escribe("/clienta ya lo tengo hecho");
+  const avisoR = conBotones();
+  check("M18b. si luego dice «ya lo tengo hecho», Kira vuelve a reservar el hueco (amarillo) y le pregunta otra vez a Blake, sin que él cree la cita a mano", reservaM().status === "pendiente_pago" && reservaM().client_phase === "pago_declarado" && eventoDeR(reservaM())?.colorId === "5" && avisoR.text.includes("te había marcado que no llegó") && botones(avisoR).join("|") === "✅ Sí, me ha llegado|❌ No me ha llegado");
+  const antesPagado2 = g.llamadas.filter((x) => x.metodo === "PATCH").length;
+  await pulsa(dato(avisoR, "Sí, me ha llegado"), avisoR.message_id);
+  check("M18c. «Sí, me ha llegado»: morado, reserva pagada, fase confirmada y la clienta recibe «¡Confirmado!»", reservaM().status === "pagada" && reservaM().client_phase === "confirmada" && eventoDeR(reservaM())?.colorId === "3" && g.llamadas.filter((x) => x.metodo === "PATCH").length > antesPagado2 && paraClienta().at(-1).text.includes("¡Confirmado!"));
+  void botonSi;
 
   // Plazo de 45 min: dice «vale» y no paga
   await aprobarMichael();
@@ -1430,10 +1439,13 @@ try {
 
   const n5 = tg.enviados.length;
   await respuestaIg({ id: "mc-3001", texto: "confirmado" });
-  await esperarHasta(() => mcApi.envios.length >= 3);
+  await esperarHasta(() => mcApi.envios.length >= 3 && tg.enviados.slice(n5).some((m) => botones(m).includes("✅ Sí, me ha llegado")));
+  const avisoCarla = tg.enviados.slice(n5).find((m) => botones(m).includes("✅ Sí, me ha llegado"));
+  check("O14. «confirmado» NO confirma nada: cita aún en amarillo, la clienta recibe «Lo compruebo…» y Blake los dos botones", resCarla().status === "pendiente_pago" && resCarla().client_phase === "pago_declarado" && g.eventos.get(`kira${resCarla().id.replace(/-/g, "")}`)?.colorId === "5" && (mcApi.envios[2]?.cuerpo.data.content.messages[0].text ?? "").includes("Lo compruebo") && Boolean(avisoCarla) && botones(avisoCarla).join("|") === "✅ Sí, me ha llegado|❌ No me ha llegado");
+  await pulsa(dato(avisoCarla, "Sí, me ha llegado"), avisoCarla.message_id);
+  await esperarHasta(() => mcApi.envios.length >= 4);
   const evCarla = g.eventos.get(`kira${resCarla().id.replace(/-/g, "")}`);
-  const avisoCarla = tg.enviados.slice(n5).find((m) => m.text.includes("No me ha llegado nada") || botones(m).includes("❌ No me ha llegado nada"));
-  check("O14. «confirmado» → cita en morado con la invitación, Kira lo confirma a la clienta y Blake recibe el aviso con el botón de revertir", resCarla().status === "pagada" && resCarla().client_phase === "confirmada" && evCarla?.colorId === "3" && (mcApi.envios[2]?.cuerpo.data.content.messages[0].text ?? "").includes("¡Confirmado!") && Boolean(avisoCarla));
+  check("O14b. «Sí, me ha llegado» → morado, reserva pagada y la clienta recibe «¡Confirmado!» por Instagram", resCarla().status === "pagada" && resCarla().client_phase === "confirmada" && evCarla?.colorId === "3" && (mcApi.envios[3]?.cuerpo.data.content.messages[0].text ?? "").includes("¡Confirmado!"));
 
   const enviosAntesDesconocido = mcApi.envios.length;
   const desconocido = await respuestaIg({ id: "mc-9999", texto: "hola" });

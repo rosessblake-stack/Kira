@@ -37,6 +37,7 @@ import {
   parsearEdicion,
   specDesdeClasificacion,
   textoPropuesta,
+  resumenCortoPropuesta,
   contextoDe,
   horarioDeSpec,
   type Cambio,
@@ -76,7 +77,7 @@ export type Reserva = {
   /** Evento de Google Calendar de esta reserva (lo guarda Kira al aprobar: solo se borran eventos con este id). */
   calendar_event_id?: string | null;
   /** En qué punto de la conversación con la clienta está (lib/cliente-flow.ts). */
-  client_phase?: "precio_enviado" | "pago_pedido" | "confirmada" | "cerrada" | null;
+  client_phase?: "precio_enviado" | "pago_pedido" | "pago_declarado" | "liberada" | "confirmada" | "cerrada" | null;
   /** Plazo de la fase actual (si vence, el temporizador cierra la reserva). */
   payment_deadline?: string | null;
   approved_by_telegram_user: number | null;
@@ -163,7 +164,8 @@ export interface FlowDeps {
   logEvent(e: { source: Fuente; kind: string; level?: "info" | "warn" | "error"; summary: string; detail?: Record<string, unknown>; conversation_id?: string | null; booking_id?: string | null }): Promise<void>;
   logSecurity(e: { kind: "posible_inyeccion" | "limite_de_peticiones"; source: string; conversation_id?: string | null; detail?: Record<string, unknown> }): Promise<void>;
 
-  enviar(chatId: number, texto: string, markup?: unknown, opts?: { noPreview?: boolean }): Promise<number | null>;
+  /** `plegable`: resumen de la primera línea (lo que enseña la notificación); el texto entero va plegado debajo. */
+  enviar(chatId: number, texto: string, markup?: unknown, opts?: { noPreview?: boolean; plegable?: string }): Promise<number | null>;
   editar(chatId: number, messageId: number, texto: string): Promise<void>;
   responderCallback(callbackId: string, texto?: string): Promise<void>;
 }
@@ -401,7 +403,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const texto = `${prefijo}${textoPropuesta(prop, spec, { mensajeCliente: spec.mensaje_cliente, esPrueba: actualizada.is_test, perfil, fotos, agenda })}`;
     let id: number | null;
     try {
-      id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada) && prop.faltan.length === 0));
+      id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada) && prop.faltan.length === 0), { plegable: resumenCortoPropuesta(prop, spec, actualizada.is_test) });
     } catch (e) {
       // El mensaje no llegó: el botón no existe, así que su nonce no puede quedar vivo (si no, /pendientes no vería la propuesta).
       await deps.actualizarReserva(r.id, { proposal_nonce: null }).catch(() => undefined);
@@ -654,7 +656,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     }
     let id: number | null;
     try {
-      id = await deps.enviar(chatId, textoTg, teclado(nonce, aprobable(reserva) && prop.faltan.length === 0));
+      id = await deps.enviar(chatId, textoTg, teclado(nonce, aprobable(reserva) && prop.faltan.length === 0), { plegable: resumenCortoPropuesta(prop, spec, !real) });
     } catch (e) {
       await deps.actualizarReserva(reserva.id, { proposal_nonce: null }).catch(() => undefined);
       throw e;
@@ -845,7 +847,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       : "";
     const siguiente = deps.cliente
       ? [
-          `Le mando el precio a la clienta. Si dice «vale», le pido el Bizum y, cuando escriba «confirmado», la cita pasa a morado${email} y te aviso para que mires tu Bizum (con un botón para revertirlo).`,
+          `Le mando el precio a la clienta. Si dice «vale», le pido el Bizum y, cuando escriba «confirmado», te pregunto con dos botones si te ha llegado: con «✅ Sí, me ha llegado» la cita pasa a morado${email}; con «❌ No me ha llegado» borro el evento y libero el hueco (y si ella dice «hecho», lo vuelvo a reservar y te pregunto otra vez).`,
           "Si no responde al precio en 20 h, o dice «vale» y no paga en 45 min, borro el evento y libero el hueco.",
           "Tú puedes adelantarte: «Señal recibida» la da por pagada y «Cancelar cita» borra el evento.",
         ]

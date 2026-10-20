@@ -90,6 +90,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       async alCancelarBlake() {},
       async respuestaClienta() {},
       async respuestaEnPrueba(chatId, texto) { calls.client.push({ k: "clienta", chatId, texto }); },
+      async botonNoLlego(b) { calls.client.push({ k: "nollego", nonce: b.nonce }); },
       async botonRevertir(b) { calls.client.push({ k: "revertir", chatId: b.chatId, nonce: b.nonce }); },
       async procesarVencidas() { return { cerradas: 0 }; },
       async vencerYa(chatId) { calls.client.push({ k: "vencer", chatId }); },

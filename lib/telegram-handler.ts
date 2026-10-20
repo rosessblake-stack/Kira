@@ -102,7 +102,7 @@ type TgUpdate = { update_id?: number; message?: TgMessage; callback_query?: TgCa
 const CALLBACK_RE = /^t:([0-9a-f]{32}):(ok|ed|no)$/;
 const PROPOSAL_CB_RE = /^p:([0-9a-f]{32}):(ok|ed|no)$/;
 /** Botones de una cita con reserva provisional en el calendario: señal recibida / cancelar. */
-const CITA_CB_RE = /^c:([0-9a-f]{32}):(pay|del|rev)$/;
+const CITA_CB_RE = /^c:([0-9a-f]{32}):(pay|del|rev|nop)$/;
 
 const LABELS: Record<string, string> = {
   ok: "✅ Aprobado",
@@ -401,6 +401,7 @@ async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {
       nonce: cita[1],
     };
     if (cita[2] === "rev") await deps.client.botonRevertir(comun);
+    else if (cita[2] === "nop") await deps.client.botonNoLlego(comun);
     else await deps.proposals.botonCita({ ...comun, accion: cita[2] as "pay" | "del" });
     return;
   }

@@ -51,6 +51,7 @@ const CONFIRMA = new Set([
   "pagado", "pagada", "ya pague", "ya he pagado", "ya esta pagado", "ya esta pagada",
   "bizum hecho", "bizum enviado", "bizum realizado", "enviado", "enviada", "ya lo envie", "ya lo he enviado", "ya lo mande", "ya lo he mandado",
   "listo", "lista", "done", "paid", "confirmed",
+  "ya lo tengo", "lo tengo", "ya lo tengo hecho", "lo tengo hecho", "ya esta el bizum", "ya hice el bizum", "ya lo pague", "ya lo he pagado", "ya pago", "hecho ya",
 ]);
 
 /** Solo un pulgar o similar, sin palabras. */
@@ -112,7 +113,12 @@ export function textoLiberada(): string {
   return "No he recibido la señal a tiempo, así que he liberado el hueco. Si sigues interesada, escríbeme y lo vemos 😊";
 }
 
-/** Blake revirtió una confirmación porque el Bizum no le llegó. */
+/** La clienta dijo que ya hizo el Bizum: Kira se lo dice a Blake para que mire su banco, y a ella le avisa de que se comprueba. */
+export function textoPagoRecibido(): string {
+  return "¡Gracias! Lo compruebo y te confirmo en un momento 😊";
+}
+
+/** Blake dijo que el Bizum no le llegó: se libera el hueco, pero ella puede avisar si ya lo hizo. */
 export function textoRevertida(): string {
   return "Todavía no me consta el Bizum, así que he tenido que liberar el hueco. Si ya lo hiciste, escríbeme y lo reviso enseguida 😊";
 }

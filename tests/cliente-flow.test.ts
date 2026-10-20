@@ -21,6 +21,10 @@ type Opciones = {
   sinEvento?: boolean;
   email?: string | null;
   esPrueba?: boolean;
+  /** Eventos que ya hay en la agenda de Blake (para probar que el hueco se ocupó mientras tanto). */
+  agenda?: import("../lib/agenda-eventos").EventoAgenda[];
+  fallaCrear?: boolean;
+  fallaReservarHueco?: boolean;
 };
 
 function mundo(op: Opciones = {}) {
@@ -35,7 +39,7 @@ function mundo(op: Opciones = {}) {
     id: "res-1", conversation_id: "conv-1", client_name: "Michael", client_email: op.email === undefined ? "michal@gmail.com" : op.email,
     service_description: "6 Trenzas · pegadas", price_cents: 6000, deposit_cents: 2000, duration_minutes: 150,
     starts_at: "2026-10-24T10:00:00.000Z", ends_at: "2026-10-24T12:30:00.000Z", status: "pendiente_pago",
-    spec: { nombre: "Michael", ubicacion: op.ubicacion ?? "espana", direccion: "Carrer de la Duquessa de la Victòria, 16" },
+    spec: { nombre: "Michael", ubicacion: op.ubicacion ?? "espana", direccion: "Carrer de la Duquessa de la Victòria, 16", servicio: { tipo_trenzado: "pegadas", numero_trenzas: 6, tamano: null, estilo_pegadas: "cornrows", extensiones: "sin", boho: null, largo_cabello: null, largo_extensiones: null }, color_extensiones: null, instagram: null },
     pricing: {}, warnings: [], reply_draft: op.draft === undefined ? DRAFT : op.draft, proposal_nonce: null, telegram_message_id: null,
     edit_requested_at: null, is_test: op.esPrueba ?? true, calendar_event_id: op.sinEvento ? null : "kirares1", client_phase: null, payment_deadline: null,
     approved_by_telegram_user: ADMIN, approved_at: T0,
@@ -54,6 +58,10 @@ function mundo(op: Opciones = {}) {
     seguridad: [] as { kind: string }[],
     pagados: [] as { id: string; email: string | null; esPrueba: boolean }[],
     borrados: [] as { id: string; avisar: boolean }[],
+    creados: [] as string[],
+    fallaCrear: op.fallaCrear ?? false,
+    fallaReservarHueco: op.fallaReservarHueco ?? false,
+    eventosAgenda: op.agenda ?? ([] as import("../lib/agenda-eventos").EventoAgenda[]),
     registrosRetirados: [] as string[],
     marcados: 0,
     conversacionEstado: "" as string,
@@ -69,8 +77,11 @@ function mundo(op: Opciones = {}) {
     newNonce: () => (++nonceN).toString(16).padStart(32, "0"),
     agenda: {
       async estado() { return { conectado: true, cuenta: "info@blakebraider.com" }; },
-      async eventosEntre() { return []; },
-      async crearProvisional() {},
+      async eventosEntre() { return structuredClone(w.eventosAgenda); },
+      async crearProvisional(e) {
+        if (w.fallaCrear) throw new GoogleError("Google no responde");
+        w.creados.push(e.id);
+      },
       async pasarAPagada(id, _b, o) {
         if (w.fallaPagar) throw new GoogleError("Google no responde");
         w.pagados.push({ id, email: o.email, esPrueba: o.esPrueba });
@@ -115,17 +126,18 @@ function mundo(op: Opciones = {}) {
     async guardarBizum(n) { bizum = n; },
     async avanzarFase(_id, de, parche) {
       if (!de.includes((reserva.client_phase ?? null) as Fase | null)) return null;
+      if (w.fallaReservarHueco && parche.status === "pendiente_pago") throw new Error('conflicting key value violates exclusion constraint "bookings_no_overlap"');
       Object.assign(reserva, parche);
       return structuredClone(reserva);
     },
     async reservaActivaDe() {
-      return reserva.status === "pendiente_pago" && (reserva.client_phase === "precio_enviado" || reserva.client_phase === "pago_pedido") ? structuredClone(reserva) : null;
+      return (reserva.status === "pendiente_pago" || reserva.status === "cancelada") && ["precio_enviado", "pago_pedido", "pago_declarado", "liberada"].includes(reserva.client_phase ?? "") ? structuredClone(reserva) : null;
     },
     async reservaDePruebaActiva() {
-      return reserva.is_test && reserva.status === "pendiente_pago" && (reserva.client_phase === "precio_enviado" || reserva.client_phase === "pago_pedido") ? structuredClone(reserva) : null;
+      return reserva.is_test && (reserva.status === "pendiente_pago" || reserva.status === "cancelada") && ["precio_enviado", "pago_pedido", "pago_declarado", "liberada"].includes(reserva.client_phase ?? "") ? structuredClone(reserva) : null;
     },
     async vencidas(ahora) {
-      return (reserva.client_phase === "precio_enviado" || reserva.client_phase === "pago_pedido") && reserva.payment_deadline && Date.parse(reserva.payment_deadline) <= ahora.getTime() ? [structuredClone(reserva)] : [];
+      return ["precio_enviado", "pago_pedido", "liberada"].includes(reserva.client_phase ?? "") && reserva.payment_deadline && Date.parse(reserva.payment_deadline) <= ahora.getTime() ? [structuredClone(reserva)] : [];
     },
   };
   const flujo = crearFlujoCliente(deps);
@@ -244,114 +256,221 @@ describe("«vale» → se le pide el Bizum", () => {
   });
 });
 
-describe("«confirmado» → morado + invitación, con aviso y botón para revertir (opción C)", () => {
-  it("confirma al momento, avisa a Blake con su botón y le dice a la clienta que está confirmada", async () => {
-    const m = await conBizumPedido({ esPrueba: false });
-    await m.flujo.respuestaClienta("conv-1", "confirmado");
+/** … y la clienta dijo «confirmado»: Kira le pregunta a Blake (no confirma nada). */
+async function conPagoDeclarado(op: Opciones = {}) {
+  const m = await conBizumPedido(op);
+  await m.flujo.respuestaClienta("conv-1", "confirmado");
+  return m;
+}
+const botonesDe = (m: { w: { enviados: { markup?: any }[] } }) => m.w.enviados.at(-1)!.markup.inline_keyboard[0] as { text: string; callback_data: string }[];
+const pulsar = (m: Awaited<ReturnType<typeof conPagoDeclarado>>, accion: "pay" | "nop", nonce = m.w.reserva.proposal_nonce!) =>
+  accion === "nop" ? m.flujo.botonNoLlego({ callbackId: "cb1", chatId: ADMIN, messageId: 7, fromId: ADMIN, nonce }) : m.flujo.alConfirmarBlake(structuredClone(m.w.reserva), true);
 
-    expect(m.w.pagados).toEqual([{ id: "kirares1", email: "michal@gmail.com", esPrueba: false }]);
-    expect(m.w.reserva).toMatchObject({ status: "pagada", client_phase: "confirmada", payment_deadline: null });
-    expect(m.w.reserva.proposal_nonce).toMatch(/^[0-9a-f]{32}$/);
-    const aviso = m.w.enviados.at(-1)!; // el aviso a Blake (la confirmación a la clienta va por su canal)
-    expect(aviso.texto).toContain("ha escrito «confirmado»");
-    expect(aviso.texto).toContain("Mira tu Bizum");
-    expect(aviso.texto).toContain("invitación enviada a michal@gmail.com");
-    expect(aviso.markup.inline_keyboard[0][0]).toEqual({ text: "❌ No me ha llegado nada", callback_data: `c:${m.w.reserva.proposal_nonce}:rev` });
-    expect(m.w.paraClienta.at(-1)).toContain("¡Confirmado!");
-    expect(m.tipos()).toContain("senal_confirmada_por_clienta");
+describe("«confirmado» → Kira NO confirma: le pregunta a Blake con dos botones", () => {
+  it("avisa a Blake con «Sí, me ha llegado» / «No me ha llegado», a la clienta le dice que lo comprueba, y NO toca el calendario", async () => {
+    const m = await conPagoDeclarado({ esPrueba: false });
+    expect(m.w.pagados).toEqual([]);
+    expect(m.w.reserva).toMatchObject({ status: "pendiente_pago", client_phase: "pago_declarado", payment_deadline: null });
+    const aviso = m.w.enviados.at(-1)!;
+    expect(aviso.texto).toContain("dice que ya ha hecho el Bizum");
+    expect(aviso.texto).toContain("Mira tu banco");
+    const nonce = m.w.reserva.proposal_nonce!;
+    expect(nonce).toMatch(/^[0-9a-f]{32}$/);
+    expect(botonesDe(m)).toEqual([
+      { text: "✅ Sí, me ha llegado", callback_data: `c:${nonce}:pay` },
+      { text: "❌ No me ha llegado", callback_data: `c:${nonce}:nop` },
+    ]);
+    expect(m.w.paraClienta.at(-1)).toBe("¡Gracias! Lo compruebo y te confirmo en un momento 😊");
+    expect(m.w.paraClienta.some((t) => t.includes("¡Confirmado!"))).toBe(false);
+    expect(m.tipos()).toContain("pago_declarado_por_clienta");
   });
 
-  it("«no he confirmado todavía» o «¿está confirmado?» NO confirman nada", async () => {
+  it("«no he confirmado todavía» o «¿está confirmado?» no cuentan", async () => {
     for (const t of ["no he confirmado todavía", "¿está confirmado?", "ya lo haré", "ok"]) {
       const m = await conBizumPedido();
       await m.flujo.respuestaClienta("conv-1", t);
-      expect(m.w.pagados, t).toEqual([]);
-      expect(m.w.reserva.status, t).toBe("pendiente_pago");
       expect(m.w.reserva.client_phase, t).toBe("pago_pedido");
     }
   });
 
-  it("dos «confirmado» seguidos confirman UNA sola vez", async () => {
+  it("dos «confirmado» seguidos preguntan UNA sola vez a Blake", async () => {
     const m = await conBizumPedido();
     await m.flujo.respuestaClienta("conv-1", "confirmado");
+    const avisos = m.w.enviados.length;
     await m.flujo.respuestaClienta("conv-1", "confirmado");
-    expect(m.w.pagados).toHaveLength(1);
-    expect(m.w.paraClienta.filter((t) => t.includes("¡Confirmado!"))).toHaveLength(1);
+    await m.flujo.respuestaClienta("conv-1", "ya lo pagué");
+    expect(m.w.enviados).toHaveLength(avisos);
+    expect(m.tipos().filter((k) => k === "pago_declarado_por_clienta")).toHaveLength(1);
   });
 
-  it("si Google falla, no se confirma nada: vuelve a la espera con su plazo y Blake lo sabe", async () => {
-    const m = await conBizumPedido();
-    const plazo = m.w.reserva.payment_deadline;
-    m.w.fallaPagar = true;
-    await m.flujo.respuestaClienta("conv-1", "confirmado");
-    expect(m.w.reserva).toMatchObject({ status: "pendiente_pago", client_phase: "pago_pedido", payment_deadline: plazo });
-    expect(m.w.paraClienta.some((t) => t.includes("¡Confirmado!"))).toBe(false);
-    expect(m.avisos().at(-1)).toContain("no he podido pasar la cita a morado");
-    expect(m.avisos().at(-1)).toContain("Señal recibida");
+  it("mientras Blake lo comprueba, cualquier otra cosa que escriba se le reenvía a Blake sin contestar", async () => {
+    const m = await conPagoDeclarado();
+    const antes = m.w.paraClienta.length;
+    await m.flujo.respuestaClienta("conv-1", "¿cuánto tardas en mirarlo?");
+    expect(m.w.paraClienta).toHaveLength(antes);
+    expect(m.avisos().at(-1)).toContain("Blake está comprobando su Bizum");
   });
 
-  it("sin evento en el calendario, avisa a Blake y no confirma", async () => {
-    const m = await conBizumPedido({ sinEvento: true });
-    await m.flujo.respuestaClienta("conv-1", "confirmado");
-    expect(m.w.pagados).toEqual([]);
-    expect(m.w.reserva.status).toBe("pendiente_pago");
-    expect(m.avisos().at(-1)).toContain("no encuentro el evento");
-  });
-
-  it("un «confirmado» ANTES de pedirle el Bizum es un sí al precio (no confirma ningún pago)", async () => {
+  it("un «confirmado» ANTES de pedirle el Bizum es un sí al precio (no declara ningún pago)", async () => {
     const m = await conPrecioEnviado();
     await m.flujo.respuestaClienta("conv-1", "confirmado");
-    expect(m.w.pagados).toEqual([]);
     expect(m.w.reserva).toMatchObject({ status: "pendiente_pago", client_phase: "pago_pedido" });
+  });
+
+  it("si no se pueden mandar los botones, Blake lo sabe y puede usar /pendientes", async () => {
+    const m = await conBizumPedido();
+    const original = m.deps.enviar;
+    m.deps.enviar = async (c, t, markup) => {
+      if (markup) throw new Error("Telegram sendMessage: Bad Gateway");
+      return original(c, t, markup);
+    };
+    await m.flujo.respuestaClienta("conv-1", "confirmado");
+    expect(m.avisos().at(-1)).toContain("no he podido ofrecerte los botones");
+    expect(m.w.reserva.proposal_nonce).toBeNull();
   });
 });
 
-describe("el botón «No me ha llegado nada»", () => {
-  async function confirmada() {
-    const m = await conBizumPedido({ esPrueba: false });
-    await m.flujo.respuestaClienta("conv-1", "confirmado");
-    return m;
-  }
-  const boton = (m: Awaited<ReturnType<typeof confirmada>>, nonce = m.w.reserva.proposal_nonce!) =>
-    m.flujo.botonRevertir({ callbackId: "cb1", chatId: ADMIN, messageId: 7, fromId: ADMIN, nonce });
+describe("«✅ Sí, me ha llegado» (el botón de siempre: Señal recibida)", () => {
+  it("al confirmar Blake, la fase pasa a confirmada y la clienta recibe «¡Confirmado!»", async () => {
+    const m = await conPagoDeclarado({ esPrueba: false });
+    await pulsar(m, "pay");
+    expect(m.w.reserva.client_phase).toBe("confirmada");
+    expect(m.w.paraClienta.at(-1)).toContain("¡Confirmado!");
+  });
+});
 
-  it("borra el evento AVISANDO a la clienta, cancela la reserva, cierra la conversación y le escribe", async () => {
-    const m = await confirmada();
-    await boton(m);
-    expect(m.w.borrados).toEqual([{ id: "kirares1", avisar: true }]);
-    expect(m.w.reserva).toMatchObject({ status: "cancelada", client_phase: "cerrada", payment_deadline: null });
-    expect(m.w.conversacionEstado).toBe("cerrada");
-    expect(m.w.registrosRetirados).toEqual(["res-1"]);
-    expect(m.w.editados.at(-1)).toContain("REVERTIDA");
+describe("«❌ No me ha llegado»: se borra el evento, se libera el hueco y se le dice a la clienta", () => {
+  it("borra el evento, deja la reserva liberada (con plazo), edita el mensaje de Blake y le escribe a la clienta", async () => {
+    const m = await conPagoDeclarado({ esPrueba: false });
+    await pulsar(m, "nop");
+    expect(m.w.borrados).toEqual([{ id: "kirares1", avisar: false }]);
+    expect(m.w.reserva).toMatchObject({ status: "cancelada", client_phase: "liberada", proposal_nonce: null });
+    expect(Date.parse(m.w.reserva.payment_deadline!)).toBe(m.w.ahora().getTime() + 20 * 3_600_000);
+    expect(m.w.editados.at(-1)).toContain("NO LLEGÓ");
     expect(m.w.paraClienta.at(-1)).toContain("Todavía no me consta el Bizum");
-    expect(m.tipos()).toContain("confirmacion_revertida_por_blake");
+    expect(m.w.paraClienta.at(-1)).toContain("liberar el hueco");
+    expect(m.w.conversacionEstado).not.toBe("cerrada"); // la conversación sigue abierta por si ella escribe «hecho»
+    expect(m.tipos()).toContain("bizum_no_llego");
   });
 
   it("es de un solo uso", async () => {
-    const m = await confirmada();
+    const m = await conPagoDeclarado();
     const nonce = m.w.reserva.proposal_nonce!;
-    await boton(m, nonce);
-    await boton(m, nonce);
+    await pulsar(m, "nop", nonce);
+    await pulsar(m, "nop", nonce);
     expect(m.w.borrados).toHaveLength(1);
     expect(m.w.respuestas.at(-1)?.texto).toBe("Ya procesado");
   });
 
-  it("un botón inventado o de otra reserva no hace nada", async () => {
-    const m = await confirmada();
-    await boton(m, "f".repeat(32));
+  it("un botón inventado no hace nada", async () => {
+    const m = await conPagoDeclarado();
+    await pulsar(m, "nop", "f".repeat(32));
     expect(m.w.borrados).toEqual([]);
-    expect(m.w.reserva.status).toBe("pagada");
+    expect(m.w.reserva.client_phase).toBe("pago_declarado");
   });
 
-  it("si Google falla al borrar, no cancela y le vuelve a ofrecer el botón", async () => {
-    const m = await confirmada();
+  it("si Google falla al borrar, no libera nada y le vuelve a ofrecer los dos botones", async () => {
+    const m = await conPagoDeclarado();
     m.w.fallaBorrar = true;
-    await boton(m);
-    expect(m.w.reserva).toMatchObject({ status: "pagada", client_phase: "confirmada" });
-    expect(m.w.enviados.at(-1)!.markup.inline_keyboard[0][0].callback_data).toBe(`c:${m.w.reserva.proposal_nonce}:rev`);
+    await pulsar(m, "nop");
+    expect(m.w.reserva).toMatchObject({ status: "pendiente_pago", client_phase: "pago_declarado" });
+    expect(botonesDe(m).map((b) => b.text)).toEqual(["✅ Sí, me ha llegado", "❌ No me ha llegado"]);
     m.w.fallaBorrar = false;
-    await boton(m);
-    expect(m.w.reserva.status).toBe("cancelada");
+    await pulsar(m, "nop");
+    expect(m.w.reserva.client_phase).toBe("liberada");
+  });
+});
+
+describe("tras liberar el hueco: si ella escribe «hecho», se vuelve a reservar y se pregunta otra vez (sin hacer la cita a mano)", () => {
+  async function liberada(op: Opciones = {}) {
+    const m = await conPagoDeclarado({ esPrueba: false, ...op });
+    await pulsar(m, "nop");
+    m.w.enviados.length = 0;
+    m.w.paraClienta.length = 0;
+    m.w.creados.length = 0;
+    return m;
+  }
+
+  it("«hecho» → reserva el hueco otra vez (amarillo), pregunta a Blake con los dos botones y le dice a la clienta que lo comprueba", async () => {
+    const m = await liberada();
+    await m.flujo.respuestaClienta("conv-1", "Hecho");
+    expect(m.w.reserva).toMatchObject({ status: "pendiente_pago", client_phase: "pago_declarado", payment_deadline: null });
+    // Un evento NUEVO con su propio identificador (el borrado conserva el suyo en Google); es el que quedará guardado en la reserva.
+    expect(m.w.creados).toHaveLength(1);
+    expect(m.w.creados[0]).toMatch(/^kirares1[0-9a-f]{6}$/);
+    expect(m.w.reserva.calendar_event_id).toBe(m.w.creados[0]);
+    expect(m.avisos().at(-1)).toContain("dice que ya ha hecho el Bizum (te había marcado que no llegó)");
+    const nonce = m.w.reserva.proposal_nonce!;
+    expect(botonesDe(m).map((b) => b.callback_data)).toEqual([`c:${nonce}:pay`, `c:${nonce}:nop`]);
+    expect(m.w.paraClienta.at(-1)).toContain("Lo compruebo");
+    expect(m.tipos()).toContain("reserva_reabierta");
+  });
+
+  it("otras formas de decirlo: «ya lo tengo», «ya lo hice», «pagado», «confirmado»", async () => {
+    for (const t of ["ya lo tengo", "ya lo hice", "pagado", "confirmado", "Ya lo he hecho 👍"]) {
+      const m = await liberada();
+      await m.flujo.respuestaClienta("conv-1", t);
+      expect(m.w.reserva.client_phase, t).toBe("pago_declarado");
+    }
+  });
+
+  it("si Blake vuelve a decir «No me ha llegado», se vuelve a liberar (y puede repetirse)", async () => {
+    const m = await liberada();
+    await m.flujo.respuestaClienta("conv-1", "hecho");
+    await pulsar(m, "nop");
+    expect(m.w.reserva).toMatchObject({ status: "cancelada", client_phase: "liberada" });
+    expect(m.w.borrados).toHaveLength(2);
+  });
+
+  it("si el hueco ya lo ocupa otra cita en el calendario, NO reserva: avisa a Blake para que le escriba él", async () => {
+    const m = await liberada();
+    m.w.eventosAgenda = [{ id: "otro", titulo: "Trenzas Ana", inicio: new Date("2026-10-24T10:30:00.000Z"), fin: new Date("2026-10-24T13:00:00.000Z"), dias: null, libre: false, esDeKira: false, esPrueba: false, bookingId: null }];
+    await m.flujo.respuestaClienta("conv-1", "hecho");
+    expect(m.w.creados).toEqual([]);
+    expect(m.w.reserva).toMatchObject({ status: "cancelada", client_phase: "liberada" });
+    expect(m.avisos().at(-1)).toContain("su hueco ya no está libre");
+  });
+
+  it("si la base de datos rechaza el hueco (otra reserva lo ocupa), no reserva y avisa", async () => {
+    const m = await liberada();
+    m.w.fallaReservarHueco = true;
+    await m.flujo.respuestaClienta("conv-1", "hecho");
+    expect(m.w.creados).toEqual([]);
+    expect(m.w.reserva).toMatchObject({ status: "cancelada", client_phase: "liberada" });
+    expect(m.avisos().at(-1)).toContain("ya está ocupado por otra reserva");
+  });
+
+  it("si Google no deja crear el evento, deja todo como estaba (liberada) y avisa", async () => {
+    const m = await liberada();
+    m.w.fallaCrear = true;
+    await m.flujo.respuestaClienta("conv-1", "hecho");
+    expect(m.w.reserva).toMatchObject({ status: "cancelada", client_phase: "liberada" });
+    expect(m.avisos().at(-1)).toContain("no me ha dejado volver a crear la cita");
+  });
+
+  it("dos «hecho» seguidos reservan UNA sola vez", async () => {
+    const m = await liberada();
+    await m.flujo.respuestaClienta("conv-1", "hecho");
+    await m.flujo.respuestaClienta("conv-1", "hecho");
+    expect(m.w.creados).toHaveLength(1);
+  });
+
+  it("cualquier otra cosa (una pregunta) no reserva nada: se reenvía a Blake", async () => {
+    const m = await liberada();
+    await m.flujo.respuestaClienta("conv-1", "¿puedo pagar mañana?");
+    expect(m.w.creados).toEqual([]);
+    expect(m.w.reserva.client_phase).toBe("liberada");
+    expect(m.avisos().at(-1)).toContain("el hueco está liberado");
+  });
+
+  it("si en 20 h no vuelve a escribir, se cierra en silencio y la cita deja de contar para calibrar", async () => {
+    const m = await liberada();
+    m.w.avanza(20 * 60 + 1);
+    expect(await m.flujo.procesarVencidas()).toEqual({ cerradas: 0 });
+    expect(m.w.reserva.client_phase).toBe("cerrada");
+    expect(m.w.conversacionEstado).toBe("cerrada");
+    expect(m.w.registrosRetirados).toEqual(["res-1"]);
+    expect(m.w.paraClienta).toEqual([]);
   });
 });
 
@@ -410,12 +529,18 @@ describe("plazos: el temporizador", () => {
     expect(m.w.reserva.status).toBe("expirada");
   });
 
-  it("una cita ya confirmada no caduca nunca", async () => {
-    const m = await conBizumPedido();
-    await m.flujo.respuestaClienta("conv-1", "confirmado");
+  it("mientras Blake comprueba el Bizum la reserva no caduca: decide él, no el reloj", async () => {
+    const m = await conPagoDeclarado();
     m.w.avanza(60 * 24 * 7);
     expect(await m.flujo.procesarVencidas()).toEqual({ cerradas: 0 });
-    expect(m.w.reserva.status).toBe("pagada");
+    expect(m.w.reserva).toMatchObject({ status: "pendiente_pago", client_phase: "pago_declarado" });
+  });
+
+  it("una cita ya confirmada por Blake no caduca nunca", async () => {
+    const m = await conPagoDeclarado();
+    await pulsar(m, "pay");
+    m.w.avanza(60 * 24 * 7);
+    expect(await m.flujo.procesarVencidas()).toEqual({ cerradas: 0 });
   });
 
   it("/vencer adelanta el plazo de la última prueba y lo cierra al momento", async () => {

@@ -334,6 +334,19 @@ function componerBorrador(
 
 const recorte = (t: string, n: number) => (t.length <= n ? t : `${t.slice(0, n - 1)}…`);
 
+/**
+ * La primera línea del mensaje de la propuesta: lo que se ve en la notificación del móvil («Lucía · vie 30 oct, 12:00 · 6 trenzas · 70 €»).
+ * El detalle completo va debajo, plegado.
+ */
+export function resumenCortoPropuesta(p: Propuesta, spec: SpecGuardada, esPrueba: boolean): string {
+  const lugar = contextoDe(spec);
+  const icono = esPrueba ? "🧪" : spec.origen === "instagram" ? "📥" : "💬";
+  const cuando = p.inicio ? fechaLarga(p.inicio, lugar.zonaHoraria) : "sin fecha";
+  const precio = p.precioCentimos !== null ? dinero(p.precioCentimos, lugar.moneda) : "sin precio";
+  const nota = p.faltan.length ? " · ⛔ falta algo" : p.avisos.length ? ` · ⚠️ ${p.avisos.length}` : "";
+  return `${icono} ${limpiarTexto(p.nombreCliente || "Clienta", 40)} quiere cita · ${cuando} · ${limpiarTexto(p.descripcion, 60)} · ${precio}${nota}`;
+}
+
 export function textoPropuesta(
   p: Propuesta,
   spec: SpecGuardada,

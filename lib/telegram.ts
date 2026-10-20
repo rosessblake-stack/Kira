@@ -1,3 +1,5 @@
+import { formatoPlegable } from "./telegram-formato";
+
 /**
  * Cliente mínimo de la API de Telegram.
  * Los errores nunca incluyen la URL (contiene el token del bot).
@@ -50,11 +52,14 @@ export async function sendMessage(
   chatId: number,
   text: string,
   replyMarkup?: unknown,
-  opts?: { noPreview?: boolean },
+  opts?: { noPreview?: boolean; plegable?: string },
 ): Promise<number | null> {
+  // `plegable` = el resumen de la primera línea; el texto entero va plegado debajo (lib/telegram-formato.ts).
+  const html = opts?.plegable ? formatoPlegable(opts.plegable, text) : null;
   const enviado = await tgCall<{ message_id?: number }>("sendMessage", {
     chat_id: chatId,
-    text,
+    text: html ?? text,
+    ...(html ? { parse_mode: "HTML" } : {}),
     ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     // Sin vista previa: así nada abre el enlace por su cuenta antes que Blake.
     ...(opts?.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
@@ -145,17 +150,17 @@ async function tgMultipart(method: string, campos: Record<string, string>, archi
 const PIE_MAX = 1000; // Telegram admite 1024 caracteres en el pie de una foto
 
 /** Una foto, o un álbum si son varias (Telegram admite de 2 a 10 por álbum). Los pies son texto plano. */
-export async function sendPhotos(chatId: number, fotos: FotoParaEnviar[]): Promise<void> {
+export async function sendPhotos(chatId: number, fotos: FotoParaEnviar[], opts?: { silent?: boolean }): Promise<void> {
   if (fotos.length === 0) return;
   if (fotos.length === 1) {
-    await tgMultipart("sendPhoto", { chat_id: String(chatId), caption: fotos[0].pie.slice(0, PIE_MAX) }, [{ campo: "photo", foto: fotos[0] }]);
+    await tgMultipart("sendPhoto", { chat_id: String(chatId), caption: fotos[0].pie.slice(0, PIE_MAX), ...(opts?.silent ? { disable_notification: "true" } : {}) }, [{ campo: "photo", foto: fotos[0] }]);
     return;
   }
   const lote = fotos.slice(0, 10);
   const media = lote.map((f, i) => ({ type: "photo", media: `attach://f${i}`, caption: f.pie.slice(0, PIE_MAX) }));
   await tgMultipart(
     "sendMediaGroup",
-    { chat_id: String(chatId), media: JSON.stringify(media) },
+    { chat_id: String(chatId), media: JSON.stringify(media), ...(opts?.silent ? { disable_notification: "true" } : {}) },
     lote.map((foto, i) => ({ campo: `f${i}`, foto })),
   );
 }

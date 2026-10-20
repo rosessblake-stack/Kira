@@ -30,6 +30,8 @@ export type SolicitudManychat = {
   fechaTexto: string | null;
   /** Mensaje único que se manda a clasificar. */
   texto: string;
+  /** Nombres (nunca valores) de los campos que llegaron con algo escrito: para saber qué falta cuando algo no cuadra. */
+  claves?: string[];
 };
 
 export type ResultadoEntrada = { ok: true; solicitud: SolicitudManychat } | { ok: false; motivo: string };
@@ -161,7 +163,14 @@ export function leerSolicitud(raw: unknown): ResultadoEntrada {
     largo: texto(primero(m, ["largotrenzas", "largo"]), 60),
     fechaTexto: texto(primero(m, ["fechatexto"]), 200),
   };
-  return { ok: true, solicitud: { ...base, texto: componerMensaje(base) } };
+  const claves = [...m.entries()]
+    .filter(([, v]) => {
+      const t = limpiarTexto(v, 50);
+      return t && !/^\{\{.*\}\}$/.test(t);
+    })
+    .map(([k]) => k.slice(0, 40))
+    .slice(0, 40);
+  return { ok: true, solicitud: { ...base, texto: componerMensaje(base), claves } };
 }
 
 // ---------------------------------------------------------------------------

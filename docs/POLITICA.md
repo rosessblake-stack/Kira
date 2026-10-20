@@ -49,7 +49,8 @@ Después de que apruebes el precio, Kira lleva sola este tramo, SIEMPRE con plan
 
 1. **Aprobar** → le manda el precio (el borrador que viste) y reserva el hueco en **amarillo**.
 2. **«vale»/«ok»/«👍»** → le pide la señal: Bizum de 20 € al 662018425 (se descuentan del total; el resto, en efectivo) y que escriba «confirmado». Plazo: 45 min.
-3. **«confirmado»** → cita en **morado** + invitación al email, y te avisa AL MOMENTO con el botón «❌ No me ha llegado nada» para revertirlo (opción C).
+3. **«confirmado»** → **no se confirma nada** (cambio de Blake, 20-oct): a la clienta se le dice «Lo compruebo y te confirmo» y a ti te llega un mensaje con dos botones: **«✅ Sí, me ha llegado»** (cita en **morado** + invitación al email + confirmación a la clienta) y **«❌ No me ha llegado»** (se borra el evento, se libera el hueco y se le dice «Todavía no me consta el Bizum…»).
+4. Si después ella escribe **«hecho» / «ya lo tengo» / «ya lo pagué»**, Kira vuelve a reservar el hueco (si sigue libre; con un evento nuevo) y te pregunta otra vez con los dos botones, sin que crees la cita a mano. Si el hueco ya lo ocupa otra cita, te avisa para que le escribas tú. Si en 20 h no vuelve a escribir, se cierra en silencio.
 4. **Sin respuesta al precio en 20 h** → cierra el chat en silencio y libera el hueco. **«vale» sin pago en 45 min** → libera el hueco y se lo dice.
 
 Todo lo demás que escriba la clienta (preguntas, regateos, dudas) se te reenvía y Kira no contesta. Si han pasado más de 24 h desde su último mensaje, Instagram no deja escribirle: Kira te avisa en vez de enviar. Clientas de Miami: aún no hay cobro (Stripe pendiente), te avisa para que se lo digas tú.

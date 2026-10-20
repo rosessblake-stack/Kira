@@ -26,9 +26,10 @@ export interface EntradaPort {
 const msg = (e: unknown) => (e instanceof Error ? e.message : "error desconocido");
 
 export function crearEntradaManychat(deps: EntradaDeps): EntradaPort {
-  async function traerFoto(convId: string, tipo: "pelo" | "referencia", url: string | null) {
+  async function traerFoto(convId: string, tipo: "pelo" | "referencia", url: string | null, claves?: string[]) {
     if (!url) {
-      await deps.logEvent({ kind: "foto_ausente", level: "warn", summary: `La solicitud no trae foto de ${tipo === "pelo" ? "pelo" : "referencia"}`, conversation_id: convId });
+      // Se anotan los NOMBRES de los campos que sí llegaron: así se ve si ManyChat mandó el campo de la foto vacío o con otro nombre.
+      await deps.logEvent({ kind: "foto_ausente", level: "warn", summary: `La solicitud no trae foto de ${tipo === "pelo" ? "pelo" : "referencia"}`, detail: { campos_recibidos: claves ?? [] }, conversation_id: convId });
       return;
     }
     const d = await deps.descargar(url);
@@ -44,7 +45,7 @@ export function crearEntradaManychat(deps: EntradaDeps): EntradaPort {
     try {
       await deps.proposals.recibirSolicitud(deps.chatIdAdmin, s, async (convId) => {
         // Las dos fotos a la vez; un fallo con una no impide la propuesta (queda en Fallos y la propuesta avisa de que falta).
-        await Promise.all([traerFoto(convId, "referencia", s.fotoReferenciaUrl), traerFoto(convId, "pelo", s.fotoPeloUrl)]);
+        await Promise.all([traerFoto(convId, "referencia", s.fotoReferenciaUrl, s.claves), traerFoto(convId, "pelo", s.fotoPeloUrl, s.claves)]);
       });
     } catch (e) {
       await deps.logEvent({ kind: "solicitud_fallo", level: "error", summary: msg(e) });

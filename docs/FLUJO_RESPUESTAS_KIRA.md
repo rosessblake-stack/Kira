@@ -11,8 +11,10 @@ Con esto, la clienta recibe el precio, dice «vale», recibe el Bizum, escribe �
 | 4 | Clienta | Responde «vale» (u «ok», «sí», 👍…) |
 | 5 | **Kira** | Le manda el Bizum de 20 € al número que tú has guardado y le dice que escriba «confirmado» (45 min) |
 | 6 | Clienta | Hace el Bizum y escribe «confirmado» |
-| 7 | **Kira** | Cita en 💜 morado + invitación al email, se lo confirma a la clienta y **te avisa con el botón «❌ No me ha llegado nada»** |
-| 8 | **Tú** | Compruebas el Bizum. Si no llegó, pulsas el botón y se deshace |
+| 7 | **Kira** | A la clienta: «Lo compruebo y te confirmo». **A ti: dos botones**, «✅ Sí, me ha llegado» y «❌ No me ha llegado». **No confirma nada sola** |
+| 8a | **Tú** | Miras tu banco. **«Sí, me ha llegado»** → cita en 💜 morado + invitación + «¡Confirmado!» a la clienta |
+| 8b | **Tú** | **«No me ha llegado»** → Kira borra el evento, libera el hueco y le dice «Todavía no me consta el Bizum…» |
+| 9 | Clienta | Si luego escribe «hecho» o «ya lo tengo», Kira vuelve a reservar su hueco y **te pregunta otra vez** con los dos botones (sin que crees la cita a mano). Si el hueco ya está ocupado, te avisa |
 
 Cualquier otra cosa que escriba la clienta (una pregunta, una duda) **no se contesta sola**: Kira te la reenvía a Telegram y le respondes tú.
 

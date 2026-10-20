@@ -101,7 +101,7 @@ function mundo(op: Opciones = {}) {
     reservas: new Map<string, Reserva>(),
     eventos: [] as { source: string; kind: string; level?: string; summary: string; conversation_id?: string | null; booking_id?: string | null; detail?: Record<string, unknown> }[],
     seguridad: [] as { kind: string; source: string; detail?: Record<string, unknown> }[],
-    enviados: [] as { chat: number; texto: string; markup?: any; id: number }[],
+    enviados: [] as { chat: number; texto: string; markup?: any; id: number; plegable?: string }[],
     editados: [] as { chat: number; id: number; texto: string }[],
     respuestas: [] as { id: string; texto?: string }[],
     llamadasClaude: 0,
@@ -258,10 +258,10 @@ function mundo(op: Opciones = {}) {
     },
     async logEvent(e) { w.eventos.push(e); },
     async logSecurity(e) { w.seguridad.push(e); },
-    async enviar(chat, texto, markup) {
+    async enviar(chat, texto, markup, opts) {
       if (op.fallaEnviar?.(markup)) throw new Error("Telegram sendMessage: Bad Gateway (502)");
       const id = 1000 + w.enviados.length + 1;
-      w.enviados.push({ chat, texto, markup, id });
+      w.enviados.push({ chat, texto, markup, id, plegable: opts?.plegable });
       return id;
     },
     async editar(chat, id, texto) {
@@ -2024,5 +2024,35 @@ describe("solicitud real de Instagram (ManyChat) en modo sombra", () => {
     const m = mundo({ ...conVision, claude: claudeInstagram, cliente: {} });
     await m.flujo.recibirSolicitud(CHAT, solicitud());
     expect(m.reserva().is_test).toBe(false);
+  });
+});
+
+
+describe("la propuesta llega plegada: resumen corto arriba (la notificación) y el detalle completo debajo", () => {
+  it("/simular manda el resumen con nombre, fecha, servicio y precio", async () => {
+    const m = mundo({ claude: () => Promise.resolve({ tipo: "ok", raw: salidaClaude({ nombre: "Raúl", tipo_trenzado: "pegadas", numero_trenzas: 6 }), entrada: 1, salida: 1 }) });
+    await m.flujo.simular(CHAT, MENSAJE);
+    const r = m.ultimo().plegable!;
+    expect(r).toContain("Raúl quiere cita");
+    expect(r).toContain("mar 20 oct");
+    expect(r).toContain("60,15 €");
+    expect(r.length).toBeLessThanOrEqual(200);
+    expect(r).not.toContain("\n");
+    // el texto completo sigue siendo el de siempre (el formato plegable lo aplica Telegram al enviarlo)
+    expect(m.ultimo().texto).toContain("PROPUESTA DE CITA");
+  });
+
+  it("si falta algo, el resumen lo dice sin abrir el mensaje", async () => {
+    const m = mundo();
+    await m.flujo.simular(CHAT, MENSAJE);
+    expect(m.ultimo().plegable).toContain("⛔ falta algo");
+  });
+
+  it("al editar, la propuesta nueva también va plegada", async () => {
+    const m = mundo();
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed");
+    await m.flujo.textoLibre(CHAT, "tipo pegadas");
+    expect(m.ultimo().plegable).toContain("quiere cita");
   });
 });

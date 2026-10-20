@@ -4,7 +4,11 @@ import type { Reserva } from "./proposal-flow";
 
 /** Persistencia de la conversación con la clienta sobre Supabase (solo servidor, clave service_role). */
 
-const FASES_ACTIVAS: Fase[] = ["precio_enviado", "pago_pedido"];
+/** Fases en las que la conversación sigue viva. «liberada» tiene la reserva cancelada (el hueco está libre) pero la clienta aún puede decir «hecho». */
+const FASES_ACTIVAS: Fase[] = ["precio_enviado", "pago_pedido", "pago_declarado", "liberada"];
+/** Fases con plazo propio que cierra el temporizador (en «pago_declarado» decide Blake). */
+const FASES_CON_PLAZO: Fase[] = ["precio_enviado", "pago_pedido", "liberada"];
+const ESTADOS_VIVOS = ["pendiente_pago", "cancelada"];
 const CLAVE_BIZUM = "bizum_numero";
 
 function ok(what: string, error: { message: string } | null) {
@@ -43,7 +47,7 @@ export async function reservaActivaDe(conversationId: string): Promise<Reserva |
     .from("bookings")
     .select("*")
     .eq("conversation_id", conversationId)
-    .eq("status", "pendiente_pago")
+    .in("status", ESTADOS_VIVOS)
     .in("client_phase", FASES_ACTIVAS)
     .order("created_at", { ascending: false })
     .limit(1);
@@ -56,7 +60,7 @@ export async function reservaDePruebaActiva(): Promise<Reserva | null> {
     .from("bookings")
     .select("*")
     .eq("is_test", true)
-    .eq("status", "pendiente_pago")
+    .in("status", ESTADOS_VIVOS)
     .in("client_phase", FASES_ACTIVAS)
     .order("created_at", { ascending: false })
     .limit(1);
@@ -68,7 +72,7 @@ export async function vencidas(ahora: Date, limite: number): Promise<Reserva[]> 
   const { data, error } = await getDb()
     .from("bookings")
     .select("*")
-    .in("client_phase", FASES_ACTIVAS)
+    .in("client_phase", FASES_CON_PLAZO)
     .lte("payment_deadline", ahora.toISOString())
     .order("payment_deadline", { ascending: true })
     .limit(limite);
