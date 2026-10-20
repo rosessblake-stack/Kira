@@ -705,7 +705,7 @@ try {
   const propM2 = conBotones();
   check("J10. editar en Miami: la fecha se lee en hora de Miami (11:00 allí = 15:00 UTC) y los importes son dólares", reservas().at(-1).starts_at === "2026-10-23T15:00:00.000Z" && propM2.text.includes("150 $ (puesto por ti) · Señal: 25 $") && propM2.text.includes("vie 23 oct, 11:00") && propM2.text.includes("🏠 Dirección: 1234 Collins Ave, Miami Beach") && !propM2.text.includes("No hay dirección para el evento"));
   await pulsa(dato(propM2, "Aprobar"), propM2.message_id);
-  check("J11. aprobar en Miami: el resumen dice Miami, en dólares y hora de Miami", tg.editados.at(-1).text.includes("✅ APROBADA") && tg.editados.at(-1).text.includes("📍 Miami") && tg.editados.at(-1).text.includes("vie 23 oct, 11:00 · 💶 150 $ (señal 25 $)"));
+  check("J11. aprobar en Miami: el resumen dice Miami, en dólares y hora de Miami", tg.editados.at(-1).text.includes("✅ APROBADA") && tg.editados.at(-1).text.includes("📍 Miami") && tg.editados.at(-1).text.includes("vie 23 oct, 11:00 → 14:00 · 💶 150 $ (señal 25 $)"));
   await escribe("/simular Miami es mi ciudad. Hola! tengo el pelo por el hombro, quiero 6 trenzas con extensiones rojas, por las caderas, para el 20 de octubre a las 12pm");
   check("J12. «Miami» sin dos puntos dentro de un mensaje normal NO cambia de ciudad (sigue España)", reservas().at(-1).spec.ubicacion === "espana" && conBotones().text.includes("📍 España · euros · hora de Madrid"));
   check("J13. y como pide el 20 de octubre, que cae en tu viaje a Miami, la propuesta de España te AVISA (sin bloquear: sigue el botón Aprobar si hay precio)", conBotones().text.includes("🚫 Ese día estás en Miami (del 20 oct 2026 al 30 oct 2026): no estás en España."));
