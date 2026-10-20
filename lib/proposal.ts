@@ -56,6 +56,8 @@ export type SpecGuardada = {
   origen?: "instagram";
   /** Lo que Claude vio en las fotos de la clienta (solo describe; los datos que rellenó llevan su aviso). */
   lectura_foto?: LecturaGuardada;
+  /** Cómo describe Blake el peinado («referencia …» en Editar): va al evento del calendario para saber qué hacer. */
+  descripcion_peinado?: string | null;
   /** Horas fijadas por Blake; null = las de por defecto. */
   horas: number | null;
   /** Materiales fijados por Blake (en la moneda de la ubicación); null/ausente = los de por defecto. */
@@ -267,6 +269,9 @@ export function componerPropuesta(
   const s = spec.servicio;
   if (s.tipo_trenzado === "pegadas" && (s.extensiones === "con" || s.extensiones === "feedin") && !s.largo_extensiones) {
     avisos.push("No dice hasta dónde quiere las extensiones (afecta al precio de las pegadas).");
+  }
+  if (s.tipo_trenzado === "pegadas" && !s.numero_trenzas && s.estilo_pegadas !== "twist" && s.estilo_pegadas !== "barrel_twist") {
+    avisos.push("No sé cuántas trenzas son: escribe «trenzas 6» y saldrá en el evento del calendario.");
   }
   // Blake pide en Instagram una foto del pelo y otra de las trenzas que quiere. Es un aviso, no un bloqueo: decide él.
   if (ctx.fotos) {
@@ -784,7 +789,10 @@ export function aplicarCambios(spec: SpecGuardada, cambios: Cambio[]): Resultado
       case "respuesta": s.respuesta_manual = c.v; break;
       // Las descripciones de fotos no tocan la reserva: el flujo las guarda junto a cada foto.
       case "foto_pelo":
+        break;
+      // …salvo la del peinado: también va al evento del calendario.
       case "foto_referencia":
+        s.descripcion_peinado = c.v;
         break;
     }
   }

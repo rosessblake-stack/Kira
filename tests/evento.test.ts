@@ -13,6 +13,14 @@ const clas = (o: Partial<Clasificacion> = {}): Clasificacion => ({
 const spec = (o: Partial<Clasificacion> = {}, cambios: Partial<SpecGuardada> = {}): SpecGuardada => ({ ...specDesdeClasificacion(clas(o), "x"), ...cambios });
 
 describe("el evento con las convenciones reales de Blake", () => {
+  it("añade la descripción del peinado de Blake, o la lectura de la foto marcada", () => {
+    const base = spec({ instagram: "ana" });
+    expect(descripcionDeEvento({ ...base, descripcion_peinado: "6 cornrows hacia atrás" }, 6000, "EUR")).toBe("6 Trenzas\nCon extensiones (Negro 1B)\n📝 6 cornrows hacia atrás\n\n60€\n@ana");
+    const conFoto = { ...base, lectura_foto: { referencia: "Cornrows finos", pelo: null, confianza: "alta" as const, rellenados: [] } };
+    expect(descripcionDeEvento(conFoto, 6000, "EUR")).toContain("📝 (foto) Cornrows finos");
+    expect(descripcionDeEvento({ ...conFoto, descripcion_peinado: "lo mío" }, 6000, "EUR")).not.toContain("(foto)");
+  });
+
   it("descripción como en su agenda: servicio, extensiones (color), línea en blanco y precio", () => {
     expect(descripcionDeEvento(spec(), 6000, "EUR")).toBe("6 Trenzas\nCon extensiones (Negro 1B)\n\n60€");
     expect(descripcionDeEvento(spec({ extensiones: "sin", color_extensiones: null }), 5000, "EUR")).toBe("6 Trenzas\nSin extensiones\n\n50€");

@@ -449,10 +449,10 @@ describe("parsearEdicion: descripciones de fotos", () => {
     expect(s.direccion).toBe("Carrer de la Duquessa de la Victòria, 16"); // no modifica el original
   });
 
-  it("no tocan la reserva: aplicarCambios devuelve el mismo servicio y no pide recalcular", () => {
+  it("no cambian el servicio ni el precio; la de la referencia queda como descripción del peinado (va al evento)", () => {
     const s = specReferencia({ tipo_trenzado: "pegadas" });
     const r = aplicarCambios(s, [{ k: "foto_pelo", v: "rizado" }, { k: "foto_referencia", v: "boxeadoras" }]);
-    expect(r.spec).toEqual(s);
+    expect(r.spec).toEqual({ ...s, descripcion_peinado: "boxeadoras" });
     expect(r.recalcular).toBe(false);
   });
 });

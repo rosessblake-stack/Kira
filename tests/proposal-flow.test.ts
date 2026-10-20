@@ -906,7 +906,8 @@ describe("fotos de la clienta en el flujo", () => {
         { tipo: "pelo", descripcion: "rizado, fino, a los hombros" },
         { tipo: "referencia", descripcion: "boxeadoras hasta la cadera" },
       ]);
-      expect(JSON.stringify(m.reserva().spec)).toBe(antes);
+      expect(JSON.stringify({ ...m.reserva().spec, descripcion_peinado: undefined })).toBe(antes);
+      expect(m.reserva().spec.descripcion_peinado).toBe("boxeadoras hasta la cadera");
       expect(m.w.llamadasLegacy).toHaveLength(0);
       expect(m.ultimo().texto).toContain("Cambios aplicados: descripción del pelo, descripción de la referencia.");
       expect(m.ultimo().texto).toContain("• Pelo de la clienta: «rizado, fino, a los hombros»");

@@ -68,7 +68,11 @@ export function tituloDeEvento(spec: SpecGuardada, nombre: string, prueba: boole
 
 export function descripcionDeEvento(spec: SpecGuardada, precioCents: number | null, moneda: Moneda): string {
   const cabecera = [lineaServicio(spec), lineaExtensiones(spec)].filter(Boolean).join("\n");
-  const partes = [cabecera];
+  // Lo que Blake describió del peinado; si no dijo nada, lo que Claude vio en la foto (marcado para que se distinga).
+  const mio = spec.descripcion_peinado ? limpiarTexto(spec.descripcion_peinado, 200) : "";
+  const visto = !mio && spec.lectura_foto?.referencia ? limpiarTexto(spec.lectura_foto.referencia, 200) : "";
+  const peinado = mio ? `📝 ${mio}` : visto ? `📝 (foto) ${visto}` : "";
+  const partes = [[cabecera, peinado].filter(Boolean).join("\n")];
   if (precioCents !== null) partes.push(precioCorto(precioCents, moneda));
   const ig = spec.instagram ? `@${spec.instagram.replace(/^@/, "")}` : null;
   return `${partes.join("\n\n")}${ig ? `\n${ig}` : ""}`;
