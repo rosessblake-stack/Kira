@@ -668,9 +668,9 @@ describe("hora ocupada: opciones de hueco que la clienta elige con un número", 
     const { m, r } = await conOpciones();
     expect(r).toEqual({ ok: true });
     expect(m.w.paraClienta).toHaveLength(1);
-    expect(m.w.paraClienta[0]).toContain("1️⃣");
-    expect(m.w.paraClienta[0]).toContain("3️⃣");
-    expect(m.w.paraClienta[0]).not.toContain("4️⃣");
+    expect(m.w.paraClienta[0]).toContain("Primera:");
+    expect(m.w.paraClienta[0]).toContain("Tercera:");
+    expect(m.w.paraClienta[0]).not.toContain("Cuarta:");
     expect(m.w.reserva.client_phase).toBe("opciones_enviadas");
     expect(Date.parse(m.w.reserva.payment_deadline!)).toBe(Date.parse(T0) + PLAZO_PRECIO_HORAS * 3_600_000);
     expect(m.w.reserva.spec.opciones_hueco).toHaveLength(3);
@@ -698,7 +698,7 @@ describe("hora ocupada: opciones de hueco que la clienta elige con un número", 
   });
 
   it("acepta «opción 3», «la 1» y el emoji; rechaza un número fuera de rango, preguntas y frases", async () => {
-    for (const [txt, esperado] of [["opción 3", 3], ["la 1", 1], ["3️⃣", 3]] as const) {
+    for (const [txt, esperado] of [["opción 3", 3], ["la primera", 1], ["tercera", 3]] as const) {
       const { m } = await conOpciones();
       await m.flujo.respuestaClienta("conv-1", txt);
       expect(m.w.reserva.starts_at).toBe(OPCIONES[esperado - 1].inicio);

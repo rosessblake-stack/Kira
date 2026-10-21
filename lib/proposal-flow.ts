@@ -1088,7 +1088,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const envio = await deps.cliente.ofrecerOpciones(r, opciones);
     if (!envio.ok) return devolver(`no he podido escribir a la clienta (${envio.motivo === "ventana_24h" ? "han pasado más de 24 h desde su último mensaje" : envio.motivo === "canal_no_conectado" ? "Kira todavía no escribe por Instagram: modo sombra, escríbele tú" : envio.motivo}).`);
     await responder(b.callbackId, "📨 Opciones enviadas");
-    await editarMensaje(`${r.is_test ? "🧪 PRUEBA · " : ""}📨 OPCIONES ENVIADAS a ${r.client_name ?? "la clienta"}\n\n${opciones.map((o, i) => `${i + 1}) ${lineaOpcion(o, lugar.zonaHoraria)}`).join("\n")}\n\n${r.is_test ? "Es una prueba: haz de clienta escribiendo /clienta 2 (o solo el número, p. ej. 2). " : ""}Cuando conteste con un número te llega la propuesta nueva para aprobar.`);
+    await editarMensaje(`${r.is_test ? "🧪 PRUEBA · " : ""}📨 OPCIONES ENVIADAS a ${r.client_name ?? "la clienta"}\n\n${opciones.map((o, i) => `${i + 1}) ${lineaOpcion(o, lugar.zonaHoraria)}`).join("\n")}\n\n${r.is_test ? "Es una prueba: haz de clienta escribiendo /clienta segunda (o solo el número, p. ej. 2). " : ""}Cuando conteste (primera, segunda…) te llega la propuesta nueva para aprobar.`);
     await deps.logEvent({ source: "telegram", kind: "opciones_ofrecidas", summary: `Blake ofreció ${opciones.length} opciones de hueco a la clienta`, detail: { opciones: opciones.length }, ...ids });
   }
 
