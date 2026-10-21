@@ -171,8 +171,12 @@ function describirServicio(s: SpecGuardada): string {
 /** Versión para hablar con el cliente: "6 trenzas pegadas con extensiones (rojo)". */
 function describirServicioNatural(s: SpecGuardada): string {
   const v = s.servicio;
-  const partes: string[] = [v.numero_trenzas ? `${v.numero_trenzas} trenzas` : "tus trenzas"];
-  if (v.tipo_trenzado) partes.push(v.tipo_trenzado);
+  // A la clienta se le habla con el nombre del servicio: «6 flat twist», «6 cornrows», «6 barrel twist» (no «trenzas pegadas»).
+  const estilo = v.tipo_trenzado === "pegadas" && v.estilo_pegadas ? NOMBRE_ESTILO[v.estilo_pegadas] : null;
+  const partes: string[] = estilo
+    ? [v.numero_trenzas ? `${v.numero_trenzas} ${estilo}` : estilo]
+    : [v.numero_trenzas ? `${v.numero_trenzas} trenzas` : "tus trenzas"];
+  if (!estilo && v.tipo_trenzado) partes.push(v.tipo_trenzado);
   if (v.tamano) partes.push(`tamaño ${v.tamano}`);
   if (v.extensiones === "con" || v.extensiones === "feedin") {
     partes.push(`con extensiones${s.color_extensiones ? ` (${s.color_extensiones})` : ""}`);
@@ -276,6 +280,9 @@ export function componerPropuesta(
   }
   if (s.tipo_trenzado === "pegadas" && !s.numero_trenzas && s.estilo_pegadas !== "twist" && s.estilo_pegadas !== "barrel_twist") {
     avisos.push("No sé cuántas trenzas son: escribe «trenzas 6» y saldrá en el evento del calendario.");
+  }
+  if (s.tipo_trenzado === "pegadas" && !s.estilo_pegadas) {
+    avisos.push("No sé si son cornrows, flat twist o barrel twist (así se lo digo a la clienta y sale en el evento): escribe «estilo flat twist», por ejemplo.");
   }
   // Blake pide en Instagram una foto del pelo y otra de las trenzas que quiere. Es un aviso, no un bloqueo: decide él.
   if (ctx.fotos) {

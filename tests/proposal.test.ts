@@ -566,3 +566,20 @@ describe("flat twist, cornrows y barrel twist son trenzas pegadas", () => {
     expect(parsearEdicion("estilo barrel twist", ahora).cambios).toEqual([{ k: "estilo", v: "barrel_twist" }]);
   });
 });
+
+describe("el mensaje a la clienta usa el nombre del estilo", () => {
+  const ctx = { perfil: { ...PERFIL_POR_DEFECTO, confirmado: true }, ahora: AHORA } as never;
+  const borrador = (estilo: "cornrows" | "twist" | "barrel_twist" | null) => {
+    const s = specReferencia({ tipo_trenzado: "pegadas" });
+    s.servicio.estilo_pegadas = estilo;
+    s.servicio.numero_trenzas = 5;
+    s.respuesta_manual = null;
+    return componerPropuesta(s, { origen: "legacy", precio: { ok: true } } as never, ctx).borrador;
+  };
+  it("flat twist, cornrows y barrel twist en vez de «trenzas pegadas»", () => {
+    expect(borrador("twist")).toContain("5 flat twist");
+    expect(borrador("cornrows")).toContain("5 cornrows");
+    expect(borrador("barrel_twist")).toContain("5 barrel twist");
+    expect(borrador("twist")).not.toContain("pegadas");
+  });
+});
