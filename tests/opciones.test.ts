@@ -50,12 +50,12 @@ describe("calcularOpciones", () => {
 
 describe("interpretarElegida", () => {
   it("números sueltos y formas habituales", () => {
-    for (const [t, n] of [["1", 1], ["2.", 2], ["Opción 3", 3], ["la 2", 2], ["el 1", 1], ["opcion2", 2], ["2️⃣", 2], ["  3  ", 3], ["primera", 1], ["La segunda", 2], ["segunda opción", 2], ["Tercera!", 3], ["cuarto", 4], ["dos", 2]] as const) {
+    for (const [t, n] of [["1", 1], ["2.", 2], ["Opción 3", 3], ["la 2", 2], ["el 1", 1], ["opcion2", 2], ["2️⃣", 2], ["  3  ", 3], ["primera", 1], ["La segunda", 2], ["segunda opción", 2], ["Tercera!", 3], ["cuarto", 4], ["dos", 2], ["quiero la primera", 1], ["vale, la segunda", 2], ["me quedo con la tercera", 3], ["la primera por favor", 1]] as const) {
       expect(interpretarElegida(t, 4)).toBe(n);
     }
   });
   it("lo demás no se interpreta", () => {
-    for (const t of ["5", "0", "vale", "la quinta", "¿la segunda?", "¿la 2?", "1 y 2", "la 2 pero más tarde", "12", "", "opción"]) {
+    for (const t of ["5", "0", "vale", "la quinta", "¿la segunda?", "¿la 2?", "1 y 2", "la 2 pero más tarde", "la primera o la segunda", "no me va ninguna", "12", "", "opción"]) {
       expect(interpretarElegida(t, 4)).toBeNull();
     }
     expect(interpretarElegida("4", 3)).toBeNull();
@@ -71,6 +71,6 @@ describe("textoOpciones", () => {
     expect(t).toContain("¡Hola, Marta!");
     expect(t).toContain("Primera: jueves 22 de octubre de 15:00 a 18:00");
     expect(t).toContain("Segunda: viernes 23 de octubre de 12:00 a 15:00");
-    expect(t).toContain("«primera», «segunda»");
+    expect(t).toContain("«quiero la primera» o «quiero la segunda»");
   });
 });

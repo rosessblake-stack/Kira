@@ -53,7 +53,7 @@ export function calcularOpciones(p: {
 const ETIQUETAS = ["Primera", "Segunda", "Tercera", "Cuarta"];
 const PALABRAS = ["primera", "segunda", "tercera", "cuarta"];
 /** Palabras que cuentan como cada opción (ManyChat se queda con los números sueltos, así que se pide la palabra). */
-const SINONIMOS: Record<string, number> = { primera: 1, primero: 1, uno: 1, una: 1, segunda: 2, segundo: 2, dos: 2, tercera: 3, tercero: 3, tres: 3, cuarta: 4, cuarto: 4, cuatro: 4 };
+const SINONIMOS: Record<string, number> = { primera: 1, primero: 1, uno: 1, segunda: 2, segundo: 2, dos: 2, tercera: 3, tercero: 3, tres: 3, cuarta: 4, cuarto: 4, cuatro: 4 };
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 
 const diaLegible = (d: Date, zona: string) => {
@@ -76,13 +76,15 @@ export function textoOpciones(nombre: string | null, pedida: Date, opciones: Opc
     `${saludo} Justo a esa hora (${diaLegible(pedida, zona)}, ${partesEn(pedida, zona).hora}) ya tengo otra cita 😔`,
     `Estas son las opciones que tengo${duracion ? ` para tu servicio (${duracion})` : ""}:`,
     opciones.map((o, i) => `${ETIQUETAS[i]}: ${lineaOpcion(o, zona)}`).join("\n"),
-    `Respóndeme con la palabra de la que prefieras (${opciones.map((_, i) => `«${PALABRAS[i]}»`).join(", ")}) y te reservo el hueco 😊`,
+    `Dime cuál prefieres escribiendo, por ejemplo, «quiero la ${PALABRAS[0]}»${opciones.length > 1 ? ` o «quiero la ${PALABRAS[1]}»` : ""}, y te reservo el hueco 😊`,
   ].join("\n\n");
 }
 
-/** «primera», «la segunda», «2», «opción 2», «la 2», «2️⃣»: la opción elegida (1-based) o null. Cualquier otra cosa no se interpreta. */
+const RELLENO = new Set(["quiero", "la", "el", "opcion", "opc", "me", "quedo", "con", "elijo", "prefiero", "por", "favor", "gracias", "vale", "ok", "perfecto", "de", "esa", "ese", "esta", "mejor", "dame", "pon", "ponme", "numero", "si", "genial", "reservame", "resérvame", "reserva"]);
+
+/** «primera», «quiero la segunda», «vale, la 2», «2», «opción 2», «2️⃣»: la opción elegida (1-based) o null. Cualquier otra cosa no se interpreta. */
 export function interpretarElegida(texto: string, cuantas: number): number | null {
-  if (texto.length > 30 || /[?¿]/.test(texto)) return null;
+  if (texto.length > 50 || /[?¿]/.test(texto)) return null;
   const t = texto
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
@@ -91,9 +93,15 @@ export function interpretarElegida(texto: string, cuantas: number): number | nul
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  const m = /^(?:(?:la|el|opcion|opc|la opcion|el numero|numero)\s*)?(\d)$/.exec(t) ?? /^(?:(?:la|el)\s+)?(?:opcion|numero)\s+(\d)$/.exec(t);
-  const palabra = /^(?:(?:la|el|opcion)\s+)*(primera|primero|segunda|segundo|tercera|tercero|cuarta|cuarto|uno|una|dos|tres|cuatro)(?:\s+(?:opcion|por favor|gracias))?$/.exec(t);
-  const n = m ? Number(m[1]) : palabra ? SINONIMOS[palabra[1]] : NaN;
-  if (!Number.isFinite(n)) return null;
+  if (!t) return null;
+  const elegidas = new Set<number>();
+  for (const w of t.split(" ")) {
+    if (/^\d$/.test(w)) elegidas.add(Number(w));
+    else if (w in SINONIMOS) elegidas.add(SINONIMOS[w]);
+    else if (/^(?:opcion|opc)(\d)$/.test(w)) elegidas.add(Number(/(\d)$/.exec(w)![1]));
+    else if (!RELLENO.has(w)) return null; // una palabra que no es de elegir: no se adivina, va a Blake
+  }
+  if (elegidas.size !== 1) return null;
+  const n = [...elegidas][0];
   return n >= 1 && n <= cuantas ? n : null;
 }
