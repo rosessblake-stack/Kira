@@ -9,7 +9,7 @@ const S: SolicitudManychat = {
   usoExtensiones: null, colorExtensiones: null, largo: null, fechaTexto: null, texto: "x",
 };
 
-function montar(o: { descargas?: Record<string, ResultadoDescarga>; falla?: boolean; fallaEnviar?: boolean } = {}) {
+function montar(o: { descargas?: Record<string, ResultadoDescarga>; falla?: boolean; fallaEnviar?: boolean; peloAnterior?: Uint8Array | null } = {}) {
   const guardadas: { conv: string; tipo: string; bytes: number }[] = [];
   const eventos: { kind: string; summary: string; level?: string; detail?: Record<string, unknown> }[] = [];
   const enviados: string[] = [];
@@ -24,6 +24,7 @@ function montar(o: { descargas?: Record<string, ResultadoDescarga>; falla?: bool
     },
     photos: { async guardarDeClienta(conv, tipo, bytes) { guardadas.push({ conv, tipo, bytes: bytes.length }); return { ok: true as const, repetida: false }; } },
     async descargar(u) { descargadas.push(u); return o.descargas?.[u] ?? { ok: true, bytes: new Uint8Array([1, 2, 3]) }; },
+    fotoPeloAnterior: o.peloAnterior === undefined ? undefined : async () => o.peloAnterior ?? null,
     chatIdAdmin: 7,
     async enviar(_c, t) { if (o.fallaEnviar) throw new Error("tg"); enviados.push(t); },
     async logEvent(x) { eventos.push(x); },
@@ -66,5 +67,27 @@ describe("entrada de ManyChat (modo sombra)", () => {
   it("si ni el aviso a Blake llega, tampoco lanza", async () => {
     const m = montar({ falla: true, fallaEnviar: true });
     await expect(m.e.procesar(S)).resolves.toBeUndefined();
+  });
+});
+
+describe("clienta que vuelve: la foto del pelo de la última vez", () => {
+  const SIN_PELO = { ...S, fotoPeloUrl: null };
+  it("si la solicitud no trae foto del pelo y hay una reciente guardada, se reutiliza", async () => {
+    const m = montar({ peloAnterior: new Uint8Array([9, 9, 9, 9]) });
+    await m.e.procesar(SIN_PELO);
+    expect(m.guardadas).toContainEqual({ conv: "conv-1", tipo: "pelo", bytes: 4 });
+    expect(m.eventos.map((e) => e.kind)).toContain("foto_pelo_reutilizada");
+    expect(m.eventos.map((e) => e.kind)).not.toContain("foto_ausente");
+  });
+  it("si no hay ninguna guardada, queda como antes (foto ausente)", async () => {
+    const m = montar({ peloAnterior: null });
+    await m.e.procesar(SIN_PELO);
+    expect(m.guardadas.map((g) => g.tipo)).toEqual(["referencia"]);
+    expect(m.eventos.map((e) => e.kind)).toContain("foto_ausente");
+  });
+  it("si la solicitud sí trae foto del pelo, manda la nueva", async () => {
+    const m = montar({ peloAnterior: new Uint8Array([9, 9, 9, 9]) });
+    await m.e.procesar(S);
+    expect(m.guardadas.find((g) => g.tipo === "pelo")?.bytes).toBe(3);
   });
 });

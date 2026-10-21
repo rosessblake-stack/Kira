@@ -189,3 +189,11 @@ export function leerRespuesta(raw: unknown): { ok: true; respuesta: RespuestaMan
   if (!texto) return { ok: false, motivo: "sin_texto" };
   return { ok: true, respuesta: { contactoId: id, texto } };
 }
+
+/** La consulta «¿conoces a esta clienta?» del principio del flujo: solo el usuario de Instagram (el que da Meta), ya validado. */
+export function leerConsultaClienta(raw: unknown): { instagram: string | null } {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { instagram: null };
+  const m = aplanar(raw);
+  const ig = texto(primero(m, ["igusername", "instagram", "instagramusername", "username"]), 60)?.replace(/^@/, "").toLowerCase() ?? null;
+  return { instagram: ig && INSTAGRAM_RE.test(ig) ? ig : null };
+}

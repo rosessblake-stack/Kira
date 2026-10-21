@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { clasificarConClaude, leerFotosConClaude, type EjemploParaClaude, type FotoParaLeer } from "./claude";
 import { EJEMPLOS_POR_ESTILO_A_CLAUDE, NOMBRE_ESTILO_EJEMPLO, type EjemplosDeps } from "./ejemplos";
 import * as ejemplosStore from "./ejemplos-store";
+import { crearFlujoClientas, type ClientasDeps } from "./clientas";
+import * as clientasStore from "./clientas-store";
 import { leerEstancias } from "./estancias-store";
 import { crearAgendaGoogle } from "./google-agenda";
 import * as fotoStore from "./foto-store";
@@ -49,6 +51,7 @@ export function makePhotoDeps(): PhotoDeps {
 export function makeFlowDeps(photos: PhotoPort, cliente: ReturnType<typeof crearClienteReal>): FlowDeps {
   return {
     cliente,
+    fichas: crearFlujoClientas(makeClientasDeps()),
     agenda: crearAgendaGoogle(),
     now: () => new Date(),
     newNonce: () => randomUUID().replace(/-/g, ""),
@@ -152,6 +155,19 @@ export function makeEjemplosDeps(): EjemplosDeps {
     listar: ejemplosStore.listarEjemplos,
     borrar: ejemplosStore.borrarEjemplo,
     invalidarCache: invalidarCacheEjemplos,
+    enviar: tg.sendMessage,
+    logEvent: ({ source, ...e }) => db.logEvent(source, e),
+  };
+}
+
+export function makeClientasDeps(): ClientasDeps {
+  return {
+    now: () => new Date(),
+    guardarSolicitud: clientasStore.guardarSolicitud,
+    sumarCita: clientasStore.sumarCita,
+    buscar: clientasStore.buscarFicha,
+    borrar: clientasStore.borrarFicha,
+    hayFotoPelo: clientasStore.hayFotoPelo,
     enviar: tg.sendMessage,
     logEvent: ({ source, ...e }) => db.logEvent(source, e),
   };

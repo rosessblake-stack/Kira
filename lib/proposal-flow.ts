@@ -162,6 +162,8 @@ export interface FlowDeps {
     /** «Ofrecer opciones»: le escribe a la clienta los huecos alternativos y espera su número. */
     ofrecerOpciones?(r: Reserva, opciones: OpcionHueco[]): Promise<{ ok: true } | { ok: false; motivo: string }>;
   };
+  /** Ficha de la clienta (reconocerla cuando vuelve): se rellena al aprobar y al confirmarse la cita. Nunca rompe la cita. */
+  fichas?: { alAprobar(r: Reserva): Promise<void>; alConfirmarCita(r: Reserva): Promise<void> };
   /** Reservas que pueden haberse quedado sin botones (propuestas y citas provisionales), las más recientes primero. */
   listarPendientes(): Promise<Reserva[]>;
 
@@ -868,6 +870,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       await deps.logEvent({ source: "system", kind: "registro_servicio_fallo", level: "error", summary: msg(e), ...ids });
     }
     await deps.logEvent({ source: "telegram", kind: "propuesta_aprobada", summary: "Propuesta aprobada por Blake", detail: { precio_centimos: r.price_cents }, ...ids });
+    await mejorEsfuerzo("guardar la ficha de la clienta", ids, () => deps.fichas?.alAprobar(r) ?? Promise.resolve());
     await deps.logEvent({ source: "calendar", kind: "evento_provisional_creado", summary: "Evento provisional (amarillo) creado en Google Calendar", ...ids });
     if (deps.cliente) {
       // El precio a la clienta: lo último y secundario (si falla, Blake ya tiene sus botones y recibe un aviso).
@@ -971,6 +974,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       await editarMensaje(`${marca}💜 SEÑAL RECIBIDA · RESERVA CONFIRMADA\n\n${resumenDecision(r)}\n\nEl evento está en morado en tu calendario${invitado ? ` y he invitado a ${r.client_email} (Google le envía la invitación)` : r.client_email ? ` (no he invitado a ${r.client_email}${r.is_test ? ": es una prueba y no es tu cuenta" : ""})` : " (no tengo su email, así que no hay invitación)"}.`);
       await deps.logEvent({ source: "telegram", kind: "senal_confirmada_por_blake", summary: "Blake confirmó la señal: reserva pagada", detail: { invitado }, ...ids });
       await deps.logEvent({ source: "calendar", kind: "evento_pagado", summary: `Evento pasado a morado${invitado ? " e invitada la clienta" : ""}`, ...ids });
+      await mejorEsfuerzo("anotar la cita en la ficha de la clienta", ids, () => deps.fichas?.alConfirmarCita({ ...r, status: "pagada" }) ?? Promise.resolve());
       if (deps.cliente) {
         const cliente = deps.cliente;
         await mejorEsfuerzo("confirmar la cita a la clienta", ids, () => cliente.alConfirmarBlake({ ...r, status: "pagada" }, invitado));
@@ -1129,6 +1133,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
         `${r.is_test ? "🧪 PRUEBA · " : ""}✅ APROBADA\n\n${resumenDecision(r)}\n\nNo se ha enviado nada al cliente (el canal de Instagram no está conectado).\nSiguientes pasos pendientes de conectar: calendario (reserva provisional) y enlace de pago de la señal.`,
       );
       await deps.logEvent({ source: "telegram", kind: "propuesta_aprobada", summary: "Propuesta aprobada por Blake", detail: { precio_centimos: r.price_cents }, ...ids });
+    await mejorEsfuerzo("guardar la ficha de la clienta", ids, () => deps.fichas?.alAprobar(r) ?? Promise.resolve());
       await deps.logEvent({ source: "system", kind: "respuesta_lista_sin_enviar", summary: "Respuesta aprobada pero sin enviar: el canal de Instagram no está conectado", ...ids });
       return;
     }

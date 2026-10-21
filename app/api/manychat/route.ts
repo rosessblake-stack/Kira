@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import { after, NextResponse } from "next/server";
 import { makeFlowDeps, makePhotoDeps } from "../../../lib/composicion";
 import { crearClienteReal } from "../../../lib/cliente-real";
+import { DIAS_FOTO_PELO } from "../../../lib/clientas";
+import { fotoPeloReciente } from "../../../lib/clientas-store";
+import { descargarBytes } from "../../../lib/foto-store";
 import * as db from "../../../lib/db";
 import { descargarImagenSegura } from "../../../lib/descarga-segura";
 import { crearEntradaManychat } from "../../../lib/manychat-entrada-flow";
@@ -64,6 +67,10 @@ export async function POST(req: Request) {
     proposals: crearFlujoPropuestas(makeFlowDeps(photos, crearClienteReal())),
     photos,
     descargar: (direccion) => descargarImagenSegura(direccion),
+    async fotoPeloAnterior(instagram) {
+      const f = await fotoPeloReciente(instagram, new Date(Date.now() - DIAS_FOTO_PELO * 86_400_000));
+      return f ? descargarBytes({ storage_path: f.storage_path }) : null;
+    },
     chatIdAdmin: Number(raw),
     enviar: (chatId, texto) => tg.sendMessage(chatId, texto),
     logEvent: (e) => db.logEvent("manychat", e),

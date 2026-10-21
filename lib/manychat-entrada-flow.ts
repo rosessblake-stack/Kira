@@ -13,6 +13,11 @@ export interface EntradaDeps {
   proposals: Pick<ProposalPort, "recibirSolicitud">;
   photos: Pick<PhotoPort, "guardarDeClienta">;
   descargar(direccion: string): Promise<ResultadoDescarga>;
+  /**
+   * Clienta que vuelve (ManyChat se saltó la pregunta de la foto del pelo): la foto del pelo de su última solicitud, si sigue guardada
+   * (60 días). null = no hay.
+   */
+  fotoPeloAnterior?(instagram: string): Promise<Uint8Array | null>;
   /** Chat de Blake. */
   chatIdAdmin: number;
   enviar(chatId: number, texto: string): Promise<unknown>;
@@ -41,11 +46,30 @@ export function crearEntradaManychat(deps: EntradaDeps): EntradaPort {
     await deps.photos.guardarDeClienta(convId, tipo, d.bytes);
   }
 
+  /** La foto del pelo: la de esta solicitud o, si no viene y la clienta ya nos la dio hace menos de 60 días, la anterior. */
+  async function peloDe(convId: string, s: SolicitudManychat) {
+    if (!s.fotoPeloUrl && s.instagram && deps.fotoPeloAnterior) {
+      try {
+        const bytes = await deps.fotoPeloAnterior(s.instagram.toLowerCase());
+        if (bytes) {
+          const g = await deps.photos.guardarDeClienta(convId, "pelo", bytes);
+          if (g.ok) {
+            await deps.logEvent({ kind: "foto_pelo_reutilizada", summary: "Clienta que vuelve: se reutiliza la foto de su pelo (menos de 60 días)", conversation_id: convId });
+            return;
+          }
+        }
+      } catch (e) {
+        await deps.logEvent({ kind: "foto_pelo_reutilizar_fallo", level: "warn", summary: msg(e), conversation_id: convId });
+      }
+    }
+    await traerFoto(convId, "pelo", s.fotoPeloUrl, s.claves);
+  }
+
   async function procesar(s: SolicitudManychat): Promise<void> {
     try {
       await deps.proposals.recibirSolicitud(deps.chatIdAdmin, s, async (convId) => {
         // Las dos fotos a la vez; un fallo con una no impide la propuesta (queda en Fallos y la propuesta avisa de que falta).
-        await Promise.all([traerFoto(convId, "referencia", s.fotoReferenciaUrl, s.claves), traerFoto(convId, "pelo", s.fotoPeloUrl, s.claves)]);
+        await Promise.all([traerFoto(convId, "referencia", s.fotoReferenciaUrl, s.claves), peloDe(convId, s)]);
       });
     } catch (e) {
       await deps.logEvent({ kind: "solicitud_fallo", level: "error", summary: msg(e) });

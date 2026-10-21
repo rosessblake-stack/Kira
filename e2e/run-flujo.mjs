@@ -1486,6 +1486,31 @@ try {
   check("O18. la clave de la API de ManyChat no queda en los registros", !/clave-falsa-manychat/.test(volcadoO));
   }
 
+  // ============================================================================ P. CLIENTAS QUE VUELVEN (ficha + «¿la conoces?»)
+  console.log("\n=== P. Clientas que vuelven: ficha, /api/manychat/conocer y comandos /ficha y /borrarficha ===");
+  const conocer = (cuerpo, cabeceras = { "x-kira-secret": "mc-secreto-falso" }) =>
+    fetch(`${BASE}/api/manychat/conocer`, { method: "POST", headers: { "content-type": "application/json", ...cabeceras }, body: typeof cuerpo === "string" ? cuerpo : JSON.stringify(cuerpo) });
+  const fichaLucia = tables.clients.find((c) => c.instagram === "lucia.trenzas");
+  check("P0. al aprobar la solicitud real de Lucía (secciones N y O) Kira creó su ficha con usuario, nombre y email", Boolean(fichaLucia) && fichaLucia.nombre === "Lucía" && fichaLucia.email === "lucia@correo.com");
+  const sinClaveP = await conocer({ ig_username: "marta.trenzas" }, {});
+  check("P1. «¿la conoces?» exige la clave compartida (401)", sinClaveP.status === 401);
+  const desconocida = await (await conocer({ id: "mc-9", ig_username: "marta.trenzas" })).json();
+  check("P2. una clienta sin ficha → conocida «no» y todo vacío (el flujo sigue pidiéndolo todo)", desconocida.ok === true && desconocida.conocida === "no" && desconocida.nombre === "" && desconocida.email === "");
+  const rota = await conocer("esto no es json");
+  const jotaRota = await rota.json();
+  check("P3. un cuerpo roto NO rompe el flujo de ManyChat: 200 y «no la conozco»", rota.status === 200 && jotaRota.conocida === "no");
+  tables.clients.push({ id: "f-1", instagram: "marta.trenzas", nombre: "Marta", email: "marta@correo.com", ubicacion: "espana", created_at: "2026-09-01T10:00:00Z", updated_at: "2026-10-01T10:00:00Z", ultima_solicitud_at: null, ultima_cita_at: "2026-10-05T10:00:00Z", citas_confirmadas: 2, ultimo_servicio: "6 flat twist" });
+  const conocida = await (await conocer({ id: "mc-9", ig_username: "@Marta.Trenzas" })).json();
+  check("P4. con ficha: nombre, email, ciudad, nº de citas y último servicio (todo texto) y nada más", conocida.conocida === "si" && conocida.nombre === "Marta" && conocida.email === "marta@correo.com" && conocida.pais === "España" && conocida.citas === "2" && conocida.ultimo_servicio === "6 flat twist" && Object.keys(conocida).sort().join() === "citas,conocida,email,nombre,ok,pais,pelo_guardado,ultimo_servicio");
+  const parecida = await (await conocer({ ig_username: "marta_trenzas" })).json();
+  check("P5. un usuario parecido (con _ en vez de .) NO se confunde con ella", parecida.conocida === "no");
+  await escribe("/ficha @marta.trenzas");
+  check("P6. /ficha enseña lo que Kira sabe de ella", ultimo().text.includes("Ficha de @marta.trenzas") && ultimo().text.includes("Citas confirmadas: 2"));
+  await escribe("/borrarficha @marta.trenzas");
+  check("P7. /borrarficha la borra y queda anotado", ultimo().text.includes("borrada") && !tables.clients.some((c) => c.instagram === "marta.trenzas") && tables.event_log.some((e) => e.kind === "ficha_borrada"));
+  const trasBorrar = await (await conocer({ ig_username: "marta.trenzas" })).json();
+  check("P8. tras borrar la ficha, ya no la reconoce", trasBorrar.conocida === "no");
+
   // ============================================================================ H. Sin secretos en los registros
   const volcado = JSON.stringify({ e: tables.event_log, s: tables.security_events });
   check("H1. ninguna clave ni token en los registros", !/clave-falsa|token-falso|000000:|secreto-falso/.test(volcado));

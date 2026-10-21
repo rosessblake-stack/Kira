@@ -18,6 +18,7 @@ export const tables = {
   processed_webhooks: [],
   attachments: [],
   service_records: [],
+  clients: [],
 };
 /** Almacén de archivos falso (Supabase Storage): "bucket/ruta" -> { bytes, contentType }. */
 export const storage = new Map();
