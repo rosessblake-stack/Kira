@@ -17,6 +17,8 @@ import { eventoDeReserva } from "./evento";
 import { idDeEvento } from "./google-calendar";
 import { describirFalloGoogle } from "./google-oauth";
 import { MAX_CARACTERES_CLIENTE, detectarInyeccion, limpiarTexto } from "./intents";
+import { interpretarElegida, lineaOpcion, textoOpciones, type OpcionHueco } from "./opciones";
+import { partesEn } from "./agenda";
 import { contextoDe, horarioDeSpec } from "./proposal";
 import type { FlowDeps, Reserva } from "./proposal-flow";
 import { dinero } from "./ubicacion";
@@ -38,7 +40,7 @@ import { dinero } from "./ubicacion";
  *  - Todo cambio de fase es atómico (solo gana una ejecución) y los plazos los cierra un temporizador (cron cada minuto).
  */
 
-export type Fase = "precio_enviado" | "pago_pedido" | "pago_declarado" | "liberada" | "confirmada" | "cerrada";
+export type Fase = "precio_enviado" | "pago_pedido" | "pago_declarado" | "liberada" | "opciones_enviadas" | "confirmada" | "cerrada";
 
 /** Mientras Blake no tenga el Bizum o no decida, la clienta que escribe «hecho» otra vez solo recibe silencio (ya está avisado). */
 export const PLAZO_LIBERADA_HORAS = 20;
@@ -72,6 +74,8 @@ export interface ClienteExtra {
   reservaDePruebaActiva(): Promise<Reserva | null>;
   /** Reservas con plazo vencido en una fase activa. */
   vencidas(ahora: Date, limite: number): Promise<Reserva[]>;
+  /** Vuelve a mandar a Blake la propuesta de una reserva con botones (cuando la clienta elige una opción). */
+  nuevaPropuesta?(r: Reserva, prefijo: string): Promise<void>;
 }
 
 export type ClienteDeps = Pick<
@@ -109,6 +113,8 @@ export interface ClientePort {
   respuestaEnPrueba(chatId: number, texto: string): Promise<void>;
   /** Botón «❌ No me ha llegado» (el Bizum no entró): borra el evento, libera el hueco y se lo dice a la clienta. */
   botonNoLlego(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string }): Promise<void>;
+  /** Blake pulsó «Ofrecer opciones»: se las escribe a la clienta y pasa a esperar su número (plazo de 20 h). */
+  ofrecerOpciones(r: Reserva, opciones: OpcionHueco[]): Promise<ResultadoEnvio>;
   /** Botón antiguo «❌ No me ha llegado nada» de una cita ya confirmada (revertir). */
   botonRevertir(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string }): Promise<void>;
   /** El temporizador (cada minuto): cierra los plazos vencidos. */
@@ -227,6 +233,58 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
   }
 
   // -------------------------------------------------------------------------
+  // Hora ocupada: Blake ofrece huecos alternativos y la clienta elige con un número
+  // -------------------------------------------------------------------------
+
+  async function ofrecerOpciones(r: Reserva, opciones: OpcionHueco[]): Promise<ResultadoEnvio> {
+    const ids = idsDe(r);
+    if (!r.conversation_id || !r.starts_at || !opciones.length) return { ok: false, motivo: "sin_conversacion" };
+    const conv = await deps.leerConversacion(r.conversation_id);
+    const lugar = contextoDe(r.spec ?? {});
+    const texto = textoOpciones(r.spec?.nombre ?? null, new Date(r.starts_at), opciones, lugar.zonaHoraria);
+    // La fase se fija ANTES de escribir: si ella contesta enseguida, la respuesta ya encuentra sus opciones.
+    const plazo = new Date(deps.now().getTime() + PLAZO_PRECIO_HORAS * HORA_MS);
+    const ganada = await deps.avanzarFase(r.id, [null], { client_phase: "opciones_enviadas", payment_deadline: plazo.toISOString(), spec: { ...r.spec, opciones_hueco: opciones } });
+    if (!ganada) return { ok: false, motivo: "ya_gestionada" };
+    const envio = await enviarAClienta(conv, texto, ganada);
+    if (!envio.ok) {
+      await deps.avanzarFase(r.id, ["opciones_enviadas"], { client_phase: null, payment_deadline: null }).catch(() => undefined);
+      return envio;
+    }
+    await deps.logEvent({ source: "system", kind: "opciones_enviadas_a_clienta", summary: `Opciones de hueco enviadas a la clienta (${opciones.length}); plazo ${PLAZO_PRECIO_HORAS} h`, detail: { opciones: opciones.length }, ...ids });
+    return { ok: true };
+  }
+
+  /** La clienta contestó con un número: la reserva pasa a ese hueco y Blake recibe la propuesta nueva para aprobar. */
+  async function elegirOpcion(r: Reserva, conv: ConversacionCanal, n: number): Promise<void> {
+    const ids = idsDe(r);
+    const o = r.spec?.opciones_hueco?.[n - 1];
+    if (!o) return;
+    const lugar = contextoDe(r.spec ?? {});
+    const inicio = new Date(o.inicio);
+    const p = partesEn(inicio, lugar.zonaHoraria);
+    const ganada = await deps.avanzarFase(r.id, ["opciones_enviadas"], {
+      client_phase: null,
+      payment_deadline: null,
+      starts_at: o.inicio,
+      ends_at: o.fin,
+      spec: { ...r.spec, fecha: p.fecha, hora: p.hora, opciones_hueco: undefined },
+    });
+    if (!ganada) return; // dos respuestas seguidas: solo gana una
+    await deps.logEvent({ source: "system", kind: "clienta_elige_opcion", summary: `La clienta eligió la opción ${n}: ${lineaOpcion(o, lugar.zonaHoraria)}`, detail: { opcion: n }, ...ids });
+    const envio = await enviarAClienta(conv, `¡Perfecto! Te apunto: ${lineaOpcion(o, lugar.zonaHoraria)} 😊 En un momento te confirmo el precio y cómo reservar el hueco.`, ganada);
+    if (!envio.ok) await avisarBlake(`${marca(r)}ℹ️ No he podido confirmarle a ${nombreDe(r)} que ha elegido su hueco (${motivoLegible(envio.motivo)}).`);
+    const prefijo = `${marca(r)}📨 ${nombreDe(r)} ha elegido la opción ${n}: ${lineaOpcion(o, lugar.zonaHoraria)}.\nAquí tienes la propuesta con la fecha nueva:\n\n`;
+    try {
+      if (!deps.nuevaPropuesta) throw new Error("sin_nueva_propuesta");
+      await deps.nuevaPropuesta(ganada, prefijo);
+    } catch (e) {
+      await deps.logEvent({ source: "system", kind: "nueva_propuesta_fallo", level: "error", summary: msg(e), ...ids });
+      await avisarBlake(`${marca(r)}⚠️ ${nombreDe(r)} eligió la opción ${n} (${lineaOpcion(o, lugar.zonaHoraria)}), pero no he podido mandarte la propuesta nueva. Usa /pendientes.`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Lo que escribe la clienta
   // -------------------------------------------------------------------------
 
@@ -274,10 +332,13 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
       }
     } else if (r.client_phase === "liberada") {
       if (esConfirmado(texto)) return reabrir(r, conv);
+    } else if (r.client_phase === "opciones_enviadas") {
+      const n = interpretarElegida(texto, r.spec?.opciones_hueco?.length ?? 0);
+      if (n !== null) return elegirOpcion(r, conv, n);
     }
     await deps.logEvent({ source: "system", kind: "respuesta_clienta_a_blake", summary: "Respuesta de la clienta que Kira no gestiona sola: reenviada a Blake", ...ids });
     await avisarBlake(
-      `${marca(r)}💬 ${nombreDe(r)} ha escrito (${r.client_phase === "pago_pedido" ? "esperaba su «confirmado»" : r.client_phase === "pago_declarado" ? "Blake está comprobando su Bizum" : r.client_phase === "liberada" ? "el hueco está liberado; esperaba su «hecho»" : "esperaba su «vale»"}):\n\n«${limpiarTexto(texto, 600)}»\n\nNo he contestado nada: respóndele tú.`,
+      `${marca(r)}💬 ${nombreDe(r)} ha escrito (${r.client_phase === "pago_pedido" ? "esperaba su «confirmado»" : r.client_phase === "pago_declarado" ? "Blake está comprobando su Bizum" : r.client_phase === "liberada" ? "el hueco está liberado; esperaba su «hecho»" : r.client_phase === "opciones_enviadas" ? "esperaba que eligiera una de las opciones de hueco" : "esperaba su «vale»"}):\n\n«${limpiarTexto(texto, 600)}»\n\nNo he contestado nada: respóndele tú.`,
     );
   }
 
@@ -519,7 +580,7 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
   }
 
   async function alCancelarBlake(r: Reserva): Promise<void> {
-    await deps.avanzarFase(r.id, [null, "precio_enviado", "pago_pedido", "pago_declarado", "liberada", "confirmada"], { client_phase: "cerrada", payment_deadline: null }).catch(() => undefined);
+    await deps.avanzarFase(r.id, [null, "precio_enviado", "pago_pedido", "pago_declarado", "liberada", "opciones_enviadas", "confirmada"], { client_phase: "cerrada", payment_deadline: null }).catch(() => undefined);
   }
 
   // -------------------------------------------------------------------------
@@ -529,6 +590,15 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
   async function expirar(r: Reserva): Promise<boolean> {
     const ids = idsDe(r);
     const fase = r.client_phase as Fase;
+    if (fase === "opciones_enviadas") {
+      // No eligió ningún hueco: se cierra en silencio (no hay evento que borrar: la propuesta nunca se aprobó).
+      const cerrada = await deps.avanzarFase(r.id, [fase], { client_phase: "cerrada", status: "expirada", payment_deadline: null });
+      if (!cerrada) return false;
+      await cerrarConversacion(r);
+      await deps.logEvent({ source: "system", kind: "opciones_sin_respuesta", level: "warn", summary: `La clienta no eligió ninguna opción en ${PLAZO_PRECIO_HORAS} h: se cierra`, ...ids });
+      await avisarBlake(`${marca(r)}⌛ ${nombreDe(r)} no eligió ninguno de los huecos que le ofreciste en ${PLAZO_PRECIO_HORAS} h: he cerrado la solicitud.`);
+      return true;
+    }
     if (r.status !== "pendiente_pago") {
       // Ya no está esperando pago (la cerró alguien por otro camino): solo se limpia la fase.
       await deps.avanzarFase(r.id, [fase], { client_phase: "cerrada", payment_deadline: null });
@@ -617,5 +687,5 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     await deps.enviar(chatId, `Guardado: las clientas harán el Bizum al ${nuevo}.`);
   }
 
-  return { alAprobar, alConfirmarBlake, alCancelarBlake, respuestaClienta, respuestaEnPrueba, botonNoLlego, botonRevertir, procesarVencidas, vencerYa, bizum };
+  return { alAprobar, alConfirmarBlake, alCancelarBlake, ofrecerOpciones, respuestaClienta, respuestaEnPrueba, botonNoLlego, botonRevertir, procesarVencidas, vencerYa, bizum };
 }

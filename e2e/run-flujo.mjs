@@ -454,7 +454,7 @@ try {
     check("A3. modelo claude-opus-5-5 con esfuerzo bajo y salida JSON con esquema", peticion.model === "claude-opus-5-5" && peticion.output_config?.effort === "low" && peticion.output_config?.format?.type === "json_schema");
     check("A4. sin parámetros que el modelo rechaza (thinking desactivado, temperature, prefill)", peticion.thinking === undefined && peticion.temperature === undefined && peticion.messages.length === 1 && peticion.messages[0].role === "user");
     check("A5. el mensaje del cliente viaja como DATO dentro de <mensaje_cliente>", /<mensaje_cliente>\n[\s\S]*6 trenzas[\s\S]*\n<\/mensaje_cliente>/.test(peticion.messages[0].content) && peticion.system.includes("DATOS NO FIABLES"));
-    check("A6. la petición lleva la fecha actual para resolver «el 20 de octubre»", new RegExp(`Fecha y hora actuales: \\w+ ${hoyIsoMadrid}`).test(peticion.messages[0].content));
+    check("A6. la petición lleva la fecha actual para resolver «el 20 de octubre»", new RegExp(`Fecha y hora actuales: \\S+ ${hoyIsoMadrid}`).test(peticion.messages[0].content));
     check("A7. el esquema pedido exige los 18 campos y prohíbe extras", peticion.output_config.format.schema.additionalProperties === false && peticion.output_config.format.schema.required.length === 18);
     check("A8. la clave de API viaja por cabecera, no en el cuerpo", Boolean(claude.cabeceras[0]["x-api-key"]) && !JSON.stringify(peticion).includes("clave-falsa"));
 
@@ -666,7 +666,7 @@ try {
   check("I4. ficha completa: tipo por los bytes, tamaño, hash y caducidad a 60 días", f1.content_type === "image/jpeg" && f1.size_bytes === jpgPelo.length && f1.sha256 === sha(jpgPelo));
   check("I4b. la foto del pelo caduca exactamente a los 60 días", Date.parse(f1.expires_at) - Date.parse(f1.created_at) === 60 * 86_400_000);
   check("I5. el archivo está en el almacén privado, con ruta propia (conversación/id.jpg) y bytes idénticos", f1.storage_path === `${convI.id}/${f1.id}.jpg` && storage.has(`kira-fotos/${f1.storage_path}`) && igual(storage.get(`kira-fotos/${f1.storage_path}`).bytes, jpgPelo) && storage.get(`kira-fotos/${f1.storage_path}`).contentType === "image/jpeg");
-  check("I6. Blake recibe confirmación: tipo, a qué prueba, su descripción y cuándo se borra", ultimo().text.includes("Guardada como «Pelo de la clienta»") && ultimo().text.includes("Hola! tengo el pelo por el hombro") && ultimo().text.includes("Tu descripción: «rizado, fino, a los hombros»") && /se borrará el 1?\d\/12\/2026/.test(ultimo().text));
+  check("I6. Blake recibe confirmación: tipo, a qué prueba, su descripción y cuándo se borra", ultimo().text.includes("Guardada como «Pelo de la clienta»") && ultimo().text.includes("Hola! tengo el pelo por el hombro") && ultimo().text.includes("Tu descripción: «rizado, fino, a los hombros»") && /se borrará el [123]?\d\/12\/2026/.test(ultimo().text));
   check("I7. queda en la línea de tiempo de ESA conversación", eventos("foto_recibida").some((e) => e.conversation_id === convI.id && e.detail.tipo === "pelo"));
 
   // --- segunda foto sin pie: se toma como referencia; luego se corrige reenviándola con pie

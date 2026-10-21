@@ -106,7 +106,7 @@ type TgCallback = { id?: string; from?: TgUser; data?: string; message?: TgMessa
 type TgUpdate = { update_id?: number; message?: TgMessage; callback_query?: TgCallback };
 
 const CALLBACK_RE = /^t:([0-9a-f]{32}):(ok|ed|no)$/;
-const PROPOSAL_CB_RE = /^p:([0-9a-f]{32}):(ok|ed|no)$/;
+const PROPOSAL_CB_RE = /^p:([0-9a-f]{32}):(ok|ed|no|op)$/;
 /** Botones de una cita con reserva provisional en el calendario: señal recibida / cancelar. */
 const CITA_CB_RE = /^c:([0-9a-f]{32}):(pay|del|rev|nop)$/;
 
@@ -412,7 +412,7 @@ async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {
       messageId: typeof cq.message?.message_id === "number" ? cq.message.message_id : null,
       fromId,
       nonce: propuesta[1],
-      accion: propuesta[2] as "ok" | "ed" | "no",
+      accion: propuesta[2] as "ok" | "ed" | "no" | "op",
     });
     return;
   }

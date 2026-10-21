@@ -12,6 +12,7 @@ import {
   type Clasificacion,
 } from "./intents";
 import { leerFechaHora } from "./fecha-texto";
+import type { OpcionHueco } from "./opciones";
 import { ETIQUETA_FOTO, limpiarDescripcion, type ResumenFoto } from "./fotos";
 import type { LecturaGuardada } from "./lectura-foto";
 import { avisoDeEstancia, type Estancia } from "./estancias";
@@ -59,6 +60,8 @@ export type SpecGuardada = {
   lectura_foto?: LecturaGuardada;
   /** Cómo describe Blake el peinado («referencia …» en Editar): va al evento del calendario para saber qué hacer. */
   descripcion_peinado?: string | null;
+  /** Alternativas que Blake ofreció a la clienta cuando su hora chocaba (la clienta contesta con el número). */
+  opciones_hueco?: OpcionHueco[];
   /** Horas fijadas por Blake; null = las de por defecto. */
   horas: number | null;
   /** Materiales fijados por Blake (en la moneda de la ubicación); null/ausente = los de por defecto. */

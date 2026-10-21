@@ -57,5 +57,13 @@ export function crearClienteReal(): ClientePort {
     reservaActivaDe: clienteStore.reservaActivaDe,
     reservaDePruebaActiva: clienteStore.reservaDePruebaActiva,
     vencidas: clienteStore.vencidas,
+    // La propuesta nueva (tras elegir la clienta una opción) se arma con los mismos flujos que el webhook de Telegram.
+    async nuevaPropuesta(r, prefijo) {
+      if (adminChatId === null) throw new Error("sin_chat_de_blake");
+      const { makeFlowDeps, makePhotoDeps } = await import("./composicion");
+      const { crearFlujoFotos } = await import("./photo-flow");
+      const { crearFlujoPropuestas } = await import("./proposal-flow");
+      await crearFlujoPropuestas(makeFlowDeps(crearFlujoFotos(makePhotoDeps()), crearClienteReal())).reenviarPropuesta(adminChatId, r.id, prefijo);
+    },
   });
 }

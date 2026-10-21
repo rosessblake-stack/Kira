@@ -80,7 +80,7 @@ type Opciones = {
   estancias?: Estancia[];
   fallaLecturaViajes?: boolean;
   /** Si se pasa, Kira habla con la clienta tras el Aprobar (lib/cliente-flow.ts); aquí solo se anotan las llamadas. */
-  cliente?: { fallaAprobar?: boolean };
+  cliente?: { fallaAprobar?: boolean; fallaOpciones?: string };
   /** Visión: las fotos que hay que leer (si no se pasa, el flujo no tiene visión) y lo que responde Claude al leerlas. */
   fotosParaLeer?: { rol: "referencia" | "pelo"; mime: "image/jpeg"; bytes: Uint8Array }[];
   vision?: () => Promise<RespuestaClaude>;
@@ -111,6 +111,7 @@ function mundo(op: Opciones = {}) {
     zonasClasificar: [] as (string | undefined)[],
     fotos: new Map<string, ResumenFoto[]>(),
     albumes: [] as { chat: number; conv: string; antesDeLosMensajes: number }[],
+    opcionesOfrecidas: [] as { id: string; n: number }[],
     clienteLlamadas: [] as { k: string; id: string; status: string; invitado?: boolean; botonesAntes: number }[],
     registros: [] as Reserva[],
     registrosRetirados: [] as string[],
@@ -173,6 +174,11 @@ function mundo(op: Opciones = {}) {
           },
           async alConfirmarBlake(r, invitado) { w.clienteLlamadas.push({ k: "confirmar", id: r.id, status: r.status, invitado, botonesAntes: 0 }); },
           async alCancelarBlake(r) { w.clienteLlamadas.push({ k: "cancelar", id: r.id, status: r.status, botonesAntes: 0 }); },
+          async ofrecerOpciones(r, opciones) {
+            if (op.cliente?.fallaOpciones) return { ok: false as const, motivo: op.cliente.fallaOpciones };
+            w.opcionesOfrecidas.push({ id: r.id, n: opciones.length });
+            return { ok: true as const };
+          },
         }
       : undefined,
     now: () => reloj,
@@ -274,7 +280,7 @@ function mundo(op: Opciones = {}) {
     },
   };
   const flujo = crearFlujoPropuestas(deps);
-  const boton = (nonce: string, accion: "ok" | "ed" | "no", messageId: number | null = 1001) =>
+  const boton = (nonce: string, accion: "ok" | "ed" | "no" | "op", messageId: number | null = 1001) =>
     flujo.boton({ callbackId: `cb${w.respuestas.length}`, chatId: CHAT, messageId, fromId: ADMIN, nonce, accion });
   const botonCita = (nonce: string, accion: "pay" | "del", messageId: number | null = 1001) =>
     flujo.botonCita({ callbackId: `cb${w.respuestas.length}`, chatId: CHAT, messageId, fromId: ADMIN, nonce, accion });
@@ -2140,5 +2146,42 @@ describe("ahorro de tokens: el formulario de Instagram se lee por código, sin C
     const m = mundo({ ...vision });
     await m.flujo.recibirSolicitud(CHAT, sol());
     expect(m.w.eventos.some((e) => e.kind === "clasificado" && e.detail?.lector === "formulario")).toBe(true);
+  });
+});
+
+describe("hora ocupada: «Ofrecer opciones a la clienta»", () => {
+  async function chocada(op: Opciones = { calendario: { eventos: [LUX_LIBRE] }, cliente: {} }) {
+    const m = mundo(op);
+    await m.flujo.simular(CHAT, MENSAJE);
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, "tipo pegadas\nnombre Michael");
+    return m;
+  }
+
+  it("solo aparece el botón cuando la hora choca (y hay conversación con la clienta)", async () => {
+    const todos = (m: Awaited<ReturnType<typeof chocada>>) => (m.ultimo().markup.inline_keyboard as { text: string }[][]).flat().map((b) => b.text);
+    expect(todos(await chocada())).toEqual(["✏️ Editar", "❌ Rechazar", "📨 Ofrecer opciones a la clienta"]);
+    expect(todos(await chocada({ calendario: { eventos: [] }, cliente: {} }))).not.toContain("📨 Ofrecer opciones a la clienta");
+    expect(todos(await chocada({ calendario: { eventos: [LUX_LIBRE] } }))).not.toContain("📨 Ofrecer opciones a la clienta");
+  });
+
+  it("al pulsarlo se calculan opciones, se le envían a la clienta y el botón es de un solo uso", async () => {
+    const m = await chocada();
+    const nonce = m.nonceDe();
+    await m.boton(nonce, "op", m.ultimo().id);
+    expect(m.w.opcionesOfrecidas).toHaveLength(1);
+    expect(m.w.opcionesOfrecidas[0].n).toBeGreaterThanOrEqual(2);
+    expect(m.w.editados.at(-1)?.texto ?? "").toContain("OPCIONES ENVIADAS");
+    await m.boton(nonce, "op", m.ultimo().id);
+    expect(m.w.opcionesOfrecidas).toHaveLength(1);
+  });
+
+  it("si no se puede escribir a la clienta, Blake recupera su propuesta con botones y se le explica por qué", async () => {
+    const m = await chocada({ calendario: { eventos: [LUX_LIBRE] }, cliente: { fallaOpciones: "ventana_24h" } });
+    await m.boton(m.nonceDe(), "op", m.ultimo().id);
+    expect(m.w.opcionesOfrecidas).toHaveLength(0);
+    expect(m.ultimo().texto).toContain("No he podido ofrecer opciones");
+    expect(m.ultimo().texto).toContain("más de 24 h");
+    expect(m.botones()).toContain("✏️ Editar");
   });
 });

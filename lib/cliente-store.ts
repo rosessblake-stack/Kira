@@ -5,10 +5,11 @@ import type { Reserva } from "./proposal-flow";
 /** Persistencia de la conversación con la clienta sobre Supabase (solo servidor, clave service_role). */
 
 /** Fases en las que la conversación sigue viva. «liberada» tiene la reserva cancelada (el hueco está libre) pero la clienta aún puede decir «hecho». */
-const FASES_ACTIVAS: Fase[] = ["precio_enviado", "pago_pedido", "pago_declarado", "liberada"];
+const FASES_ACTIVAS: Fase[] = ["precio_enviado", "pago_pedido", "pago_declarado", "liberada", "opciones_enviadas"];
 /** Fases con plazo propio que cierra el temporizador (en «pago_declarado» decide Blake). */
-const FASES_CON_PLAZO: Fase[] = ["precio_enviado", "pago_pedido", "liberada"];
-const ESTADOS_VIVOS = ["pendiente_pago", "cancelada"];
+const FASES_CON_PLAZO: Fase[] = ["precio_enviado", "pago_pedido", "liberada", "opciones_enviadas"];
+/** «propuesta» solo vale para «opciones_enviadas» (la clienta aún no tiene la cita aprobada). */
+const ESTADOS_VIVOS = ["pendiente_pago", "cancelada", "propuesta"];
 const CLAVE_BIZUM = "bizum_numero";
 
 function ok(what: string, error: { message: string } | null) {

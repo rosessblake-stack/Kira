@@ -1,6 +1,7 @@
 import { euros } from "./panel-rules";
 import { fechaLarga, partesEn } from "./agenda";
 import { evaluarHueco, textoChoques, type ResultadoAgenda } from "./agenda-eventos";
+import { DIAS_BUSQUEDA, calcularOpciones, lineaOpcion, type OpcionHueco } from "./opciones";
 import { eventoDeReserva, type AgendaPort } from "./evento";
 import { idDeEvento } from "./google-calendar";
 import { describirFalloGoogle } from "./google-oauth";
@@ -78,7 +79,7 @@ export type Reserva = {
   /** Evento de Google Calendar de esta reserva (lo guarda Kira al aprobar: solo se borran eventos con este id). */
   calendar_event_id?: string | null;
   /** En qué punto de la conversación con la clienta está (lib/cliente-flow.ts). */
-  client_phase?: "precio_enviado" | "pago_pedido" | "pago_declarado" | "liberada" | "confirmada" | "cerrada" | null;
+  client_phase?: "precio_enviado" | "pago_pedido" | "pago_declarado" | "liberada" | "opciones_enviadas" | "confirmada" | "cerrada" | null;
   /** Plazo de la fase actual (si vence, el temporizador cierra la reserva). */
   payment_deadline?: string | null;
   approved_by_telegram_user: number | null;
@@ -158,6 +159,8 @@ export interface FlowDeps {
     alAprobar(r: Reserva): Promise<void>;
     alConfirmarBlake(r: Reserva, invitado: boolean): Promise<void>;
     alCancelarBlake(r: Reserva): Promise<void>;
+    /** «Ofrecer opciones»: le escribe a la clienta los huecos alternativos y espera su número. */
+    ofrecerOpciones?(r: Reserva, opciones: OpcionHueco[]): Promise<{ ok: true } | { ok: false; motivo: string }>;
   };
   /** Reservas que pueden haberse quedado sin botones (propuestas y citas provisionales), las más recientes primero. */
   listarPendientes(): Promise<Reserva[]>;
@@ -182,7 +185,9 @@ export interface ProposalPort {
    * lectura, pero no se escribe a la clienta. `alCrear` guarda las fotos antes de la propuesta. Devuelve el id de la conversación.
    */
   recibirSolicitud(chatId: number, s: SolicitudManychat, alCrear?: (conversationId: string) => Promise<void>): Promise<string | null>;
-  boton(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "ok" | "ed" | "no" }): Promise<void>;
+  boton(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "ok" | "ed" | "no" | "op" }): Promise<void>;
+  /** Vuelve a mandar a Blake la propuesta de una reserva (p. ej. cuando la clienta elige una de las opciones). */
+  reenviarPropuesta(chatId: number, reservaId: string, prefijo?: string): Promise<void>;
   /** Botones de una cita ya aprobada con reserva provisional en el calendario: señal recibida / cancelar. */
   botonCita(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "pay" | "del" }): Promise<void>;
   /** /pendientes: vuelve a mandar los botones que se hayan perdido (reservas provisionales y propuestas sin botones). */
@@ -198,13 +203,14 @@ export const EDICION_CADUCA_MIN = 30;
 const aprobable = (r: Pick<Reserva, "price_cents" | "starts_at" | "ends_at">) =>
   r.price_cents !== null && Boolean(r.starts_at) && Boolean(r.ends_at);
 
-const teclado = (nonce: string, puedeAprobar: boolean) => ({
+const teclado = (nonce: string, puedeAprobar: boolean, puedeOfrecer = false) => ({
   inline_keyboard: [
     [
       ...(puedeAprobar ? [{ text: "✅ Aprobar", callback_data: `p:${nonce}:ok` }] : []),
       { text: "✏️ Editar", callback_data: `p:${nonce}:ed` },
       { text: "❌ Rechazar", callback_data: `p:${nonce}:no` },
     ],
+    ...(puedeOfrecer ? [[{ text: "📨 Ofrecer opciones a la clienta", callback_data: `p:${nonce}:op` }]] : []),
   ],
 });
 
@@ -379,6 +385,17 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     }
   }
 
+  /** «Ofrecer opciones»: solo si la hora choca con otra cita, hay conversación con la clienta y todavía no se ha ofrecido nada. */
+  function puedeOfrecerOpciones(r: Reserva, agenda: ResultadoAgenda): boolean {
+    return Boolean(deps.cliente?.ofrecerOpciones && r.conversation_id && r.starts_at && r.ends_at && !r.client_phase && agenda.estado === "ok" && agenda.hueco.choques.length > 0);
+  }
+
+  async function reenviarPropuesta(chatId: number, reservaId: string, prefijo = ""): Promise<void> {
+    const r = await deps.leerReserva(reservaId);
+    if (r.status !== "propuesta") return;
+    await enviarPropuesta(chatId, r, prefijo);
+  }
+
   async function enviarPropuesta(chatId: number, r: Reserva, prefijo = ""): Promise<void> {
     const spec = r.spec;
     const guardado = resultadoGuardado(r);
@@ -406,7 +423,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const texto = `${prefijo}${textoPropuesta(prop, spec, { mensajeCliente: spec.mensaje_cliente, esPrueba: actualizada.is_test, perfil, fotos, agenda })}`;
     let id: number | null;
     try {
-      id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada) && prop.faltan.length === 0), { plegable: resumenCortoPropuesta(prop, spec, actualizada.is_test) });
+      id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada) && prop.faltan.length === 0, puedeOfrecerOpciones(actualizada, agenda)), { plegable: resumenCortoPropuesta(prop, spec, actualizada.is_test) });
     } catch (e) {
       // El mensaje no llegó: el botón no existe, así que su nonce no puede quedar vivo (si no, /pendientes no vería la propuesta).
       await deps.actualizarReserva(r.id, { proposal_nonce: null }).catch(() => undefined);
@@ -1004,7 +1021,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       return;
     }
     const dePago = lista.filter((x) => x.status === "pendiente_pago").slice(0, 6);
-    const sinBotones = lista.filter((x) => x.status === "propuesta" && !x.proposal_nonce && !x.edit_requested_at).slice(0, 6);
+    const sinBotones = lista.filter((x) => x.status === "propuesta" && !x.proposal_nonce && !x.edit_requested_at && !x.client_phase).slice(0, 6);
     if (!dePago.length && !sinBotones.length) {
       await deps.enviar(chatId, "No tienes ninguna reserva provisional esperando la señal ni propuestas sin botones.");
       return;
@@ -1029,7 +1046,39 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     }
   }
 
-  async function boton(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "ok" | "ed" | "no" }) {
+  /** «📨 Ofrecer opciones»: calcula los huecos alternativos, se los escribe a la clienta y espera su número. Si algo falla, Blake recupera su propuesta con botones. */
+  async function ofrecerOpciones(
+    b: { callbackId: string; chatId: number },
+    r: Reserva,
+    ids: { conversation_id: string | null; booking_id: string },
+    editarMensaje: (t: string) => Promise<void>,
+  ): Promise<void> {
+    const devolver = async (motivo: string) => {
+      await responder(b.callbackId, "No se han enviado");
+      await enviarPropuesta(b.chatId, await deps.leerReserva(r.id), `⚠️ No he podido ofrecer opciones: ${motivo}\n\n`);
+    };
+    if (!deps.cliente?.ofrecerOpciones || !deps.agenda || !r.starts_at || !r.ends_at) return devolver("falta el calendario o la conversación con la clienta.");
+    const lugar = contextoDe(r.spec);
+    const inicio = new Date(r.starts_at);
+    const fin = new Date(r.ends_at);
+    let opciones: OpcionHueco[];
+    try {
+      const eventos = await deps.agenda.eventosEntre(new Date(inicio.getTime() - DIA_MS), new Date(inicio.getTime() + (DIAS_BUSQUEDA + 2) * DIA_MS));
+      const hueco = evaluarHueco(inicio, fin, eventos, lugar.zonaHoraria, { excluirBookingId: r.id, horario: lugar.reglas.horario });
+      opciones = calcularOpciones({ inicio, fin, hueco, eventos, zona: lugar.zonaHoraria, reglas: lugar.reglas, ahora: deps.now(), excluirBookingId: r.id });
+    } catch (e) {
+      await deps.logEvent({ source: "calendar", kind: "agenda_lectura_fallo", level: "error", summary: describirFalloGoogle(e), ...ids });
+      return devolver(`no he podido leer tu calendario (${describirFalloGoogle(e)}).`);
+    }
+    if (!opciones.length) return devolver("no encuentro huecos libres cerca de esa hora. Cambia la fecha con Editar o escríbele tú.");
+    const envio = await deps.cliente.ofrecerOpciones(r, opciones);
+    if (!envio.ok) return devolver(`no he podido escribir a la clienta (${envio.motivo === "ventana_24h" ? "han pasado más de 24 h desde su último mensaje" : envio.motivo === "canal_no_conectado" ? "Kira todavía no escribe por Instagram: modo sombra, escríbele tú" : envio.motivo}).`);
+    await responder(b.callbackId, "📨 Opciones enviadas");
+    await editarMensaje(`${r.is_test ? "🧪 PRUEBA · " : ""}📨 OPCIONES ENVIADAS a ${r.client_name ?? "la clienta"}\n\n${opciones.map((o, i) => `${i + 1}) ${lineaOpcion(o, lugar.zonaHoraria)}`).join("\n")}\n\nCuando conteste con un número te llega la propuesta nueva para aprobar.`);
+    await deps.logEvent({ source: "telegram", kind: "opciones_ofrecidas", summary: `Blake ofreció ${opciones.length} opciones de hueco a la clienta`, detail: { opciones: opciones.length }, ...ids });
+  }
+
+  async function boton(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "ok" | "ed" | "no" | "op" }) {
     const r = await deps.verReservaPorNonce(b.nonce);
     if (!r || r.status !== "propuesta") {
       await responder(b.callbackId, "Ya procesado");
@@ -1055,6 +1104,11 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
         await deps.logEvent({ source: "telegram", kind: "editar_mensaje_fallo", level: "warn", summary: msg(e), ...ids });
       }
     };
+
+    if (b.accion === "op") {
+      await ofrecerOpciones(b, r, ids, editarMensaje);
+      return;
+    }
 
     if (b.accion === "ok" && (await calendarioActivo())) {
       await aprobarConCalendario(b, r, ids, editarMensaje);
@@ -1158,5 +1212,5 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     return true;
   }
 
-  return { simular, recibirSolicitud, boton, botonCita, pendientes, textoLibre, cancelarEdicion };
+  return { simular, recibirSolicitud, boton, botonCita, reenviarPropuesta, pendientes, textoLibre, cancelarEdicion };
 }

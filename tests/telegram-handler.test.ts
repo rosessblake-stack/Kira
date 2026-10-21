@@ -66,6 +66,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       return `https://kira.test/panel/entrar?t=${LINK_TOKEN}`;
     },
     proposals: {
+      async reenviarPropuesta() {},
       async simular(chatId, texto, alCrear) {
         calls.prop.simular.push({ chatId, texto, conAdjunto: Boolean(alCrear) });
         // Como el flujo real: crea la conversación y ejecuta el adjunto enseguida.
@@ -85,6 +86,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       async borrarViaje(chatId, texto) { calls.trips.push({ k: "borrar", chatId, texto }); },
     },
     client: {
+      async ofrecerOpciones() { return { ok: true as const }; },
       async alAprobar() {},
       async alConfirmarBlake() {},
       async alCancelarBlake() {},

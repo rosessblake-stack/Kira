@@ -63,6 +63,7 @@ function mundo(op: Opciones = {}) {
     fallaReservarHueco: op.fallaReservarHueco ?? false,
     eventosAgenda: op.agenda ?? ([] as import("../lib/agenda-eventos").EventoAgenda[]),
     registrosRetirados: [] as string[],
+    nuevas: [] as string[],
     marcados: 0,
     conversacionEstado: "" as string,
     pausada: op.pausada ?? false,
@@ -131,13 +132,14 @@ function mundo(op: Opciones = {}) {
       return structuredClone(reserva);
     },
     async reservaActivaDe() {
-      return (reserva.status === "pendiente_pago" || reserva.status === "cancelada") && ["precio_enviado", "pago_pedido", "pago_declarado", "liberada"].includes(reserva.client_phase ?? "") ? structuredClone(reserva) : null;
+      return (reserva.status === "pendiente_pago" || reserva.status === "cancelada" || reserva.status === "propuesta") && ["precio_enviado", "pago_pedido", "pago_declarado", "liberada", "opciones_enviadas"].includes(reserva.client_phase ?? "") ? structuredClone(reserva) : null;
     },
     async reservaDePruebaActiva() {
       return reserva.is_test && (reserva.status === "pendiente_pago" || reserva.status === "cancelada") && ["precio_enviado", "pago_pedido", "pago_declarado", "liberada"].includes(reserva.client_phase ?? "") ? structuredClone(reserva) : null;
     },
+    async nuevaPropuesta(_r, prefijo) { w.nuevas.push(prefijo); },
     async vencidas(ahora) {
-      return ["precio_enviado", "pago_pedido", "liberada"].includes(reserva.client_phase ?? "") && reserva.payment_deadline && Date.parse(reserva.payment_deadline) <= ahora.getTime() ? [structuredClone(reserva)] : [];
+      return ["precio_enviado", "pago_pedido", "liberada", "opciones_enviadas"].includes(reserva.client_phase ?? "") && reserva.payment_deadline && Date.parse(reserva.payment_deadline) <= ahora.getTime() ? [structuredClone(reserva)] : [];
     },
   };
   const flujo = crearFlujoCliente(deps);
@@ -631,5 +633,86 @@ describe("/clienta y /bizum", () => {
     expect(m.avisos().at(-1)).toContain("al 662018425");
     await m.flujo.bizum(ADMIN, "");
     expect(m.avisos().at(-1)).toContain("es el 662018425");
+  });
+});
+
+describe("hora ocupada: opciones de hueco que la clienta elige con un número", () => {
+  const OPCIONES = [
+    { inicio: "2026-10-24T08:00:00.000Z", fin: "2026-10-24T10:30:00.000Z" },
+    { inicio: "2026-10-24T12:00:00.000Z", fin: "2026-10-24T14:30:00.000Z" },
+    { inicio: "2026-10-26T10:00:00.000Z", fin: "2026-10-26T12:30:00.000Z" },
+  ];
+  async function conOpciones(op: Opciones = {}) {
+    const m = mundo(op);
+    m.w.reserva.status = "propuesta" as never;
+    m.w.reserva.calendar_event_id = null;
+    const r = await m.flujo.ofrecerOpciones(structuredClone(m.w.reserva), OPCIONES);
+    return { m, r };
+  }
+
+  it("ofrecerOpciones escribe las opciones numeradas, guarda la fase con plazo de 20 h y las deja en la reserva", async () => {
+    const { m, r } = await conOpciones();
+    expect(r).toEqual({ ok: true });
+    expect(m.w.paraClienta).toHaveLength(1);
+    expect(m.w.paraClienta[0]).toContain("1️⃣");
+    expect(m.w.paraClienta[0]).toContain("3️⃣");
+    expect(m.w.paraClienta[0]).not.toContain("4️⃣");
+    expect(m.w.reserva.client_phase).toBe("opciones_enviadas");
+    expect(Date.parse(m.w.reserva.payment_deadline!)).toBe(Date.parse(T0) + PLAZO_PRECIO_HORAS * 3_600_000);
+    expect(m.w.reserva.spec.opciones_hueco).toHaveLength(3);
+  });
+
+  it("si no se puede escribir a la clienta (ventana de 24 h) devuelve el motivo y NO deja la fase puesta", async () => {
+    const viejo = new Date(Date.parse(T0) - VENTANA_MS - 60_000).toISOString();
+    const { m, r } = await conOpciones({ ultimoMensaje: viejo });
+    expect(r).toEqual({ ok: false, motivo: "ventana_24h" });
+    expect(m.w.reserva.client_phase).toBeNull();
+  });
+
+  it("la clienta contesta «2»: la reserva pasa a ese hueco, vuelve a fase vacía y Blake recibe la propuesta nueva", async () => {
+    const { m } = await conOpciones();
+    await m.flujo.respuestaClienta("conv-1", "2");
+    expect(m.w.reserva.starts_at).toBe(OPCIONES[1].inicio);
+    expect(m.w.reserva.ends_at).toBe(OPCIONES[1].fin);
+    expect(m.w.reserva.client_phase).toBeNull();
+    expect(m.w.reserva.spec.fecha).toBe("2026-10-24");
+    expect(m.w.reserva.spec.hora).toBe("14:00"); // 12:00 UTC = 14:00 en Madrid (horario de verano)
+    expect(m.w.nuevas).toHaveLength(1);
+    expect(m.w.nuevas[0]).toContain("opción 2");
+    expect(m.w.paraClienta.at(-1)).toContain("Te apunto");
+    expect(m.tipos()).toContain("clienta_elige_opcion");
+  });
+
+  it("acepta «opción 3», «la 1» y el emoji; rechaza un número fuera de rango, preguntas y frases", async () => {
+    for (const [txt, esperado] of [["opción 3", 3], ["la 1", 1], ["3️⃣", 3]] as const) {
+      const { m } = await conOpciones();
+      await m.flujo.respuestaClienta("conv-1", txt);
+      expect(m.w.reserva.starts_at).toBe(OPCIONES[esperado - 1].inicio);
+    }
+    for (const txt of ["4", "0", "¿puede ser otro día?", "la 2 pero más tarde", "vale"]) {
+      const { m } = await conOpciones();
+      await m.flujo.respuestaClienta("conv-1", txt);
+      expect(m.w.reserva.client_phase).toBe("opciones_enviadas");
+      expect(m.w.nuevas).toHaveLength(0);
+      expect(m.avisos().at(-1)).toContain("esperaba que eligiera una de las opciones");
+    }
+  });
+
+  it("dos respuestas seguidas: solo gana una", async () => {
+    const { m } = await conOpciones();
+    await Promise.all([m.flujo.respuestaClienta("conv-1", "1"), m.flujo.respuestaClienta("conv-1", "1")]);
+    expect(m.w.nuevas.length).toBeLessThanOrEqual(1);
+  });
+
+  it("sin respuesta en 20 h: se cierra en silencio y Blake lo sabe (sin evento que borrar)", async () => {
+    const { m } = await conOpciones();
+    m.w.avanza(PLAZO_PRECIO_HORAS * 60 + 1);
+    const r = await m.flujo.procesarVencidas();
+    expect(r.cerradas).toBe(1);
+    expect(m.w.reserva.status).toBe("expirada");
+    expect(m.w.reserva.client_phase).toBe("cerrada");
+    expect(m.w.borrados).toHaveLength(0);
+    expect(m.w.paraClienta).toHaveLength(1); // solo las opciones: nada más a la clienta
+    expect(m.avisos().at(-1)).toContain("no eligió ninguno de los huecos");
   });
 });
