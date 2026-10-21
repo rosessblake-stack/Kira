@@ -2,6 +2,7 @@ import { partesEn } from "./agenda";
 import { limpiarTexto } from "./intents";
 import type { Reserva } from "./proposal-flow";
 import { contextoDe } from "./proposal";
+import { lineaServicio } from "./evento";
 import type { Ubicacion } from "./ubicacion";
 
 /**
@@ -45,8 +46,17 @@ export function datosDeReserva(r: Reserva): DatosFicha | null {
     nombre: nombre && nombre !== "Cliente sin nombre" ? nombre : null,
     email: EMAIL_RE.test(email) ? email : null,
     ubicacion: contextoDe(r.spec ?? {}).ubicacion,
-    servicio: limpiarTexto(r.service_description ?? "", 120) || null,
+    // El nombre corto del servicio, como lo dice Blake («6 Flat Twist»), no la descripción larga de la propuesta.
+    servicio: nombreCortoDeServicio(r),
   };
+}
+
+function nombreCortoDeServicio(r: Reserva): string | null {
+  try {
+    return limpiarTexto(lineaServicio(r.spec), 80) || null;
+  } catch {
+    return null;
+  }
 }
 
 /** Normaliza lo que escribe Blake («@Marta.Trenzas») a un usuario válido, o null. */
@@ -58,6 +68,8 @@ export function normalizarInstagram(t: string): string | null {
 /** La respuesta para ManyChat: todo texto (ManyChat condiciona mejor con texto), solo lo básico y todos los campos siempre presentes. */
 export type RespuestaConocer = {
   conocida: "si" | "no";
+  /** El saludo ya escrito (plantilla de Kira, sin Claude): ManyChat solo lo muestra. */
+  saludo: string;
   nombre: string;
   email: string;
   pais: "España" | "Miami" | "";
@@ -66,12 +78,27 @@ export type RespuestaConocer = {
   pelo_guardado: "si" | "no";
 };
 
-export const NO_CONOCIDA: RespuestaConocer = { conocida: "no", nombre: "", email: "", pais: "", citas: "0", ultimo_servicio: "", pelo_guardado: "no" };
+export const NO_CONOCIDA: RespuestaConocer = { conocida: "no", saludo: "", nombre: "", email: "", pais: "", citas: "0", ultimo_servicio: "", pelo_guardado: "no" };
 
-export function respuestaConocer(f: Ficha | null, peloGuardado: boolean): RespuestaConocer {
+/**
+ * «¡Hola, Marta! 🖤 Qué ganas de verte otra vez. Hace 3 semanas te hice 6 Flat Twist, ¿qué tal te quedaron? ¿Eres tú?»
+ * Solo se menciona el servicio si hubo una cita confirmada y el nombre es corto y limpio (las fichas antiguas pueden traer la descripción larga).
+ */
+export function saludoParaClienta(f: Ficha, ahora: Date): string {
+  const hola = f.nombre ? `¡Hola, ${limpiarTexto(f.nombre, 40)}!` : "¡Hola!";
+  const base = `${hola} 🖤 Qué ganas de verte otra vez.`;
+  const servicio = f.ultimo_servicio && f.ultimo_servicio.length <= 40 && !f.ultimo_servicio.includes("·") ? f.ultimo_servicio : null;
+  if (f.citas_confirmadas < 1 || !servicio) return `${base} Te reconozco de otras veces. ¿Eres tú?`;
+  const dias = f.ultima_cita_at ? Math.floor((ahora.getTime() - Date.parse(f.ultima_cita_at)) / 86_400_000) : 0;
+  const cuando = dias < 7 ? "La última vez" : dias < 60 ? `Hace ${Math.round(dias / 7)} semanas` : `Hace ${Math.round(dias / 30)} meses`;
+  return `${base} ${cuando} te hice ${servicio}, ¿qué tal te quedó? ¿Eres tú?`;
+}
+
+export function respuestaConocer(f: Ficha | null, peloGuardado: boolean, ahora: Date = new Date()): RespuestaConocer {
   if (!f) return NO_CONOCIDA;
   return {
     conocida: "si",
+    saludo: saludoParaClienta(f, ahora),
     nombre: f.nombre ?? "",
     email: f.email ?? "",
     pais: f.ubicacion === "miami" ? "Miami" : "España",
@@ -138,7 +165,7 @@ export function crearFlujoClientas(deps: ClientasDeps): ClientasPort {
     const desde = new Date(deps.now().getTime() - DIAS_FOTO_PELO * 86_400_000);
     const pelo = await deps.hayFotoPelo(ig, desde).catch(() => false);
     await deps.logEvent({ source: "system", kind: "clienta_reconocida", summary: "Una clienta que vuelve ha sido reconocida", detail: { citas: f.citas_confirmadas, pelo_guardado: pelo } }).catch(() => undefined);
-    return respuestaConocer(f, pelo);
+    return respuestaConocer(f, pelo, deps.now());
   }
 
   const fecha = (iso: string | null) => {

@@ -67,7 +67,7 @@ describe("conocer (lo que recibe ManyChat)", () => {
   it("clienta conocida: solo datos básicos, todo texto, con la foto del pelo si es reciente", async () => {
     const m = montar(FICHA, true);
     const r = await m.port.conocer("@Marta.Trenzas");
-    expect(r).toEqual({ conocida: "si", nombre: "Marta", email: "marta@correo.com", pais: "España", citas: "2", ultimo_servicio: "6 flat twist", pelo_guardado: "si" });
+    expect(r).toEqual({ conocida: "si", saludo: "¡Hola, Marta! 🖤 Qué ganas de verte otra vez. Hace 2 semanas te hice 6 flat twist, ¿qué tal te quedó? ¿Eres tú?", nombre: "Marta", email: "marta@correo.com", pais: "España", citas: "2", ultimo_servicio: "6 flat twist", pelo_guardado: "si" });
     expect(m.llamadas.find((l) => l.startsWith("pelo:"))).toBe(`pelo:${new Date(Date.parse("2026-10-21T10:00:00Z") - DIAS_FOTO_PELO * 86_400_000).toISOString()}`);
   });
   it("pelo_guardado «no» si la foto es antigua", async () => {
@@ -78,7 +78,7 @@ describe("conocer (lo que recibe ManyChat)", () => {
     expect(await montar(FICHA).port.conocer("???")).toEqual(NO_CONOCIDA);
   });
   it("nunca devuelve precios ni fotos: solo las 7 claves previstas", async () => {
-    expect(Object.keys(await montar(FICHA).port.conocer("marta.trenzas")).sort()).toEqual(["citas", "conocida", "email", "nombre", "pais", "pelo_guardado", "ultimo_servicio"]);
+    expect(Object.keys(await montar(FICHA).port.conocer("marta.trenzas")).sort()).toEqual(["citas", "conocida", "email", "nombre", "pais", "pelo_guardado", "saludo", "ultimo_servicio"]);
   });
 });
 
@@ -92,5 +92,21 @@ describe("/ficha y /borrarficha", () => {
     expect(m.llamadas).toContain("log:ficha_borrada");
     await m.port.ver(1, "/ficha");
     expect(m.msgs[2]).toContain("Dime de quién");
+  });
+});
+
+describe("saludo", () => {
+  const ahora = new Date("2026-10-21T10:00:00Z");
+  const f = (o: Partial<Ficha> = {}): Ficha => ({ ...FICHA, ...o });
+  it("sin cita confirmada o con descripción larga antigua, no menciona el servicio", async () => {
+    const { saludoParaClienta } = await import("../lib/clientas");
+    expect(saludoParaClienta(f({ citas_confirmadas: 0 }), ahora)).toBe("¡Hola, Marta! 🖤 Qué ganas de verte otra vez. Te reconozco de otras veces. ¿Eres tú?");
+    expect(saludoParaClienta(f({ ultimo_servicio: "6 trenzas · pegadas · con extensiones rojo" }), ahora)).toContain("Te reconozco de otras veces");
+  });
+  it("calcula «hace N semanas / meses» y «la última vez»", async () => {
+    const { saludoParaClienta } = await import("../lib/clientas");
+    expect(saludoParaClienta(f({ ultima_cita_at: "2026-10-18T10:00:00Z" }), ahora)).toContain("La última vez te hice 6 flat twist");
+    expect(saludoParaClienta(f({ ultima_cita_at: "2026-07-21T10:00:00Z" }), ahora)).toContain("Hace 3 meses te hice");
+    expect(saludoParaClienta(f({ nombre: null }), ahora).startsWith("¡Hola! 🖤")).toBe(true);
   });
 });

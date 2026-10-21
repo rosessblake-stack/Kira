@@ -1501,7 +1501,7 @@ try {
   check("P3. un cuerpo roto NO rompe el flujo de ManyChat: 200 y «no la conozco»", rota.status === 200 && jotaRota.conocida === "no");
   tables.clients.push({ id: "f-1", instagram: "marta.trenzas", nombre: "Marta", email: "marta@correo.com", ubicacion: "espana", created_at: "2026-09-01T10:00:00Z", updated_at: "2026-10-01T10:00:00Z", ultima_solicitud_at: null, ultima_cita_at: "2026-10-05T10:00:00Z", citas_confirmadas: 2, ultimo_servicio: "6 flat twist" });
   const conocida = await (await conocer({ id: "mc-9", ig_username: "@Marta.Trenzas" })).json();
-  check("P4. con ficha: nombre, email, ciudad, nº de citas y último servicio (todo texto) y nada más", conocida.conocida === "si" && conocida.nombre === "Marta" && conocida.email === "marta@correo.com" && conocida.pais === "España" && conocida.citas === "2" && conocida.ultimo_servicio === "6 flat twist" && Object.keys(conocida).sort().join() === "citas,conocida,email,nombre,ok,pais,pelo_guardado,ultimo_servicio");
+  check("P4. con ficha: nombre, email, ciudad, nº de citas y último servicio (todo texto) y nada más", conocida.conocida === "si" && conocida.nombre === "Marta" && conocida.email === "marta@correo.com" && conocida.pais === "España" && conocida.citas === "2" && conocida.ultimo_servicio === "6 flat twist" && Object.keys(conocida).sort().join() === "citas,conocida,email,nombre,ok,pais,pelo_guardado,saludo,ultimo_servicio");
   const parecida = await (await conocer({ ig_username: "marta_trenzas" })).json();
   check("P5. un usuario parecido (con _ en vez de .) NO se confunde con ella", parecida.conocida === "no");
   await escribe("/ficha @marta.trenzas");

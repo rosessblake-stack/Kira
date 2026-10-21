@@ -6,7 +6,7 @@ país y la foto del pelo (si la tiene de menos de 60 días) y solo pregunta lo q
 largo y fecha**.
 
 ## 1. Campos nuevos en ManyChat (Ajustes → Campos personalizados → Crear campo, tipo Texto)
-`Conocida` · `Pelo_Guardado` · `Ultimo_Servicio` · `Citas`
+`Conocida` · `Saludo` · `Soy_Yo` · `Pelo_Guardado` · `Ultimo_Servicio` · `Citas`
 (`Nombre`, `email` y `pais de cliente` ya los tienes.)
 
 ## 2. Primer bloque del flujo: «Solicitud externa» (Acciones)
@@ -19,6 +19,7 @@ largo y fecha**.
 | La respuesta trae | Se guarda en |
 |---|---|
 | `conocida` | Conocida |
+| `saludo` | Saludo (el mensaje ya escrito por Kira: «¡Hola, Marta! 🖤 Qué ganas de verte otra vez. Hace 3 semanas te hice 6 Flat Twist, ¿qué tal te quedó? ¿Eres tú?») |
 | `nombre` | Nombre |
 | `email` | email |
 | `pais` | pais de cliente |
