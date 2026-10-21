@@ -122,6 +122,9 @@ export interface FlowDeps {
   crearConversacion(canal: "prueba" | "instagram", ref: string, nombre: string): Promise<string>;
   /** Mensajes de la clienta en la última hora (para el límite de ritmo de las solicitudes reales). */
   contarMensajesClienteUltimaHora?(conversationId: string): Promise<number>;
+  /** Tope de solicitudes por clienta y día (0 = sin límite) y cuántas lleva ya en las últimas 24 h. */
+  limiteSolicitudesDia?(): Promise<number>;
+  contarSolicitudesDia?(conversationId: string): Promise<number>;
   /** Visión: las fotos guardadas de la conversación (la última de referencia y la última del pelo), ya descargadas. */
   fotosParaLeer?(conversationId: string): Promise<FotoParaLeer[]>;
   /** Visión: Claude lee las fotos. Solo se llama en solicitudes reales (Instagram). */
@@ -522,6 +525,16 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
 
     // 3. Límites de gasto.
     const mensajesHora = real && deps.contarMensajesClienteUltimaHora ? await deps.contarMensajesClienteUltimaHora(convId) : 1;
+    // Tope diario de solicitudes de una misma clienta (se cambia con /limite; 0 = sin límite).
+    if (real && deps.limiteSolicitudesDia && deps.contarSolicitudesDia) {
+      const tope = await deps.limiteSolicitudesDia().catch(() => 0);
+      const hoy = tope > 0 ? await deps.contarSolicitudesDia(convId).catch(() => 0) : 0;
+      if (tope > 0 && hoy > tope) {
+        await deps.logSecurity({ kind: "limite_de_peticiones", source: "claude", conversation_id: convId, detail: { motivo: "solicitudes_dia", solicitudes: hoy, tope } });
+        await avisarADerivar(chatId, convId, `Esta clienta ya ha mandado ${hoy} solicitudes en las últimas 24 h (tope: ${tope}): no se clasifica. Puedes cambiarlo con /limite.`, texto, { motivo: "solicitudes_dia" }, canal);
+        return;
+      }
+    }
     const limite = superaLimites({ mensajesClienteUltimaHora: mensajesHora, llamadasClaudeHoy: await deps.contarLlamadasClaudeHoy() });
     if (limite) {
       await deps.logSecurity({ kind: "limite_de_peticiones", source: "claude", conversation_id: convId, detail: { motivo: limite } });

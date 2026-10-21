@@ -1,3 +1,4 @@
+import { contarSolicitudesDia, leerLimiteDia } from "./limite-solicitudes";
 import { randomUUID } from "node:crypto";
 import { clasificarConClaude, leerFotosConClaude, type EjemploParaClaude, type FotoParaLeer } from "./claude";
 import { EJEMPLOS_POR_ESTILO_A_CLAUDE, NOMBRE_ESTILO_EJEMPLO, type EjemplosDeps } from "./ejemplos";
@@ -65,6 +66,8 @@ export function makeFlowDeps(photos: PhotoPort, cliente: ReturnType<typeof crear
     contarLlamadasClaudeHoy: store.contarLlamadasClaudeHoy,
     crearConversacion: store.crearConversacion,
     contarMensajesClienteUltimaHora: store.contarMensajesClienteUltimaHora,
+    limiteSolicitudesDia: leerLimiteDia,
+    contarSolicitudesDia,
     fotosParaLeer: fotosParaLeerDe,
     leerFotos: async (fotos) => leerFotosConClaude(fotos, await ejemplosParaClaude()),
     guardarMensaje: store.guardarMensaje,

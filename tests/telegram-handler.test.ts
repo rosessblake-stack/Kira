@@ -101,6 +101,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
     },
     manychat: { async estado(chatId) { calls.client.push({ k: "manychat", chatId }); } },
     gasto: { async resumen(chatId) { calls.client.push({ k: "gasto", chatId }); } },
+    limite: { async manejar(chatId, argumento) { calls.client.push({ k: "limite", chatId, texto: argumento }); } },
     responder: { async manejar(chatId, argumento) { calls.client.push({ k: "responder", chatId, texto: argumento }); } },
     async calendarioEstado() { return "📅 Calendario de prueba"; },
     records: {
@@ -768,5 +769,13 @@ describe("/responder", () => {
     const { calls, deps } = setup();
     await handleTelegramRequest(SECRET, msg("/responder on", 999), admin(ADMIN), deps);
     expect(calls.client.filter((c) => c.k === "responder")).toEqual([]);
+  });
+});
+
+describe("/limite", () => {
+  it("lo manda al flujo con el argumento", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/limite off"), admin(ADMIN), deps);
+    expect(calls.client).toContainEqual({ k: "limite", chatId: ADMIN, texto: "off" });
   });
 });

@@ -304,7 +304,7 @@ export function envolverMensajeCliente(texto: string): string {
 // ---------------------------------------------------------------------------
 
 export const LIMITES = {
-  mensajesPorHoraYCliente: 10,
+  mensajesPorHoraYCliente: 30,
   llamadasClaudePorDia: 300,
 } as const;
 
