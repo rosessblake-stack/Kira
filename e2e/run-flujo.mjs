@@ -205,7 +205,7 @@ const servidorManychat = http.createServer(async (req, res) => {
     mcApi.campos.push(await leerCuerpo(req));
     return json(res, 200, { status: "success" });
   }
-  if (req.method === "POST" && ruta === "/fb/subscriber/addTagByName") return json(res, 200, { status: "success" });
+  if (req.method === "POST" && (ruta === "/fb/subscriber/addTagByName" || ruta === "/fb/subscriber/removeTagByName")) return json(res, 200, { status: "success" });
   json(res, 404, { status: "error", message: "no soportado" });
 });
 

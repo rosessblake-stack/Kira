@@ -63,6 +63,8 @@ export interface ClienteExtra {
   /** Chat privado de Blake (donde le llegan los avisos). */
   adminChatId: number | null;
   leerConversacion(id: string): Promise<ConversacionCanal | null>;
+  /** Ya no se espera su respuesta (cita confirmada, cancelada o cerrada): quita la etiqueta que la mantiene en «esperando a Kira». Opcional. */
+  liberarEspera?(conv: ConversacionCanal): Promise<void>;
   /** Escribe a la clienta por su canal. En las pruebas es un mensaje a Blake; Instagram aún no está conectado. */
   canalEnviar(conv: ConversacionCanal, texto: string): Promise<ResultadoEnvio>;
   /** Número de Bizum de Blake (España). */
@@ -209,6 +211,12 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
 
   const motivoLegible = (m: string) => MOTIVOS[m] ?? m;
 
+  /** Quita la etiqueta «esperando_kira» (mejor esfuerzo: nunca rompe el flujo). */
+  async function liberarEspera(conv: ConversacionCanal | null): Promise<void> {
+    if (!conv || !deps.liberarEspera) return;
+    await deps.liberarEspera(conv).catch((e) => deps.logEvent({ source: "system", kind: "liberar_espera_fallo", level: "warn", summary: msg(e) }).catch(() => undefined));
+  }
+
   /** Acuse corto a la clienta cuando escribe algo que Kira no gestiona sola (como mucho uno cada ACUSE_CADA_HORAS h). Nunca lanza. */
   async function acusar(r: Reserva, conv: ConversacionCanal): Promise<void> {
     try {
@@ -224,6 +232,7 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
   async function cerrarConversacion(r: Reserva) {
     if (!r.conversation_id) return;
     await deps.actualizarConversacion(r.conversation_id, { status: "cerrada" }).catch(() => undefined);
+    await liberarEspera(await deps.leerConversacion(r.conversation_id).catch(() => null));
   }
 
   // -------------------------------------------------------------------------
@@ -341,6 +350,7 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
         if (!(await deps.estaPausada())) await acusar(pendiente, conv);
         return;
       }
+      await liberarEspera(conv); // no se espera nada de ella: que la etiqueta no la atrape la próxima vez
       await avisarBlake(`${prefijo}💬 Ha escrito la clienta (no hay nada pendiente que Kira gestione solo):\n\n«${limpiarTexto(texto, 600)}»\n\nContéstale tú.`);
       return;
     }
@@ -622,15 +632,18 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     const conv = await deps.leerConversacion(r.conversation_id).catch(() => null);
     const envio = await enviarAClienta(conv, textoConfirmada(r, invitado), r);
     if (!envio.ok) await avisarBlake(`${marca(r)}ℹ️ No he podido confirmarle la cita a ${nombreDe(r)} por mensaje (${motivoLegible(envio.motivo)}). Díselo tú.`);
+    await liberarEspera(conv);
   }
 
   async function alCancelarBlake(r: Reserva): Promise<void> {
     const teniaAviso = r.client_phase === "precio_enviado" || r.client_phase === "pago_pedido" || r.client_phase === "pago_declarado" || r.client_phase === "confirmada";
     await deps.avanzarFase(r.id, [null, "precio_enviado", "pago_pedido", "pago_declarado", "liberada", "opciones_enviadas", "confirmada"], { client_phase: "cerrada", payment_deadline: null }).catch(() => undefined);
     // Si la clienta ya sabía de la cita (precio, Bizum o confirmada), se le dice que se ha cancelado.
-    if (!teniaAviso || !r.conversation_id) return;
+    if (!r.conversation_id) return;
     const conv = await deps.leerConversacion(r.conversation_id).catch(() => null);
+    if (!teniaAviso) return liberarEspera(conv);
     const envio = await enviarAClienta(conv, textoCitaCancelada(), r);
+    await liberarEspera(conv);
     if (!envio.ok) await avisarBlake(`${marca(r)}ℹ️ No he podido avisar a ${nombreDe(r)} de que cancelaste su cita (${motivoLegible(envio.motivo)}). Díselo tú.`);
   }
 

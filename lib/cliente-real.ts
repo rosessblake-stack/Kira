@@ -51,6 +51,13 @@ export function crearClienteReal(): ClientePort {
       // Instagram, por la API de ManyChat. Con «/responder off» (por defecto) no se escribe a nadie y Blake recibe el aviso.
       return enviarPorInstagram(conv.contact_ref, texto);
     },
+    async liberarEspera(conv) {
+      // Ya no se espera nada de ella: se quita la etiqueta para que, si vuelve a escribir la palabra del flujo, empiece de cero.
+      if (conv.canal !== "instagram") return;
+      const clave = claveManychat();
+      if (!clave) return;
+      await crearClienteManychat(clave).quitarEtiqueta(conv.contact_ref, "esperando_kira");
+    },
     bizum: clienteStore.leerBizum,
     guardarBizum: clienteStore.guardarBizum,
     avanzarFase: clienteStore.avanzarFase,
