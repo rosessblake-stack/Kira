@@ -829,9 +829,26 @@ export function aplicarCambios(spec: SpecGuardada, cambios: Cambio[]): Resultado
       case "foto_pelo":
         break;
       // …salvo la del peinado: también va al evento del calendario.
-      case "foto_referencia":
+      case "foto_referencia": {
         s.descripcion_peinado = c.v;
+        // Blake describe el peinado con sus palabras («6 flat twist pegadas, cabello largo»): si el nº de trenzas o el estilo
+        // aún no estaban fijados, se toman de ahí para que el título del evento diga «6 Flat Twist» y no «Trenzas pegadas».
+        const m = /(?:^|\D)(\d{1,2})\s*(flat\s*twists?|cornrows?|barrel\s*twists?)/i.exec(quitarAcentos(c.v));
+        const sinNumero = /(flat\s*twists?|cornrows?|barrel\s*twists?)/i.exec(quitarAcentos(c.v));
+        const nombreEstilo = (m?.[2] ?? sinNumero?.[1] ?? "").toLowerCase().replace(/\s+/g, "");
+        const estilo = nombreEstilo.startsWith("flat") ? "twist" : nombreEstilo.startsWith("cornrow") ? "cornrows" : nombreEstilo.startsWith("barrel") ? "barrel_twist" : null;
+        if (estilo && !s.servicio.estilo_pegadas) {
+          s.servicio.estilo_pegadas = estilo;
+          s.servicio.tipo_trenzado = "pegadas";
+          tocaPrecio = true;
+        }
+        const n = m ? Number(m[1]) : null;
+        if (n && n >= 1 && n <= 12 && !s.servicio.numero_trenzas) {
+          s.servicio.numero_trenzas = n;
+          tocaPrecio = true;
+        }
         break;
+      }
     }
   }
   // Si Blake fijó el precio a mano, los cambios de servicio no lo pisan.

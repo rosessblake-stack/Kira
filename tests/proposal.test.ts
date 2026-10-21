@@ -457,6 +457,22 @@ describe("parsearEdicion: descripciones de fotos", () => {
   });
 });
 
+describe("la descripción del peinado de Blake completa el servicio", () => {
+  it("«6 flat twist pegadas…» fija nº y estilo si faltaban (el título del evento dirá «6 Flat Twist») y recalcula el precio", () => {
+    const s = specReferencia({ tipo_trenzado: "pegadas" });
+    const r = aplicarCambios(s, [{ k: "foto_referencia", v: "6 flat twists pegadas cabello largo" }]);
+    expect(r.spec.servicio).toMatchObject({ numero_trenzas: 6, estilo_pegadas: "twist", tipo_trenzado: "pegadas" });
+    expect(r.recalcular).toBe(true);
+  });
+  it("no pisa lo que Blake ya fijó", () => {
+    const s = specReferencia({ tipo_trenzado: "pegadas" });
+    s.servicio.numero_trenzas = 4;
+    s.servicio.estilo_pegadas = "cornrows";
+    const r = aplicarCambios(s, [{ k: "foto_referencia", v: "6 flat twists" }]);
+    expect(r.spec.servicio).toMatchObject({ numero_trenzas: 4, estilo_pegadas: "cornrows" });
+  });
+});
+
 describe("horas en español", () => {
   it("coma decimal: 3,5 y 3", () => {
     expect(horasTexto(3.5)).toBe("3,5");
