@@ -107,15 +107,24 @@ export function crearClienteManychat(clave: string, fetchImpl: FetchManychat = f
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(contactoId) || !/^[\w\- ]{1,60}$/.test(etiqueta)) throw new ManychatError("Datos de etiqueta no válidos");
       await pedir("/fb/subscriber/addTagByName", { cuerpo: { subscriber_id: contactoId, tag_name: etiqueta } });
     },
-    /** Rellena campos personalizados del contacto (nombre exacto del campo → valor de texto). Así ManyChat no depende del «mapeo de la respuesta». */
-    async ponerCampos(contactoId: string, campos: Record<string, string>): Promise<void> {
+    /**
+     * Rellena campos personalizados del contacto (nombre exacto del campo → valor de texto), de uno en uno para saber cuál falla.
+     * Devuelve los nombres de los campos que ManyChat rechazó (no existen, tipo distinto…); no lanza por eso.
+     */
+    async ponerCampos(contactoId: string, campos: Record<string, string>): Promise<string[]> {
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(contactoId)) throw new ManychatError("El id del contacto de ManyChat no es válido");
-      const fields = Object.entries(campos)
-        .filter(([n]) => /^[\w\- ]{1,60}$/.test(n))
-        .map(([field_name, v]) => ({ field_name, field_value: txt(v, 400) }))
-        .filter((f) => f.field_value !== "");
-      if (!fields.length) return;
-      await pedir("/fb/subscriber/setCustomFields", { cuerpo: { subscriber_id: contactoId, fields } });
+      const fallan: string[] = [];
+      for (const [nombre, valor] of Object.entries(campos)) {
+        const v = txt(valor, 400);
+        if (!/^[\w\- ]{1,60}$/.test(nombre) || v === "") continue;
+        try {
+          await pedir("/fb/subscriber/setCustomFieldByName", { cuerpo: { subscriber_id: contactoId, field_name: nombre, field_value: v } });
+        } catch (e) {
+          if (e instanceof ManychatError && e.estado === 429) throw e;
+          fallan.push(nombre);
+        }
+      }
+      return fallan;
     },
     async campos(): Promise<CampoManychat[]> {
       const d = (await pedir("/fb/page/getCustomFields")) as unknown;

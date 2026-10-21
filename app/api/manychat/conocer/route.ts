@@ -41,9 +41,13 @@ export async function POST(req: Request) {
         r.conocida === "si"
           ? { Conocida: "si", Saludo: r.saludo, Nombre: r.nombre, email: r.email, "pais de cliente": r.pais, Pelo_Guardado: r.pelo_guardado, Ultimo_Servicio: r.ultimo_servicio, Citas: r.citas }
           : { Conocida: "no" };
-      await crearClienteManychat(clave)
+      const fallan = await crearClienteManychat(clave)
         .ponerCampos(contactoId, campos)
-        .catch((e) => db.logEvent("manychat", { kind: "conocer_campos_fallo", level: "warn", summary: e instanceof Error ? e.message : "error" }).catch(() => undefined));
+        .catch((e) => {
+          db.logEvent("manychat", { kind: "conocer_campos_fallo", level: "warn", summary: e instanceof Error ? e.message : "error" }).catch(() => undefined);
+          return [] as string[];
+        });
+      if (fallan.length) await db.logEvent("manychat", { kind: "conocer_campos_fallo", level: "warn", summary: `ManyChat no aceptó estos campos: ${fallan.join(", ")}`, detail: { campos: fallan } }).catch(() => undefined);
     }
     return NextResponse.json({ ok: true, ...r }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
