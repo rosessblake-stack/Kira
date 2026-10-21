@@ -11,6 +11,7 @@ import {
   limpiarTexto,
   type Clasificacion,
 } from "./intents";
+import { leerFechaHora } from "./fecha-texto";
 import { ETIQUETA_FOTO, limpiarDescripcion, type ResumenFoto } from "./fotos";
 import type { LecturaGuardada } from "./lectura-foto";
 import { avisoDeEstancia, type Estancia } from "./estancias";
@@ -544,6 +545,12 @@ export function interpretarFecha(txt: string, ahora: Date, zona: string = ZONA_M
 export function interpretarHora(txt: string): string | null {
   const m = HORA_RE.exec(txt);
   if (m) return `${m[1].padStart(2, "0")}:${m[2]}`;
+  // «5 pm», «5:30pm», «11am»
+  const ap = /^\s*(?:a\s+las\s+)?(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*([ap])\.?\s*m\.?\s*$/i.exec(txt);
+  if (ap) {
+    const h = (Number(ap[1]) % 12) + (ap[3].toLowerCase() === "p" ? 12 : 0);
+    return `${String(h).padStart(2, "0")}:${ap[2] ?? "00"}`;
+  }
   const solo = /^\s*(?:a\s+las\s+)?([01]?\d|2[0-3])\s*(?:h|horas)?\s*$/i.exec(txt);
   return solo ? `${solo[1].padStart(2, "0")}:00` : null;
 }
@@ -579,9 +586,10 @@ export function parsearEdicion(texto: string, ahora: Date, zona: string = ZONA_M
         else cambios.push({ k: "senal", centimos: Math.round(n * 100) });
         break;
       }
+      case "duracion":
       case "horas": {
         if (/^auto$/i.test(valor)) { cambios.push({ k: "horas", horas: null }); break; }
-        const n = numero(valor);
+        const n = numero(valor.replace(/\s*(?:horas?|hrs?|h)\.?$/i, ""));
         if (n === null || n < 0.5 || n > 14) err("las horas deben estar entre 0,5 y 14, por ejemplo «horas 3».");
         else cambios.push({ k: "horas", horas: Math.round(n * 2) / 2 });
         break;
@@ -653,13 +661,21 @@ export function parsearEdicion(texto: string, ahora: Date, zona: string = ZONA_M
       }
       case "fecha": {
         const f = interpretarFecha(valor, ahora, zona);
-        if (!f) { err("no entiendo la fecha; prueba «fecha 20/10 12:00»."); break; }
+        if (!f) {
+          // En palabras: «22 octubre», «22 de octubre a las 5 pm», «viernes», «mañana 11:30».
+          const completa = leerFechaHora(valor, ahora, zona);
+          const sinHora = completa ? null : leerFechaHora(`${valor} 12:00`, ahora, zona);
+          if (completa) cambios.push({ k: "fecha", fecha: completa.fecha, hora: completa.hora });
+          else if (sinHora) cambios.push({ k: "fecha", fecha: sinHora.fecha, hora: null });
+          else err("no entiendo la fecha; prueba «fecha 22 octubre», «fecha viernes 5 pm» o «fecha 20/10 12:00».");
+          break;
+        }
         cambios.push({ k: "fecha", fecha: f, hora: interpretarHora(valor.replace(/\b\d{1,2}[/\-.]\d{1,2}(?:[/\-.]\d{2,4})?\b|\b\d{4}-\d{2}-\d{2}\b/, "")) });
         break;
       }
       case "hora": {
         const h = interpretarHora(valor);
-        if (!h) err("no entiendo la hora; prueba «hora 12:00».");
+        if (!h) err("no entiendo la hora; prueba «hora 17:00» o «hora 5 pm».");
         else cambios.push({ k: "hora", hora: h });
         break;
       }

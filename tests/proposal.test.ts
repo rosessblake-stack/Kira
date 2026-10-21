@@ -544,3 +544,14 @@ describe("edición: materiales, perfil de la cita y demás datos", () => {
     expect(s.servicio.boho).toBeNull();
   });
 });
+
+describe("editar entiende fechas y horas en palabras", () => {
+  const ahora = new Date("2026-10-21T10:00:00Z");
+  it("fecha y hora como las escribe Blake", () => {
+    expect(parsearEdicion("fecha 22 octubre", ahora).cambios).toEqual([{ k: "fecha", fecha: "2026-10-22", hora: null }]);
+    expect(parsearEdicion("fecha 22 de octubre a las 5 pm", ahora).cambios).toEqual([{ k: "fecha", fecha: "2026-10-22", hora: "17:00" }]);
+    expect(parsearEdicion("hora 5 pm", ahora).cambios).toEqual([{ k: "hora", hora: "17:00" }]);
+    expect(parsearEdicion("duración 3 horas", ahora).cambios).toEqual([{ k: "horas", horas: 3 }]);
+    expect(parsearEdicion("fecha 25/10 12:00", ahora).cambios).toEqual([{ k: "fecha", fecha: "2026-10-25", hora: "12:00" }]);
+  });
+});
