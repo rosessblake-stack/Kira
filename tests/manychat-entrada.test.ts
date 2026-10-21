@@ -155,3 +155,18 @@ describe("leerRespuesta: lo que la clienta escribe después del flujo", () => {
     expect(r.ok && r.respuesta.texto).not.toMatch(/[\u0000-\u001f]/);
   });
 });
+
+describe("botones de estilo y número de trenzas", () => {
+  it("«Flat twist» y «6» llegan como estilo y número", async () => {
+    const { leerSolicitud } = await import("../lib/manychat-entrada");
+    const r = leerSolicitud({ id: "mc-1", Estilo_Trenzas: "Flat twist", Num_Trenzas: "6" });
+    expect(r.ok && r.solicitud.estilo).toBe("twist");
+    expect(r.ok && r.solicitud.numeroTrenzas).toBe(6);
+    const b = leerSolicitud({ id: "mc-1", Estilo_Trenzas: "Barrel Twist", Num_Trenzas: "Otro" });
+    expect(b.ok && b.solicitud.estilo).toBe("barrel_twist");
+    expect(b.ok && b.solicitud.numeroTrenzas).toBeNull();
+    const n = leerSolicitud({ id: "mc-1", Estilo_Trenzas: "No sé", Num_Trenzas: "{{Num_Trenzas}}" });
+    expect(n.ok && n.solicitud.estilo).toBeNull();
+    expect(n.ok && n.solicitud.numeroTrenzas).toBeNull();
+  });
+});

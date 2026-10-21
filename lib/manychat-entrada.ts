@@ -27,6 +27,9 @@ export type SolicitudManychat = {
   usoExtensiones: "si" | "no" | null;
   colorExtensiones: string | null;
   largo: string | null;
+  /** Botones «¿Qué estilo es?» y «¿Cuántas trenzas?» del flujo (cornrows / flat twist / barrel twist; «No sé» = null). */
+  estilo?: "cornrows" | "twist" | "barrel_twist" | null;
+  numeroTrenzas?: number | null;
   fechaTexto: string | null;
   /** Mensaje único que se manda a clasificar. */
   texto: string;
@@ -102,6 +105,22 @@ function ubicacionDe(v: string | null): { ubicacion: Ubicacion; dudosa: boolean 
   return { ubicacion: "espana", dudosa: true };
 }
 
+/** El botón de estilo → el valor de Kira. «No sé» y cualquier otra cosa = null (lo decide la foto o Blake). */
+export function estiloDe(v: string | null): "cornrows" | "twist" | "barrel_twist" | null {
+  const t = sinAcentos(v ?? "").replace(/[\s_-]+/g, "");
+  if (/barrel/.test(t)) return "barrel_twist";
+  if (/twist/.test(t)) return "twist";
+  if (/cornrow/.test(t)) return "cornrows";
+  return null;
+}
+
+/** «6» → 6; «Otro», «no sé», «40» → null (solo 1–30). */
+export function numeroTrenzasDe(v: string | null): number | null {
+  const m = /^\s*(\d{1,2})\s*(?:trenzas?)?\s*$/i.exec(v ?? "");
+  const n = m ? Number(m[1]) : NaN;
+  return Number.isInteger(n) && n >= 1 && n <= 30 ? n : null;
+}
+
 function extensionesDe(v: string | null): "si" | "no" | null {
   const t = sinAcentos(v ?? "").trim();
   if (/^(si|yes|s)\b/.test(t)) return "si";
@@ -161,6 +180,8 @@ export function leerSolicitud(raw: unknown): ResultadoEntrada {
     usoExtensiones: extensionesDe(primero(m, ["usoextensiones"])),
     colorExtensiones: texto(primero(m, ["colorextensiones", "clorextensiones"]), 80),
     largo: texto(primero(m, ["largotrenzas", "largo"]), 60),
+    estilo: estiloDe(primero(m, ["estilotrenzas", "estilo"])),
+    numeroTrenzas: numeroTrenzasDe(primero(m, ["numtrenzas", "numerotrenzas", "numerodetrenzas", "trenzas"])),
     fechaTexto: texto(primero(m, ["fechatexto"]), 200),
   };
   const claves = [...m.entries()]

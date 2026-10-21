@@ -1,5 +1,5 @@
 import type { Clasificacion } from "./intents";
-import { limpiarTexto } from "./intents";
+import { AVISO_TIPO_ASUMIDO, limpiarTexto } from "./intents";
 import { leerFechaHora } from "./fecha-texto";
 import type { SolicitudManychat } from "./manychat-entrada";
 
@@ -37,15 +37,22 @@ export function clasificacionDesdeFormulario(s: SolicitudManychat, ahora: Date, 
   }
   const largo = largoDelBoton(s.largo);
   if (largo.aviso) avisos.push(largo.aviso);
+  // Cornrows, flat twist y barrel twist son siempre pegadas. Un número de trenzas sin estilo = pegadas (regla de Blake, con aviso).
+  let tipo: Clasificacion["tipo_trenzado"] = null;
+  if (s.estilo) tipo = "pegadas";
+  else if (s.numeroTrenzas) {
+    tipo = "pegadas";
+    avisos.push(`${AVISO_TIPO_ASUMIDO}: pegadas (eligió ${s.numeroTrenzas} trenzas sin decir el estilo; para ti, con un número son pegadas). Corrígelo con «tipo sueltas» si no lo son.`);
+  }
   const extensiones = s.usoExtensiones === "si" ? "con" : s.usoExtensiones === "no" ? "sin" : null;
   return {
     intencion: "cita_salon",
     confianza: "alta",
     manipulacion: false,
-    tipo_trenzado: null,
-    numero_trenzas: null,
+    tipo_trenzado: tipo,
+    numero_trenzas: s.numeroTrenzas ?? null,
     tamano: null,
-    estilo_pegadas: null,
+    estilo_pegadas: s.estilo ?? null,
     extensiones,
     color_extensiones: extensiones === "con" && s.colorExtensiones ? limpiarTexto(s.colorExtensiones, 60) : null,
     boho: null,
