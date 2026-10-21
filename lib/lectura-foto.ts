@@ -55,7 +55,7 @@ DE LA FOTO DE REFERENCIA (solo lo que se vea con claridad; si dudas, "no_indicad
 - tipo_trenzado: "pegadas" (trenzas pegadas al cuero cabelludo: cornrows, feed-in, stitch), "sueltas" (box braids, knotless: trenzas que cuelgan) o "fulani".
 - numero_trenzas: cuántas trenzas se cuentan; 0 si no se pueden contar con seguridad.
 - tamano (sueltas/fulani): jumbo, large, lardium, medium, smedium, small, xs_small por el grosor.
-- estilo_pegadas: cornrows, twist o barrel_twist.
+- estilo_pegadas: cornrows (trenzas pegadas normales), twist (= flat twist: twists pegados al cuero cabelludo) o barrel_twist. Los tres son siempre "pegadas"; los twists que cuelgan sueltos son "sueltas" y aquí van en "no_indicado".
 - boho: "si" si lleva mechones sueltos ondulados tipo boho.
 - largo_extensiones: hasta dónde llegan las trenzas (nuca, hombros, media_espalda, caderas, mas_largo).
 - resumen_referencia: UNA frase en español (máx. 200 caracteres) para Blake: qué peinado es (tipo, grosor, largo, detalles como degradado, accesorios).

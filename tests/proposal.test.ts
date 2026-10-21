@@ -555,3 +555,14 @@ describe("editar entiende fechas y horas en palabras", () => {
     expect(parsearEdicion("fecha 25/10 12:00", ahora).cambios).toEqual([{ k: "fecha", fecha: "2026-10-25", hora: "12:00" }]);
   });
 });
+
+describe("flat twist, cornrows y barrel twist son trenzas pegadas", () => {
+  const ahora = new Date("2026-10-21T10:00:00Z");
+  it("«estilo flat twist» se entiende y deja el tipo en pegadas", () => {
+    const { cambios } = parsearEdicion("estilo flat twist", ahora);
+    expect(cambios).toEqual([{ k: "estilo", v: "twist" }]);
+    const s = specReferencia({ tipo_trenzado: "sueltas" });
+    expect(aplicarCambios(s, cambios).spec.servicio).toMatchObject({ tipo_trenzado: "pegadas", estilo_pegadas: "twist" });
+    expect(parsearEdicion("estilo barrel twist", ahora).cambios).toEqual([{ k: "estilo", v: "barrel_twist" }]);
+  });
+});

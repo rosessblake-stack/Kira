@@ -104,7 +104,7 @@ CAMPOS DEL SERVICIO (solo si el mensaje lo dice; si no, "no_indicado" / "" / 0. 
 - tipo_trenzado: "pegadas" (cornrows, trenzas pegadas al cuero cabelludo, feed-in, stitch), "sueltas" (box braids, knotless, trenzas que cuelgan con extensiones) o "fulani". Decir solo "N trenzas" NO basta para saber el tipo: pon "no_indicado" (la regla de Blake «con número = pegadas» la aplica el código después, no tú).
 - numero_trenzas: el número si lo dice; 0 si no.
 - tamano (solo sueltas/fulani): jumbo, large, lardium, medium, smedium, small, xs_small según el grosor que diga.
-- estilo_pegadas: cornrows, twist o barrel_twist solo si lo menciona.
+- estilo_pegadas (solo pegadas): cornrows (trenzas pegadas normales), twist (= «flat twist»: twists pegados al cuero cabelludo) o barrel_twist, solo si lo menciona. Cornrows, flat twist y barrel twist son siempre "pegadas".
 - extensiones: "con", "feedin" (si dice feed-in) o "sin"; "no_indicado" si no lo dice. color_extensiones: el color que pida (texto corto) o "".
 - boho: "si"/"no" solo si lo menciona.
 - largo_cabello: el largo del pelo NATURAL de la clienta (muy_corto, corto, nuca_hombros, media_espalda, caderas, mas_largo).

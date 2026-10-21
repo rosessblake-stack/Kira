@@ -173,7 +173,7 @@ export function leerBasico(texto: string, ahora: Date, zona: string = ZONA_MADRI
   const tam = /\b(xs[\s_-]?small|extra[\s-]?small|jumbo|large|lardium|smedium|s[\s-]?medium|medium|small)\b/.exec(t);
   const tamano = tam ? (/xs|extra/.test(tam[1]) ? "xs_small" : /^s[\s-]?medium$|smedium/.test(tam[1]) ? "smedium" : tam[1]) : NO;
 
-  const estilo = /\bbarrel[\s-]?twist\b/.test(t) ? "barrel_twist" : /\btwist\b/.test(t) ? "twist" : /\bcornrows?\b/.test(t) ? "cornrows" : NO;
+  const estilo = /\bbarrel[\s-]?twist\b/.test(t) ? "barrel_twist" : /\b(?:flat[\s-]?)?twist\b/.test(t) ? "twist" : /\bcornrows?\b/.test(t) ? "cornrows" : NO;
 
   const extensiones = /\bsin\s+extensiones\b/.test(t) ? "sin" : /\bfeed[\s-]?in\b/.test(t) ? "feedin" : /\bextensiones?\b/.test(t) ? "con" : NO;
 

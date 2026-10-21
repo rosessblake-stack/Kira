@@ -152,11 +152,14 @@ const LARGO_EXTENSIONES: Record<string, string> = {
   mas_largo: "más largo que las caderas",
 };
 
+const NOMBRE_ESTILO = { cornrows: "cornrows", twist: "flat twist", barrel_twist: "barrel twist" } as const;
+
 function describirServicio(s: SpecGuardada): string {
   const v = s.servicio;
   const partes: string[] = [];
   partes.push(v.numero_trenzas ? `${v.numero_trenzas} trenzas` : "Trenzas");
   partes.push(v.tipo_trenzado ?? "tipo sin concretar");
+  if (v.tipo_trenzado === "pegadas" && v.estilo_pegadas) partes.push(NOMBRE_ESTILO[v.estilo_pegadas]);
   if (v.tamano) partes.push(`tamaño ${v.tamano}`);
   if (v.extensiones === "con" || v.extensiones === "feedin") {
     partes.push(`con extensiones${s.color_extensiones ? ` ${s.color_extensiones}` : ""}${v.extensiones === "feedin" ? " (feed-in)" : ""}`);
@@ -452,7 +455,7 @@ export const AYUDA_EDICION = [
   "largo caderas   (hasta dónde llegan las trenzas)",
   "largo pelo hombros   (hasta dónde le llega su pelo)",
   "trenzas 6",
-  "estilo twist   (cornrows, twist o barrel_twist)",
+  "estilo flat twist   (cornrows, flat twist o barrel twist)",
   "boho si",
   "color rojo",
   "instagram usuario",
@@ -610,8 +613,10 @@ export function parsearEdicion(texto: string, ahora: Date, zona: string = ZONA_M
         break;
       }
       case "estilo": {
-        const t = ESTILOS_PEGADAS.find((x) => x === quitarAcentos(valor.toLowerCase()).replace(/[\s-]+/g, "_"));
-        if (!t) err(`el estilo debe ser ${ESTILOS_PEGADAS.join(", ")}.`);
+        const norm = quitarAcentos(valor.toLowerCase()).replace(/[\s-]+/g, "_");
+        // «flat twist» es el nombre de Blake para el twist pegado (en el sistema: «twist»).
+        const t = ESTILOS_PEGADAS.find((x) => x === (norm === "flat_twist" || norm === "flat" ? "twist" : norm === "cornrow" ? "cornrows" : norm));
+        if (!t) err("el estilo debe ser cornrows, flat twist o barrel twist.");
         else cambios.push({ k: "estilo", v: t });
         break;
       }
@@ -780,7 +785,8 @@ export function aplicarCambios(spec: SpecGuardada, cambios: Cambio[]): Resultado
       case "horas": s.horas = c.horas; break;
       case "materiales": s.materiales = c.valor; break;
       case "boho": s.servicio.boho = c.v; break;
-      case "estilo": s.servicio.estilo_pegadas = c.v; break;
+      // Cornrows, flat twist y barrel twist son siempre trenzas pegadas.
+      case "estilo": s.servicio.estilo_pegadas = c.v; s.servicio.tipo_trenzado = "pegadas"; break;
       case "largo_cabello": s.servicio.largo_cabello = c.v; break;
       case "color": s.color_extensiones = c.v; break;
       case "instagram": s.instagram = c.v; break;
