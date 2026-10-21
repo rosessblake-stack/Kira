@@ -48,6 +48,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 
+  await db.logEvent("manychat", { kind: "respuesta_recibida", summary: "Ha llegado una respuesta de una clienta desde ManyChat", detail: { caracteres: texto.length } }).catch(() => undefined);
   const raw = process.env.TELEGRAM_ADMIN_USER_ID?.trim();
   after(async () => {
     try {

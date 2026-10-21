@@ -102,6 +102,11 @@ export function crearClienteManychat(clave: string, fetchImpl: FetchManychat = f
         cuerpo: { subscriber_id: contactoId, data: { version: "v2", content: { type: "instagram", messages: [{ type: "text", text: limpio }] } } },
       });
     },
+    /** Pone una etiqueta existente al contacto (así la «Respuesta predeterminada» recoge su respuesta aunque el flujo no la haya puesto). */
+    async ponerEtiqueta(contactoId: string, etiqueta: string): Promise<void> {
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(contactoId) || !/^[\w\- ]{1,60}$/.test(etiqueta)) throw new ManychatError("Datos de etiqueta no válidos");
+      await pedir("/fb/subscriber/addTagByName", { cuerpo: { subscriber_id: contactoId, tag_name: etiqueta } });
+    },
     async campos(): Promise<CampoManychat[]> {
       const d = (await pedir("/fb/page/getCustomFields")) as unknown;
       return (Array.isArray(d) ? d : []).map((c) => ({ nombre: txt((c as Record<string, unknown>)?.name), tipo: txt((c as Record<string, unknown>)?.type, 20) })).filter((c) => c.nombre);

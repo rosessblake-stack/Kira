@@ -33,6 +33,8 @@ export function crearEnvioInstagram(deps: { activo(): Promise<boolean>; cliente(
     if (!cli) return { ok: false, motivo: "canal_no_conectado" };
     try {
       await cli.enviarTexto(contactoId, texto);
+      // Kira espera su respuesta: se pone la etiqueta que recoge la «Respuesta predeterminada» (mejor esfuerzo; el flujo también puede ponerla).
+      await cli.ponerEtiqueta(contactoId, "esperando_kira").catch(() => undefined);
       return { ok: true };
     } catch (e) {
       return { ok: false, motivo: e instanceof ManychatError ? e.message : "No se pudo enviar el mensaje por ManyChat" };

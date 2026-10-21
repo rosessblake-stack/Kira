@@ -4,9 +4,13 @@ import { crearEnvioInstagram, crearFlujoResponder } from "../lib/responder";
 
 function envio(o: { activo?: boolean; hayCliente?: boolean; falla?: Error } = {}) {
   const enviados: { id: string; texto: string }[] = [];
-  const cli = { async enviarTexto(id: string, texto: string) { if (o.falla) throw o.falla; enviados.push({ id, texto }); } } as unknown as ClienteManychat;
+  const etiquetas: string[] = [];
+  const cli = {
+    async enviarTexto(id: string, texto: string) { if (o.falla) throw o.falla; enviados.push({ id, texto }); },
+    async ponerEtiqueta(id: string, etiqueta: string) { etiquetas.push(`${id}:${etiqueta}`); },
+  } as unknown as ClienteManychat;
   const f = crearEnvioInstagram({ activo: async () => o.activo ?? true, cliente: () => (o.hayCliente === false ? null : cli) });
-  return { f, enviados };
+  return { f, enviados, etiquetas };
 }
 
 describe("envío por Instagram", () => {
@@ -14,6 +18,7 @@ describe("envío por Instagram", () => {
     const m = envio();
     expect(await m.f("777", "hola")).toEqual({ ok: true });
     expect(m.enviados).toEqual([{ id: "777", texto: "hola" }]);
+    expect(m.etiquetas).toEqual(["777:esperando_kira"]); // para que su respuesta llegue a Kira
   });
   it("apagado (modo sombra): no manda nada y devuelve «canal_no_conectado»", async () => {
     const m = envio({ activo: false });
