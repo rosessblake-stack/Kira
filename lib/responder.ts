@@ -25,7 +25,7 @@ export async function guardarResponde(activo: boolean): Promise<void> {
 }
 
 /** El envío por Instagram de la conversación con la clienta (lo que usa `canalEnviar`). */
-export function crearEnvioInstagram(deps: { activo(): Promise<boolean>; cliente(): ClienteManychat | null }) {
+export function crearEnvioInstagram(deps: { activo(): Promise<boolean>; cliente(): ClienteManychat | null; anotar?(kind: string, summary: string): Promise<void> }) {
   return async (contactoId: string, texto: string): Promise<ResultadoEnvio> => {
     // Apagado (o sin clave de ManyChat): modo sombra, no se escribe a nadie y Blake recibe el aviso.
     if (!(await deps.activo())) return { ok: false, motivo: "canal_no_conectado" };
@@ -34,7 +34,10 @@ export function crearEnvioInstagram(deps: { activo(): Promise<boolean>; cliente(
     try {
       await cli.enviarTexto(contactoId, texto);
       // Kira espera su respuesta: se pone la etiqueta que recoge la «Respuesta predeterminada» (mejor esfuerzo; el flujo también puede ponerla).
-      await cli.ponerEtiqueta(contactoId, "esperando_kira").catch(() => undefined);
+      await cli.ponerEtiqueta(contactoId, "esperando_kira").then(
+        () => deps.anotar?.("etiqueta_espera_puesta", "Etiqueta esperando_kira puesta al contacto").catch(() => undefined),
+        (e) => deps.anotar?.("etiqueta_espera_fallo", `No se pudo poner la etiqueta esperando_kira: ${e instanceof Error ? e.message : "error"}`).catch(() => undefined),
+      );
       return { ok: true };
     } catch (e) {
       return { ok: false, motivo: e instanceof ManychatError ? e.message : "No se pudo enviar el mensaje por ManyChat" };

@@ -16,6 +16,7 @@ export function crearClienteReal(): ClientePort {
   const adminChatId = raw && /^\d+$/.test(raw) ? Number(raw) : null;
   const enviarPorInstagram = crearEnvioInstagram({
     activo: leerResponde,
+    anotar: (kind, summary) => db.logEvent("manychat", { kind, level: kind.endsWith("fallo") ? "warn" : "info", summary }),
     cliente: () => {
       const clave = claveManychat();
       return clave ? crearClienteManychat(clave) : null;
