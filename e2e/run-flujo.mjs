@@ -1230,15 +1230,15 @@ try {
   check("M7. el hueco sigue en amarillo (provisional) en el calendario de Blake", eventoDeR(reservaM())?.colorId === "5");
 
   await escribe("/clienta ¿no puede ser más barato?");
-  check("M8. una pregunta no es un «vale»: Kira no decide, se lo reenvía a Blake y no contesta a la clienta", ultimo().text.includes("respóndele tú") && ultimo().text.includes("¿no puede ser más barato?") && reservaM().client_phase === "precio_enviado" && paraClienta().length === nBase);
+  check("M8. una pregunta no es un «vale»: Kira no decide, se lo reenvía a Blake y no contesta a la clienta", tg.enviados.some((m) => m.text.includes("respóndele tú") && m.text.includes("¿no puede ser más barato?")) && reservaM().client_phase === "precio_enviado" && paraClienta().length === nBase + 1 && paraClienta().at(-1).text.includes("te contesto en cuanto pueda"));
 
   await escribe("/clienta vale");
   const msgBizum = paraClienta().at(-1);
   anota("Kira (Bizum, simulado)", msgBizum.text);
-  check("M9. «vale» → se le pide el Bizum de 20 € al número de Blake, con «confirmado» y plazo", paraClienta().length === nBase + 1 && msgBizum.text.includes("Bizum de 20 € al 662018425") && msgBizum.text.includes("«confirmado»") && msgBizum.text.includes("45 minutos"));
-  check("M10. fase «pago_pedido» y plazo de 45 min; Blake recibe el aviso", reservaM().client_phase === "pago_pedido" && Math.abs(Date.parse(reservaM().payment_deadline) - (Date.now() + 45 * 60_000)) < 120_000 && ultimo().text.includes("Le he pedido el Bizum"));
+  check("M9. «vale» → se le pide el Bizum de 20 € al número de Blake, con «confirmado» y plazo", paraClienta().length === nBase + 2 && msgBizum.text.includes("Bizum de 20 € al 662018425") && msgBizum.text.includes("«confirmado»") && msgBizum.text.includes("90 minutos"));
+  check("M10. fase «pago_pedido» y plazo de 90 min; Blake recibe el aviso", reservaM().client_phase === "pago_pedido" && Math.abs(Date.parse(reservaM().payment_deadline) - (Date.now() + 90 * 60_000)) < 120_000 && ultimo().text.includes("Le he pedido el Bizum"));
   await escribe("/clienta vale");
-  check("M11. un segundo «vale» no repite el Bizum", paraClienta().length === nBase + 1);
+  check("M11. un segundo «vale» no repite el Bizum", paraClienta().length === nBase + 2);
 
   await escribe("/clienta no he confirmado todavía");
   check("M12. «no he confirmado todavía» NO confirma nada (sigue en amarillo y pendiente)", reservaM().status === "pendiente_pago" && eventoDeR(reservaM())?.colorId === "5" && ultimo().text.includes("respóndele tú"));
@@ -1272,8 +1272,8 @@ try {
   await escribe("/clienta vale");
   const idPago = reservaM().id;
   await escribe("/vencer");
-  check("M19. sin Bizum a tiempo, el plazo cierra la reserva: evento amarillo borrado (sin avisar a nadie), reserva expirada", reservaM().id === idPago && reservaM().status === "expirada" && reservaM().client_phase === "cerrada" && !eventoDeR(reservaM()) && llamadasDelete().at(-1)?.query.sendUpdates === "none");
-  check("M20. a la clienta se le dice que se libera el hueco y Blake recibe el aviso", paraClienta().at(-1).text.includes("liberado el hueco") && tg.enviados.some((m) => m.text.includes("no confirmó el Bizum en 45 min")));
+  check("M19. sin Bizum a tiempo, el plazo cierra la reserva: evento amarillo borrado (sin avisar a nadie), reserva expirada", reservaM().id === idPago && reservaM().status === "cancelada" && reservaM().client_phase === "liberada" && !eventoDeR(reservaM()) && llamadasDelete().at(-1)?.query.sendUpdates === "none");
+  check("M20. a la clienta se le dice que se libera el hueco y Blake recibe el aviso", paraClienta().at(-1).text.includes("liberado el hueco") && tg.enviados.some((m) => m.text.includes("no confirmó el Bizum en 90 min")));
 
   // Plazo de 20 h: no responde al precio (visto) → se cierra en silencio
   await aprobarMichael();
@@ -1439,24 +1439,24 @@ try {
   const rVale = await respuestaIg({ id: "mc-3001", texto: "Vale 👍" });
   await esperarHasta(() => mcApi.envios.length >= 2);
   const textoBizum = mcApi.envios[1]?.cuerpo.data.content.messages[0].text ?? "";
-  check("O11. «vale» (200 enseguida) → Kira le manda el Bizum de 20 € al número de Blake, con «confirmado» y plazo", rVale.status === 200 && textoBizum.includes("Bizum de 20 € al 662018425") && textoBizum.includes("«confirmado»") && textoBizum.includes("45 minutos") && resCarla().client_phase === "pago_pedido");
+  check("O11. «vale» (200 enseguida) → Kira le manda el Bizum de 20 € al número de Blake, con «confirmado» y plazo", rVale.status === 200 && textoBizum.includes("Bizum de 20 € al 662018425") && textoBizum.includes("«confirmado»") && textoBizum.includes("90 minutos") && resCarla().client_phase === "pago_pedido");
   const dupVale = await (await respuestaIg({ id: "mc-3001", texto: "Vale 👍" })).json();
   check("O12. si ManyChat reintenta el mismo mensaje no se contesta dos veces", dupVale.duplicado === true && mcApi.envios.length === 2);
 
   const n4 = tg.enviados.length;
   await respuestaIg({ id: "mc-3001", texto: "¿Tenéis parking cerca?" });
   await esperarHasta(() => tg.enviados.slice(n4).some((m) => m.text.includes("ha escrito")));
-  check("O13. una pregunta no es un «confirmado»: Kira no contesta y se la reenvía a Blake", mcApi.envios.length === 2 && tg.enviados.slice(n4).some((m) => m.text.includes("Carla") && m.text.includes("parking")) && resCarla().client_phase === "pago_pedido");
+  check("O13. una pregunta no es un «confirmado»: Kira no contesta y se la reenvía a Blake", mcApi.envios.length === 3 && tg.enviados.slice(n4).some((m) => m.text.includes("Carla") && m.text.includes("parking")) && resCarla().client_phase === "pago_pedido");
 
   const n5 = tg.enviados.length;
   await respuestaIg({ id: "mc-3001", texto: "confirmado" });
   await esperarHasta(() => mcApi.envios.length >= 3 && tg.enviados.slice(n5).some((m) => botones(m).includes("✅ Sí, me ha llegado")));
   const avisoCarla = tg.enviados.slice(n5).find((m) => botones(m).includes("✅ Sí, me ha llegado"));
-  check("O14. «confirmado» NO confirma nada: cita aún en amarillo, la clienta recibe «Lo compruebo…» y Blake los dos botones", resCarla().status === "pendiente_pago" && resCarla().client_phase === "pago_declarado" && g.eventos.get(`kira${resCarla().id.replace(/-/g, "")}`)?.colorId === "5" && (mcApi.envios[2]?.cuerpo.data.content.messages[0].text ?? "").includes("Lo compruebo") && Boolean(avisoCarla) && botones(avisoCarla).join("|") === "✅ Sí, me ha llegado|❌ No me ha llegado");
+  check("O14. «confirmado» NO confirma nada: cita aún en amarillo, la clienta recibe «Lo compruebo…» y Blake los dos botones", resCarla().status === "pendiente_pago" && resCarla().client_phase === "pago_declarado" && g.eventos.get(`kira${resCarla().id.replace(/-/g, "")}`)?.colorId === "5" && (mcApi.envios[3]?.cuerpo.data.content.messages[0].text ?? "").includes("Lo compruebo") && Boolean(avisoCarla) && botones(avisoCarla).join("|") === "✅ Sí, me ha llegado|❌ No me ha llegado");
   await pulsa(dato(avisoCarla, "Sí, me ha llegado"), avisoCarla.message_id);
   await esperarHasta(() => mcApi.envios.length >= 4);
   const evCarla = g.eventos.get(`kira${resCarla().id.replace(/-/g, "")}`);
-  check("O14b. «Sí, me ha llegado» → morado, reserva pagada y la clienta recibe «¡Confirmado!» por Instagram", resCarla().status === "pagada" && resCarla().client_phase === "confirmada" && evCarla?.colorId === "3" && (mcApi.envios[3]?.cuerpo.data.content.messages[0].text ?? "").includes("¡Confirmado!"));
+  check("O14b. «Sí, me ha llegado» → morado, reserva pagada y la clienta recibe «¡Confirmado!» por Instagram", resCarla().status === "pagada" && resCarla().client_phase === "confirmada" && evCarla?.colorId === "3" && (mcApi.envios[4]?.cuerpo.data.content.messages[0].text ?? "").includes("¡Confirmado!"));
 
   const enviosAntesDesconocido = mcApi.envios.length;
   const desconocido = await respuestaIg({ id: "mc-9999", texto: "hola" });

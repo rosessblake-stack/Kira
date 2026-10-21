@@ -6,6 +6,10 @@ import {
   normalizarBizum,
   textoConfirmada,
   textoLiberada,
+  textoAcuse,
+  textoCitaCancelada,
+  textoMiamiPago,
+  textoSolicitudRechazada,
   textoPagoPedido,
   textoPagoRecibido,
   textoRevertida,
@@ -108,6 +112,8 @@ export interface ClientePort {
   alAprobar(r: Reserva): Promise<void>;
   /** Blake pulsó «Señal recibida»: se lo confirma a la clienta y cierra el seguimiento. */
   alConfirmarBlake(r: Reserva, invitado: boolean): Promise<void>;
+  /** Botón «📨 Avisar a la clienta» tras rechazar una solicitud. */
+  avisarRechazada(chatId: number, reservaId: string): Promise<void>;
   /** Blake canceló la cita: se cierra el seguimiento. */
   alCancelarBlake(r: Reserva): Promise<void>;
   /** Lo que escribe la clienta (el webhook de ManyChat llamará aquí; en pruebas, /clienta). */
@@ -132,6 +138,7 @@ const msg = (e: unknown) => (e instanceof Error ? e.message : "error desconocido
 const HORA_MS = 3_600_000;
 const MIN_MS = 60_000;
 const REINTENTO_BORRADO_MIN = 10;
+const ACUSE_CADA_HORAS = 6;
 
 /** Los dos botones de Blake cuando la clienta dice que ya hizo el Bizum: «pay» es el de siempre («Señal recibida»). */
 const tecladoPago = (nonce: string) => ({
@@ -201,6 +208,18 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
   }
 
   const motivoLegible = (m: string) => MOTIVOS[m] ?? m;
+
+  /** Acuse corto a la clienta cuando escribe algo que Kira no gestiona sola (como mucho uno cada ACUSE_CADA_HORAS h). Nunca lanza. */
+  async function acusar(r: Reserva, conv: ConversacionCanal): Promise<void> {
+    try {
+      const ultimo = r.spec?.acuse_at ? Date.parse(r.spec.acuse_at) : NaN;
+      if (Number.isFinite(ultimo) && deps.now().getTime() - ultimo < ACUSE_CADA_HORAS * HORA_MS) return;
+      const envio = await enviarAClienta(conv, textoAcuse(), r);
+      if (envio.ok) await deps.actualizarReserva(r.id, { spec: { ...(r.spec ?? {}), acuse_at: deps.now().toISOString() } } as Partial<Reserva>);
+    } catch (e) {
+      await deps.logEvent({ source: "system", kind: "acuse_fallo", level: "warn", summary: msg(e), ...idsDe(r) }).catch(() => undefined);
+    }
+  }
 
   async function cerrarConversacion(r: Reserva) {
     if (!r.conversation_id) return;
@@ -319,6 +338,7 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
           `${marca(pendiente)}⏳ ${nombreDe(pendiente)} ha vuelto a escribir y todavía tienes su solicitud SIN decidir (Aprobar / Editar / Rechazar).\n\n«${limpiarTexto(texto, 600)}»\n\nPulsa «Ver propuesta» para decidir.`,
           { inline_keyboard: [[{ text: "📋 Ver propuesta", callback_data: `v:${pendiente.id.replace(/-/g, "")}` }], ...(bIg.length ? [bIg] : [])] },
         );
+        if (!(await deps.estaPausada())) await acusar(pendiente, conv);
         return;
       }
       await avisarBlake(`${prefijo}💬 Ha escrito la clienta (no hay nada pendiente que Kira gestione solo):\n\n«${limpiarTexto(texto, 600)}»\n\nContéstale tú.`);
@@ -353,10 +373,16 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
       if (n !== null) return elegirOpcion(r, conv, n);
     }
     await deps.logEvent({ source: "system", kind: "respuesta_clienta_a_blake", summary: "Respuesta de la clienta que Kira no gestiona sola: reenviada a Blake", ...ids });
+    // Mientras habla con Blake, el reloj de 20 h no debe cerrarle la solicitud: se reinicia con cada mensaje suyo.
+    if (r.client_phase === "precio_enviado" || r.client_phase === "opciones_enviadas") {
+      const nuevoPlazo = new Date(deps.now().getTime() + PLAZO_PRECIO_HORAS * HORA_MS).toISOString();
+      await deps.avanzarFase(r.id, [r.client_phase], { payment_deadline: nuevoPlazo }).catch(() => undefined);
+    }
     await avisarBlake(
       `${marca(r)}💬 ${nombreDe(r)} ha escrito (${r.client_phase === "pago_pedido" ? "esperaba su «confirmado»" : r.client_phase === "pago_declarado" ? "Blake está comprobando su Bizum" : r.client_phase === "liberada" ? "el hueco está liberado; esperaba su «hecho»" : r.client_phase === "opciones_enviadas" ? "esperaba que eligiera una de las opciones de hueco" : "esperaba su «vale»"}):\n\n«${limpiarTexto(texto, 600)}»\n\nNo he contestado nada: respóndele tú.`,
       botonesIg.length ? { inline_keyboard: [botonesIg] } : undefined,
     );
+    await acusar(r, conv);
   }
 
   async function respuestaEnPrueba(chatId: number, texto: string): Promise<void> {
@@ -381,6 +407,8 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     const lugar = contextoDe(r.spec ?? {});
     if (lugar.ubicacion !== "espana") {
       await avisarBlake(`${marca(r)}✅ ${nombreDe(r)} (${lugar.nombre}) ha dicho que sí al precio. El cobro por Stripe de Miami todavía no está conectado: escríbele tú cómo pagar la señal.`);
+      const envioM = await enviarAClienta(conv, textoMiamiPago(), r);
+      if (!envioM.ok) await avisarBlake(`${marca(r)}ℹ️ No he podido decirle a ${nombreDe(r)} que le escribes enseguida (${motivoLegible(envioM.motivo)}).`);
       return;
     }
     const bizum = await deps.bizum().catch(() => null);
@@ -597,7 +625,41 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
   }
 
   async function alCancelarBlake(r: Reserva): Promise<void> {
+    const teniaAviso = r.client_phase === "precio_enviado" || r.client_phase === "pago_pedido" || r.client_phase === "pago_declarado" || r.client_phase === "confirmada";
     await deps.avanzarFase(r.id, [null, "precio_enviado", "pago_pedido", "pago_declarado", "liberada", "opciones_enviadas", "confirmada"], { client_phase: "cerrada", payment_deadline: null }).catch(() => undefined);
+    // Si la clienta ya sabía de la cita (precio, Bizum o confirmada), se le dice que se ha cancelado.
+    if (!teniaAviso || !r.conversation_id) return;
+    const conv = await deps.leerConversacion(r.conversation_id).catch(() => null);
+    const envio = await enviarAClienta(conv, textoCitaCancelada(), r);
+    if (!envio.ok) await avisarBlake(`${marca(r)}ℹ️ No he podido avisar a ${nombreDe(r)} de que cancelaste su cita (${motivoLegible(envio.motivo)}). Díselo tú.`);
+  }
+
+  /** Botón «📨 Avisar a la clienta» tras Rechazar una solicitud: una plantilla fija, una sola vez. */
+  async function avisarRechazada(chatId: number, reservaId: string): Promise<void> {
+    let r: Reserva;
+    try {
+      r = await deps.leerReserva(reservaId);
+    } catch {
+      await deps.enviar(chatId, "No encuentro esa solicitud.");
+      return;
+    }
+    if (r.status !== "cancelada" || r.client_phase || !r.conversation_id) {
+      await deps.enviar(chatId, "Esa solicitud ya no se puede avisar (no está rechazada o ya se gestionó).");
+      return;
+    }
+    if (r.spec?.rechazo_avisado) {
+      await deps.enviar(chatId, "Ya le avisaste a esa clienta.");
+      return;
+    }
+    const marcada = await deps.avanzarFase(r.id, [null], { spec: { ...(r.spec ?? {}), rechazo_avisado: true } } as Partial<Reserva>).catch(() => null);
+    if (!marcada) {
+      await deps.enviar(chatId, "Ya le avisaste a esa clienta.");
+      return;
+    }
+    const conv = await deps.leerConversacion(r.conversation_id).catch(() => null);
+    const envio = await enviarAClienta(conv, textoSolicitudRechazada(), r);
+    await deps.enviar(chatId, envio.ok ? `${marca(r)}📨 Le he avisado a ${nombreDe(r)}.` : `${marca(r)}No he podido avisar a ${nombreDe(r)} (${motivoLegible(envio.motivo)}). Escríbele tú.`);
+    if (!envio.ok) await deps.avanzarFase(r.id, [null], { spec: { ...(r.spec ?? {}), rechazo_avisado: false } } as Partial<Reserva>).catch(() => undefined);
   }
 
   // -------------------------------------------------------------------------
@@ -639,11 +701,21 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
         return false;
       }
     }
-    // 2. Cierre atómico: solo una ejecución sigue.
-    const ganada = await deps.avanzarFase(r.id, [fase], { client_phase: "cerrada", status: "expirada", payment_deadline: null });
+    // 2. Cierre atómico: solo una ejecución sigue. Si dijo «vale» y no pagó, el hueco se libera pero ella puede
+    //    aún escribir «hecho» (fase «liberada», como cuando Blake marca que el Bizum no llegó): se vuelve a reservar.
+    const reabrible = fase === "pago_pedido";
+    const ganada = await deps.avanzarFase(
+      r.id,
+      [fase],
+      reabrible
+        ? { client_phase: "liberada", status: "cancelada", payment_deadline: new Date(deps.now().getTime() + PLAZO_LIBERADA_HORAS * HORA_MS).toISOString(), proposal_nonce: null }
+        : { client_phase: "cerrada", status: "expirada", payment_deadline: null },
+    );
     if (!ganada) return false;
-    await cerrarConversacion(r);
-    await deps.retirarRegistro(r.id).catch(() => undefined);
+    if (!reabrible) {
+      await cerrarConversacion(r);
+      await deps.retirarRegistro(r.id).catch(() => undefined);
+    }
     await deps.logEvent({ source: "system", kind: "reserva_expirada", level: "warn", summary: fase === "pago_pedido" ? `La clienta no confirmó el Bizum en ${PLAZO_PAGO_MIN} min: hueco liberado` : `La clienta no respondió al precio en ${PLAZO_PRECIO_HORAS} h: hueco liberado`, detail: { fase }, ...ids });
 
     // 3. Avisos. Si no contestó al precio, se cierra en silencio (decisión de Blake); si dijo «vale» y no pagó, se le avisa.
@@ -654,7 +726,7 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     }
     await avisarBlake(
       fase === "pago_pedido"
-        ? `${marca(r)}⌛ ${nombreDe(r)} dijo que sí pero no confirmó el Bizum en ${PLAZO_PAGO_MIN} min: he borrado su evento amarillo y libero el hueco. Si en realidad pagó, vuelve a reservarla.`
+        ? `${marca(r)}⌛ ${nombreDe(r)} dijo que sí pero no confirmó el Bizum en ${PLAZO_PAGO_MIN} min: he borrado su evento amarillo y libero el hueco. Si ella escribe «hecho» en las próximas ${PLAZO_LIBERADA_HORAS} h, vuelvo a reservarlo y te pregunto.`
         : `${marca(r)}⌛ ${nombreDe(r)} no respondió al precio en ${PLAZO_PRECIO_HORAS} h: he cerrado el chat, borrado su evento amarillo y liberado el hueco.`,
     );
     return true;
@@ -704,5 +776,5 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     await deps.enviar(chatId, `Guardado: las clientas harán el Bizum al ${nuevo}.`);
   }
 
-  return { alAprobar, alConfirmarBlake, alCancelarBlake, ofrecerOpciones, respuestaClienta, respuestaEnPrueba, botonNoLlego, botonRevertir, procesarVencidas, vencerYa, bizum };
+  return { alAprobar, alConfirmarBlake, alCancelarBlake, avisarRechazada, ofrecerOpciones, respuestaClienta, respuestaEnPrueba, botonNoLlego, botonRevertir, procesarVencidas, vencerYa, bizum };
 }

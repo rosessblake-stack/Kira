@@ -98,7 +98,7 @@ describe("número de Bizum", () => {
 describe("plantillas para la clienta", () => {
   it("los plazos son los que dijo Blake", () => {
     expect(PLAZO_PRECIO_HORAS).toBe(20);
-    expect(PLAZO_PAGO_MIN).toBe(45);
+    expect(PLAZO_PAGO_MIN).toBe(90);
   });
 
   it("pago pedido: Bizum de 20 € al número de Blake, se descuenta del total, resto en efectivo, «confirmado» y plazo", () => {
@@ -107,7 +107,7 @@ describe("plantillas para la clienta", () => {
     expect(t).toContain("se descuentan del total");
     expect(t).toContain("el resto lo pagas en efectivo");
     expect(t).toContain("«confirmado»");
-    expect(t).toContain("45 minutos");
+    expect(t).toContain("90 minutos");
     expect(t).toContain("sáb 24 oct, 12:00");
   });
 

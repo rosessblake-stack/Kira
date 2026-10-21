@@ -112,6 +112,7 @@ const CALLBACK_RE = /^t:([0-9a-f]{32}):(ok|ed|no)$/;
 const PROPOSAL_CB_RE = /^p:([0-9a-f]{32}):(ok|ed|no|op)$/;
 /** Botones de una cita con reserva provisional en el calendario: señal recibida / cancelar. */
 /** «💾 Guardar como ejemplo» tras corregir el estilo: id de la reserva (sin guiones) + c/t/b (estilo) o n (no). */
+const AVISAR_CB_RE = /^r:([0-9a-f]{32})$/;
 const VER_CB_RE = /^v:([0-9a-f]{32})$/;
 const EJEMPLO_CB_RE = /^x:([0-9a-f]{32}):([ctbn])$/;
 const CITA_CB_RE = /^c:([0-9a-f]{32}):(pay|del|rev|nop)$/;
@@ -434,6 +435,19 @@ async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {
       nonce: propuesta[1],
       accion: propuesta[2] as "ok" | "ed" | "no" | "op",
     });
+    return;
+  }
+
+  const avisar = AVISAR_CB_RE.exec(cq.data ?? "");
+  if (avisar) {
+    const chat = cq.message?.chat?.id ?? fromId;
+    try {
+      await deps.answerCallback(callbackId, "📨 Avisando…");
+    } catch {
+      /* Telegram rechaza responder pasados unos segundos: se ignora */
+    }
+    const h = avisar[1];
+    await deps.client.avisarRechazada(chat, `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`);
     return;
   }
 

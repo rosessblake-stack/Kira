@@ -63,6 +63,10 @@ export type SpecGuardada = {
   descripcion_peinado?: string | null;
   /** Alternativas que Blake ofreció a la clienta cuando su hora chocaba (la clienta contesta con el número). */
   opciones_hueco?: OpcionHueco[];
+  /** Última vez que Kira mandó el acuse genérico a la clienta (no más de uno cada pocas horas). */
+  acuse_at?: string;
+  /** Blake ya avisó a la clienta de que no se podía hacer su solicitud. */
+  rechazo_avisado?: boolean;
   /** Horas fijadas por Blake; null = las de por defecto. */
   horas: number | null;
   /** Materiales fijados por Blake (en la moneda de la ubicación); null/ausente = los de por defecto. */

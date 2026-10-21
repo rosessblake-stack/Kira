@@ -201,13 +201,17 @@ export function leerSolicitud(raw: unknown): ResultadoEntrada {
 export type RespuestaManychat = { contactoId: string; texto: string };
 
 /** El cuerpo de /api/manychat/respuesta: el id del contacto y lo que acaba de escribir. */
+export const TEXTO_SIN_TEXTO = "[Mensaje sin texto: foto, audio, sticker o archivo]";
+
 export function leerRespuesta(raw: unknown): { ok: true; respuesta: RespuestaManychat } | { ok: false; motivo: string } {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, motivo: "cuerpo_no_es_objeto" };
   const m = aplanar(raw);
   const id = primero(m, ["id", "subscriberid", "contactid", "userid", "igid"]);
   if (!id || !ID_RE.test(id)) return { ok: false, motivo: "sin_id_de_contacto" };
-  const texto = texto_(primero(m, ["texto", "lastinputtext", "mensaje", "message", "text"]), 600);
-  if (!texto) return { ok: false, motivo: "sin_texto" };
+  const bruto = texto_(primero(m, ["texto", "lastinputtext", "mensaje", "message", "text"]), 600);
+  // Una foto, un audio o un archivo llegan sin texto (o como un enlace de Meta): no es un ataque, se lo pasa a Blake con una etiqueta.
+  const esArchivo = !bruto || /^https?:\/\/\S+$/i.test(bruto);
+  const texto = esArchivo ? TEXTO_SIN_TEXTO : bruto;
   return { ok: true, respuesta: { contactoId: id, texto } };
 }
 

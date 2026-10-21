@@ -135,7 +135,7 @@ describe("el mensaje compuesto para el clasificador", () => {
   });
 });
 
-import { leerRespuesta } from "../lib/manychat-entrada";
+import { leerRespuesta, TEXTO_SIN_TEXTO } from "../lib/manychat-entrada";
 
 describe("leerRespuesta: lo que la clienta escribe después del flujo", () => {
   it("el id y el texto, con el nombre que use ManyChat", () => {
@@ -145,8 +145,11 @@ describe("leerRespuesta: lo que la clienta escribe después del flujo", () => {
   it("sin id, con un id raro o sin texto se rechaza", () => {
     expect(leerRespuesta({ texto: "vale" }).ok).toBe(false);
     expect(leerRespuesta({ id: "a b", texto: "vale" }).ok).toBe(false);
-    expect(leerRespuesta({ id: "123", texto: "   " }).ok).toBe(false);
-    expect(leerRespuesta({ id: "123", texto: "{{last_input_text}}" }).ok).toBe(false);
+    // una foto o un audio llegan sin texto: no es un ataque, se pasa a Blake con una etiqueta
+    expect(leerRespuesta({ id: "123", texto: "   " })).toMatchObject({ ok: true, respuesta: { texto: TEXTO_SIN_TEXTO } });
+    expect(leerRespuesta({ id: "123", texto: "https://cdn.fbsbx.com/audio.mp4" })).toMatchObject({ ok: true, respuesta: { texto: TEXTO_SIN_TEXTO } });
+    // ManyChat deja el marcador sin sustituir cuando el campo viene vacío (típico de un audio): igual que sin texto
+    expect(leerRespuesta({ id: "123", texto: "{{last_input_text}}" })).toMatchObject({ ok: true, respuesta: { texto: TEXTO_SIN_TEXTO } });
     expect(leerRespuesta("hola").ok).toBe(false);
   });
   it("el texto se limpia y se recorta", () => {

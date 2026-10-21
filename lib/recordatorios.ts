@@ -60,3 +60,40 @@ export async function recordarPendientes(ahora = new Date()): Promise<number> {
   await db.from("app_settings").upsert({ key: CLAVE, value: ahora.toISOString(), updated_at: ahora.toISOString(), updated_by: "cron" });
   return lista.length;
 }
+
+/**
+ * Recordatorio de pagos por comprobar (Fase 1, 21-oct): la clienta dijo que ya hizo el Bizum y Blake no ha pulsado ✅ ni ❌.
+ * Como mucho cada hora, de 9:00 a 22:00 Madrid, a partir de 30 min de espera. Con el botón de su Instagram.
+ */
+const CLAVE_PAGOS = "recordatorio_pagos";
+
+export async function recordarPagos(ahora = new Date()): Promise<number> {
+  const raw = process.env.TELEGRAM_ADMIN_USER_ID;
+  if (!raw || !/^\d+$/.test(raw)) return 0;
+  const hora = horaEnMadrid(ahora);
+  if (hora < 9 || hora >= 22) return 0;
+  const db = getDb();
+  const { data: ajuste } = await db.from("app_settings").select("value").eq("key", CLAVE_PAGOS).maybeSingle();
+  const ultimo = typeof ajuste?.value === "string" ? Date.parse(ajuste.value) : NaN;
+  if (!Number.isNaN(ultimo) && ahora.getTime() - ultimo < HORA_MS) return 0;
+  const { data, error } = await db
+    .from("bookings")
+    .select("id, client_name, spec, created_at")
+    .eq("client_phase", "pago_declarado")
+    .eq("status", "pendiente_pago")
+    .lte("updated_at", new Date(ahora.getTime() - 30 * 60_000).toISOString())
+    .gte("updated_at", new Date(ahora.getTime() - MAX_EDAD_MS).toISOString())
+    .limit(10);
+  if (error) throw new Error(error.message);
+  const lista = (data ?? []) as Fila[];
+  if (!lista.length) return 0;
+  await tg.sendMessage(
+    Number(raw),
+    `💶 ${lista.length === 1 ? "Una clienta dice" : `${lista.length} clientas dicen`} que ya hizo el Bizum y no has confirmado si te llegó:\n\n${lista.map((r) => `• ${limpiarTexto(r.client_name || r.spec?.nombre || "(sin nombre)", 40)}${r.spec?.instagram ? ` (@${r.spec.instagram.replace(/^@/, "")})` : ""}`).join("\n")}\n\nMira tu banco y pulsa ✅ o ❌ en su mensaje (o /pendientes).`,
+    {
+      inline_keyboard: lista.map((r) => botonInstagram(r.spec?.instagram)).filter((f) => f.length),
+    },
+  );
+  await db.from("app_settings").upsert({ key: CLAVE_PAGOS, value: ahora.toISOString(), updated_at: ahora.toISOString(), updated_by: "cron" });
+  return lista.length;
+}

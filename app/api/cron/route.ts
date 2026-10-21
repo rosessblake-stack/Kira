@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { crearClienteReal } from "../../../lib/cliente-real";
-import { recordarPendientes } from "../../../lib/recordatorios";
+import { recordarPagos, recordarPendientes } from "../../../lib/recordatorios";
 import * as db from "../../../lib/db";
 import { safeEqual } from "../../../lib/safe-equal";
 
@@ -39,7 +39,7 @@ export async function POST(req: Request) {
   try {
     const { cerradas } = await crearClienteReal().procesarVencidas();
     // Recordatorio de propuestas sin decidir: mejor esfuerzo, nunca estropea el cierre de plazos.
-    const recordadas = await recordarPendientes().catch(async (e) => {
+    const recordadas = await Promise.all([recordarPendientes(), recordarPagos()]).then((a) => a[0] + a[1]).catch(async (e) => {
       await db.logEvent("system", { kind: "recordatorio_fallo", level: "warn", summary: e instanceof Error ? e.message : "error" }).catch(() => undefined);
       return 0;
     });

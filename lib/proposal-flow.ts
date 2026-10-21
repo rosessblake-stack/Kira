@@ -205,8 +205,13 @@ export interface ProposalPort {
 /** Una edición abierta caduca a los 30 min; /cancelar recupera la propuesta en cualquier momento. */
 export const EDICION_CADUCA_MIN = 30;
 
-const aprobable = (r: Pick<Reserva, "price_cents" | "starts_at" | "ends_at">) =>
-  r.price_cents !== null && Boolean(r.starts_at) && Boolean(r.ends_at);
+const aprobable = (r: Pick<Reserva, "price_cents" | "starts_at" | "ends_at">, ahora: Date) =>
+  r.price_cents !== null && Boolean(r.starts_at) && Boolean(r.ends_at) && !fechaPasada(r.starts_at, ahora);
+
+/** Una cita en una hora que ya pasó no se puede aprobar (casi siempre es un año o un día mal leídos). */
+// Los e2e (KIRA_E2E=1) usan fechas fijas que con el tiempo quedan atrás: allí no se aplica. Nunca se pone en Vercel.
+const fechaPasada = (starts: string | null, ahora: Date) => process.env.KIRA_E2E !== "1" && starts !== null && Date.parse(starts) < ahora.getTime();
+const AVISO_PASADA = "\n\n⏪ Esa fecha ya pasó, así que no puedes aprobar. Corrígela con Editar (por ejemplo: fecha 25/10 12:00).";
 
 const teclado = (nonce: string, puedeAprobar: boolean, puedeOfrecer = false, instagram: string | null = null) => ({
   inline_keyboard: [
@@ -427,10 +432,10 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       proposal_nonce: nonce,
       edit_requested_at: null,
     });
-    const texto = `${prefijo}${textoPropuesta(prop, spec, { mensajeCliente: spec.mensaje_cliente, esPrueba: actualizada.is_test, perfil, fotos, agenda })}`;
+    const texto = `${prefijo}${textoPropuesta(prop, spec, { mensajeCliente: spec.mensaje_cliente, esPrueba: actualizada.is_test, perfil, fotos, agenda })}${fechaPasada(actualizada.starts_at, deps.now()) ? AVISO_PASADA : ""}`;
     let id: number | null;
     try {
-      id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada) && prop.faltan.length === 0, puedeOfrecerOpciones(actualizada, agenda), spec.instagram), { plegable: resumenCortoPropuesta(prop, spec, actualizada.is_test) });
+      id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada, deps.now()) && prop.faltan.length === 0, puedeOfrecerOpciones(actualizada, agenda), spec.instagram), { plegable: resumenCortoPropuesta(prop, spec, actualizada.is_test) });
     } catch (e) {
       // El mensaje no llegó: el botón no existe, así que su nonce no puede quedar vivo (si no, /pendientes no vería la propuesta).
       await deps.actualizarReserva(r.id, { proposal_nonce: null }).catch(() => undefined);
@@ -701,7 +706,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     }
     let id: number | null;
     try {
-      id = await deps.enviar(chatId, textoTg, teclado(nonce, aprobable(reserva) && prop.faltan.length === 0), { plegable: resumenCortoPropuesta(prop, spec, !real) });
+      id = await deps.enviar(chatId, textoTg, teclado(nonce, aprobable(reserva, deps.now()) && prop.faltan.length === 0), { plegable: resumenCortoPropuesta(prop, spec, !real) });
     } catch (e) {
       await deps.actualizarReserva(reserva.id, { proposal_nonce: null }).catch(() => undefined);
       throw e;
@@ -1095,7 +1100,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     }
     const ids = { conversation_id: r.conversation_id, booking_id: r.id };
 
-    if (b.accion === "ok" && !aprobable(r)) {
+    if (b.accion === "ok" && !aprobable(r, deps.now())) {
       await responder(b.callbackId, "Faltan datos: pulsa Editar");
       return;
     }
@@ -1148,6 +1153,14 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       if (r.conversation_id) await deps.actualizarConversacion(r.conversation_id, { status: "cerrada" });
       await responder(b.callbackId, "❌ Rechazada");
       await editarMensaje(`${r.is_test ? "🧪 PRUEBA · " : ""}❌ RECHAZADA\n\n${resumenDecision(r)}\n\nNo se envía nada al cliente. Si quieres retomarla, escribe de nuevo con /simular.`);
+      // La clienta no se entera de nada si no lo decide Blake: se le ofrece avisarla con un texto fijo (un botón, una vez).
+      if (r.conversation_id) {
+        await deps
+          .enviar(b.chatId, `${r.is_test ? "🧪 PRUEBA · " : ""}¿Quieres que le avise a ${r.client_name ?? "la clienta"} de que no puedes hacerlo?`, {
+            inline_keyboard: [[{ text: "📨 Sí, avisarla", callback_data: `r:${r.id.replace(/-/g, "")}` }]],
+          })
+          .catch(() => undefined);
+      }
       await deps.logEvent({ source: "telegram", kind: "propuesta_rechazada", summary: "Propuesta rechazada por Blake", ...ids });
       return;
     }

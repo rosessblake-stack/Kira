@@ -225,7 +225,8 @@ describe("«vale» → se le pide el Bizum", () => {
       const m = await conPrecioEnviado();
       const antes = m.w.paraClienta.length;
       await m.flujo.respuestaClienta("conv-1", t);
-      expect(m.w.paraClienta, t).toHaveLength(antes);
+      expect(m.w.paraClienta, t).toHaveLength(antes + 1); // solo el acuse genérico
+      expect(m.w.paraClienta.at(-1), t).toContain("te contesto en cuanto pueda");
       expect(m.w.reserva.client_phase, t).toBe("precio_enviado");
       expect(m.avisos().at(-1), t).toContain(`«${t}»`);
       expect(m.avisos().at(-1), t).toContain("respóndele tú");
@@ -236,7 +237,8 @@ describe("«vale» → se le pide el Bizum", () => {
     const m = await conPrecioEnviado({ ubicacion: "miami" });
     const antes = m.w.paraClienta.length;
     await m.flujo.respuestaClienta("conv-1", "vale");
-    expect(m.w.paraClienta).toHaveLength(antes);
+    expect(m.w.paraClienta).toHaveLength(antes + 1);
+    expect(m.w.paraClienta.at(-1)).toContain("Te escribo enseguida");
     expect(m.avisos().at(-1)).toContain("Stripe de Miami todavía no está conectado");
     expect(m.w.reserva.client_phase).toBe("precio_enviado");
   });
@@ -310,7 +312,7 @@ describe("«confirmado» → Kira NO confirma: le pregunta a Blake con dos boton
     const m = await conPagoDeclarado();
     const antes = m.w.paraClienta.length;
     await m.flujo.respuestaClienta("conv-1", "¿cuánto tardas en mirarlo?");
-    expect(m.w.paraClienta).toHaveLength(antes);
+    expect(m.w.paraClienta).toHaveLength(antes + 1); // solo el acuse genérico
     expect(m.avisos().at(-1)).toContain("Blake está comprobando su Bizum");
   });
 
@@ -495,13 +497,13 @@ describe("plazos: el temporizador", () => {
     expect(m.w.registrosRetirados).toEqual(["res-1"]);
   });
 
-  it("dijo «vale» y no confirma el Bizum en 45 min: libera el hueco y se lo dice a la clienta", async () => {
+  it("dijo «vale» y no confirma el Bizum en 90 min: libera el hueco y se lo dice a la clienta", async () => {
     const m = await conBizumPedido();
     m.w.avanza(PLAZO_PAGO_MIN + 1);
     expect(await m.flujo.procesarVencidas()).toEqual({ cerradas: 1 });
-    expect(m.w.reserva.status).toBe("expirada");
+    expect(m.w.reserva).toMatchObject({ status: "cancelada", client_phase: "liberada" }); // reabrible si ella dice «hecho»
     expect(m.w.paraClienta.at(-1)).toContain("liberado el hueco");
-    expect(m.avisos().at(-1)).toContain("no confirmó el Bizum en 45 min");
+    expect(m.avisos().at(-1)).toContain("no confirmó el Bizum en 90 min");
   });
 
   it("es idempotente: otra pasada del temporizador no repite nada", async () => {
@@ -529,7 +531,7 @@ describe("plazos: el temporizador", () => {
     m.w.fallaBorrar = false;
     m.w.avanza(11);
     expect(await m.flujo.procesarVencidas()).toEqual({ cerradas: 1 });
-    expect(m.w.reserva.status).toBe("expirada");
+    expect(m.w.reserva.status).toBe("cancelada");
   });
 
   it("mientras Blake comprueba el Bizum la reserva no caduca: decide él, no el reloj", async () => {
@@ -549,8 +551,9 @@ describe("plazos: el temporizador", () => {
   it("/vencer adelanta el plazo de la última prueba y lo cierra al momento", async () => {
     const m = await conBizumPedido();
     await m.flujo.vencerYa(ADMIN);
-    expect(m.w.reserva.status).toBe("expirada");
+    expect(m.w.reserva.status).toBe("cancelada");
     expect(m.avisos().at(-1)).toContain("Plazo agotado");
+    await m.flujo.vencerYa(ADMIN); // queda «liberada» (por si ella dice «hecho»): este segundo /vencer la cierra
     await m.flujo.vencerYa(ADMIN);
     expect(m.avisos().at(-1)).toContain("No hay ninguna prueba con plazo corriendo");
   });
@@ -592,7 +595,7 @@ describe("seguridad de lo que escribe la clienta", () => {
     m.w.reserva.spec.instagram = "ana_braids";
     await m.flujo.respuestaClienta("conv-1", "hola?");
     expect(m.avisos().at(-1)).toContain("SIN decidir");
-    expect(m.w.paraClienta).toEqual([]);
+    expect(m.w.paraClienta).toHaveLength(1); // solo el acuse genérico
   });
 
   it("cada mensaje entrante renueva la ventana de 24 h", async () => {
