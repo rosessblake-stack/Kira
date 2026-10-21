@@ -52,6 +52,7 @@ export function makeFlowDeps(photos: PhotoPort, cliente: ReturnType<typeof crear
   return {
     cliente,
     fichas: crearFlujoClientas(makeClientasDeps()),
+    ofrecerEjemplosDeEstilo: true,
     agenda: crearAgendaGoogle(),
     now: () => new Date(),
     newNonce: () => randomUUID().replace(/-/g, ""),
@@ -149,6 +150,13 @@ export function makeEjemplosDeps(): EjemplosDeps {
       } catch (e) {
         return { ok: false, motivo: e instanceof tg.ArchivoDemasiadoGrande ? "grande" : "error" };
       }
+    },
+    async fotoReferenciaDeReserva(reservaId) {
+      const { data } = await db.getDb().from("bookings").select("conversation_id").eq("id", reservaId).maybeSingle();
+      const conv = (data as { conversation_id: string | null } | null)?.conversation_id;
+      if (!conv) return null;
+      const f = [...(await fotoStore.listarFotos(conv))].reverse().find((x) => x.kind === "referencia" && !x.purged_at);
+      return f ? fotoStore.descargarBytes(f) : null;
     },
     guardar: ejemplosStore.guardarEjemplo,
     contarPorEstilo: ejemplosStore.contarEjemplosPorEstilo,

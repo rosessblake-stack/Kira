@@ -72,6 +72,7 @@ type Opciones = {
   conLecturaBasica?: boolean;
   /** Fotos ya guardadas en la conversación n.º 1 antes de empezar. */
   fotosIniciales?: ResumenFoto[];
+  ofrecerEjemplos?: boolean;
   fallaLecturaFotos?: boolean;
   fallaEnvioFotos?: boolean;
   /** Que guardar el registro del servicio al aprobar falle. */
@@ -165,6 +166,7 @@ function mundo(op: Opciones = {}) {
     : undefined;
   if (op.fotosIniciales) w.fotos.set("conv-1", structuredClone(op.fotosIniciales));
   const deps: FlowDeps = {
+    ofrecerEjemplosDeEstilo: op.ofrecerEjemplos,
     agenda,
     cliente: op.cliente
       ? {
@@ -2183,5 +2185,34 @@ describe("hora ocupada: «Ofrecer opciones a la clienta»", () => {
     expect(m.ultimo().texto).toContain("No he podido ofrecer opciones");
     expect(m.ultimo().texto).toContain("más de 24 h");
     expect(m.botones()).toContain("✏️ Editar");
+  });
+});
+
+describe("al corregir el estilo se ofrece guardar la foto como ejemplo", () => {
+  const FOTOS = [{ tipo: "pelo" as const, descripcion: null }, { tipo: "referencia" as const, descripcion: null }];
+  async function corregir(op: Opciones, linea = "estilo flat twist") {
+    const m = mundo(op);
+    await m.flujo.simular(CHAT, MENSAJE, async (id) => { m.w.fotos.set(id, structuredClone(FOTOS)); });
+    await m.boton(m.nonceDe(), "ed", m.ultimo().id);
+    await m.flujo.textoLibre(CHAT, linea);
+    return m;
+  }
+  it("tras «estilo flat twist» llega la pregunta con el botón de ese estilo (y «No»)", async () => {
+    const m = await corregir({ ofrecerEjemplos: true });
+    const ultimo = m.ultimo();
+    expect(ultimo.texto).toContain("¿Guardo la foto de referencia");
+    expect(ultimo.texto).toContain("flat twist");
+    const botones = (ultimo.markup.inline_keyboard[0] as { text: string; callback_data: string }[]);
+    expect(botones[0].callback_data).toMatch(/^x:res1:t$/);
+    expect(botones[1].callback_data).toMatch(/^x:res1:n$/);
+    expect(botones[0].callback_data.length).toBeLessThanOrEqual(64);
+  });
+  it("sin la opción activada, o si no hay foto de referencia, o si el estilo no cambia, no pregunta", async () => {
+    expect((await corregir({})).ultimo().texto).not.toContain("¿Guardo la foto");
+    const sinFoto = mundo({ ofrecerEjemplos: true });
+    await sinFoto.flujo.simular(CHAT, MENSAJE);
+    await sinFoto.boton(sinFoto.nonceDe(), "ed", sinFoto.ultimo().id);
+    await sinFoto.flujo.textoLibre(CHAT, "estilo flat twist");
+    expect(sinFoto.ultimo().texto).not.toContain("¿Guardo la foto");
   });
 });

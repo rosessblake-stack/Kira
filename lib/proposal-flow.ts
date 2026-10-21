@@ -162,6 +162,8 @@ export interface FlowDeps {
     /** «Ofrecer opciones»: le escribe a la clienta los huecos alternativos y espera su número. */
     ofrecerOpciones?(r: Reserva, opciones: OpcionHueco[]): Promise<{ ok: true } | { ok: false; motivo: string }>;
   };
+  /** Si está, tras corregir el estilo Blake puede guardar la foto de referencia como ejemplo («💾 Guardar como ejemplo»). */
+  ofrecerEjemplosDeEstilo?: boolean;
   /** Ficha de la clienta (reconocerla cuando vuelve): se rellena al aprobar y al confirmarse la cita. Nunca rompe la cita. */
   fichas?: { alAprobar(r: Reserva): Promise<void>; alConfirmarCita(r: Reserva): Promise<void> };
   /** Reservas que pueden haberse quedado sin botones (propuestas y citas provisionales), las más recientes primero. */
@@ -1206,6 +1208,20 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const refrescada = await deps.leerReserva(r.id);
     const resumenCambios = `✏️ Cambios aplicados: ${cambios.map((c) => etiquetaCambio(c.k)).join(", ")}.${errores.length ? `\n⚠️ No he podido aplicar:\n• ${errores.join("\n• ")}` : ""}\n\n`;
     await enviarPropuesta(chatId, refrescada, resumenCambios);
+    // Si Blake corrigió el estilo y hay foto de referencia, se le ofrece guardarla como ejemplo (Kira aprende de sus correcciones).
+    const nuevoEstilo = cambios.find((c) => c.k === "estilo");
+    if (deps.ofrecerEjemplosDeEstilo && nuevoEstilo && nuevoEstilo.k === "estilo" && nuevoEstilo.v !== r.spec.servicio.estilo_pegadas && refrescada.conversation_id) {
+      await mejorEsfuerzo("ofrecer guardar el ejemplo de estilo", ids, async () => {
+        const fotos = await deps.fotosDe(refrescada.conversation_id as string);
+        if (!fotos.some((f) => f.tipo === "referencia")) return;
+        const nombre = nuevoEstilo.v === "twist" ? "flat twist" : nuevoEstilo.v === "barrel_twist" ? "barrel twist" : "cornrows";
+        const id32 = r.id.replace(/-/g, "");
+        const codigo = nuevoEstilo.v === "twist" ? "t" : nuevoEstilo.v === "barrel_twist" ? "b" : "c";
+        await deps.enviar(chatId, `¿Guardo la foto de referencia de esta clienta como ejemplo de ${nombre}? Así Kira aprende a reconocerlo.`, {
+          inline_keyboard: [[{ text: `💾 Sí, ejemplo de ${nombre}`, callback_data: `x:${id32}:${codigo}` }, { text: "No", callback_data: `x:${id32}:n` }]],
+        });
+      });
+    }
     return true;
   }
 

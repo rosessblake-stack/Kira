@@ -502,10 +502,21 @@ describe("fotos que envía Blake", () => {
       async recibir(chatId, media, estilo, descripcion) { ej.push({ chatId, fileId: media.fileId, estilo, descripcion }); },
       async listar() {},
       async borrar() {},
+      async guardarDeReserva() {},
     };
     await handleTelegramRequest(SECRET, foto({ caption: "ejemplo flat twist: seis finos" }), admin(ADMIN), deps);
     expect(ej).toEqual([{ chatId: ADMIN, fileId: "grande", estilo: "twist", descripcion: "seis finos" }]);
     expect(calls.fotos.recibir).toHaveLength(0);
+  });
+
+  it("botón «💾 Sí, ejemplo de flat twist»: guarda la foto de esa reserva; «No» no guarda nada", async () => {
+    const { deps } = setup();
+    const llamadas: unknown[] = [];
+    deps.ejemplos = { async recibir() {}, async listar() {}, async borrar() {}, async guardarDeReserva(chat, id, estilo) { llamadas.push({ chat, id, estilo }); } };
+    const id = "0123456789abcdef0123456789abcdef";
+    await handleTelegramRequest(SECRET, cb(`x:${id}:t`), admin(ADMIN), deps);
+    await handleTelegramRequest(SECRET, cb(`x:${id}:n`), admin(ADMIN), deps);
+    expect(llamadas).toEqual([{ chat: ADMIN, id, estilo: "twist" }]);
   });
 
   it("pie «/simular …»: crea la prueba y la foto se adjunta a ESA conversación, antes de la propuesta", async () => {

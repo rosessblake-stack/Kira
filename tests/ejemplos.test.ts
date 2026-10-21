@@ -81,3 +81,37 @@ describe("guardar ejemplos", () => {
     expect(m.msgs[1]).toContain("#2 borrado");
   });
 });
+
+describe("guardar la foto de referencia de una propuesta como ejemplo", () => {
+  const ID = "0123456789abcdef0123456789abcdef";
+  it("usa la foto de referencia de esa reserva y la guarda con el estilo elegido", async () => {
+    const pedidas: string[] = [];
+    const m = montar({ fotoReferenciaDeReserva: async (id) => (pedidas.push(id), JPG) });
+    await m.port.guardarDeReserva(1, ID, "twist");
+    expect(pedidas).toEqual(["01234567-89ab-cdef-0123-456789abcdef"]);
+    expect(m.guardados).toHaveLength(1);
+    expect(m.guardados[0].estilo).toBe("twist");
+    expect(m.msgs[0]).toContain("ejemplo de flat twist");
+    expect(m.cache()).toBe(1);
+  });
+  it("si la foto ya no está guardada, se lo dice", async () => {
+    const m = montar({ fotoReferenciaDeReserva: async () => null });
+    await m.port.guardarDeReserva(1, ID, "cornrows");
+    expect(m.guardados).toHaveLength(0);
+    expect(m.msgs[0]).toContain("ya no está guardada");
+  });
+  it("id mal formado o sin acceso a fotos: no hace nada raro", async () => {
+    const m = montar({ fotoReferenciaDeReserva: async () => JPG });
+    await m.port.guardarDeReserva(1, "../../etc/passwd", "twist");
+    expect(m.guardados).toHaveLength(0);
+    const sin = montar();
+    await sin.port.guardarDeReserva(1, ID, "twist");
+    expect(sin.guardados).toHaveLength(0);
+  });
+  it("respeta el tope de ejemplos por estilo", async () => {
+    const m = montar({ fotoReferenciaDeReserva: async () => JPG }, { barrel_twist: MAX_EJEMPLOS_POR_ESTILO });
+    await m.port.guardarDeReserva(1, ID, "barrel_twist");
+    expect(m.guardados).toHaveLength(0);
+    expect(m.msgs[0]).toContain("/borrarejemplo");
+  });
+});

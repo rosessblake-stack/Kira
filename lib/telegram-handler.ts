@@ -1,6 +1,6 @@
 import { MAX_BYTES_FOTO } from "./fotos";
 import type { ClientasPort } from "./clientas";
-import { interpretarPieEjemplo, type EjemplosPort } from "./ejemplos";
+import { ESTILO_DE_CODIGO, interpretarPieEjemplo, type EjemplosPort } from "./ejemplos";
 import type { MediaTelegram, PhotoPort } from "./photo-flow";
 import type { ClientePort } from "./cliente-flow";
 import type { ManychatPort } from "./manychat-flow";
@@ -111,6 +111,8 @@ type TgUpdate = { update_id?: number; message?: TgMessage; callback_query?: TgCa
 const CALLBACK_RE = /^t:([0-9a-f]{32}):(ok|ed|no)$/;
 const PROPOSAL_CB_RE = /^p:([0-9a-f]{32}):(ok|ed|no|op)$/;
 /** Botones de una cita con reserva provisional en el calendario: señal recibida / cancelar. */
+/** «💾 Guardar como ejemplo» tras corregir el estilo: id de la reserva (sin guiones) + c/t/b (estilo) o n (no). */
+const EJEMPLO_CB_RE = /^x:([0-9a-f]{32}):([ctbn])$/;
 const CITA_CB_RE = /^c:([0-9a-f]{32}):(pay|del|rev|nop)$/;
 
 const LABELS: Record<string, string> = {
@@ -425,6 +427,20 @@ async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {
       nonce: propuesta[1],
       accion: propuesta[2] as "ok" | "ed" | "no" | "op",
     });
+    return;
+  }
+
+  const ejemplo = EJEMPLO_CB_RE.exec(cq.data ?? "");
+  if (ejemplo && deps.ejemplos) {
+    const chat = cq.message?.chat?.id ?? fromId;
+    const mensaje = typeof cq.message?.message_id === "number" ? cq.message.message_id : null;
+    try {
+      await deps.answerCallback(callbackId, ejemplo[2] === "n" ? "Vale, no la guardo" : "💾 Guardando…");
+    } catch {
+      /* Telegram rechaza responder pasados unos segundos: se ignora */
+    }
+    if (mensaje !== null) await deps.editMessage(chat, mensaje, ejemplo[2] === "n" ? "↩️ No la guardo como ejemplo." : "💾 Gestionando el ejemplo…").catch(() => undefined);
+    if (ejemplo[2] !== "n") await deps.ejemplos.guardarDeReserva(chat, ejemplo[1], ESTILO_DE_CODIGO[ejemplo[2]]);
     return;
   }
 
