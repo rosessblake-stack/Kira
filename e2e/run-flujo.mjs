@@ -187,7 +187,7 @@ const servidorFotos = http.createServer((req, res) => {
 });
 
 // ===================================================================================== ManyChat simulado (su API)
-const mcApi = { envios: [], cae: false };
+const mcApi = { envios: [], cae: false, campos: [] };
 const servidorManychat = http.createServer(async (req, res) => {
   const ruta = req.url.split("?")[0];
   const ok = (data) => json(res, 200, { status: "success", data });
@@ -201,6 +201,11 @@ const servidorManychat = http.createServer(async (req, res) => {
     if (mcApi.cae) return json(res, 400, { status: "error", message: "Outside of the allowed window" });
     return json(res, 200, { status: "success" });
   }
+  if (req.method === "POST" && ruta === "/fb/subscriber/setCustomFields") {
+    mcApi.campos.push(await leerCuerpo(req));
+    return json(res, 200, { status: "success" });
+  }
+  if (req.method === "POST" && ruta === "/fb/subscriber/addTagByName") return json(res, 200, { status: "success" });
   json(res, 404, { status: "error", message: "no soportado" });
 });
 
@@ -1502,6 +1507,9 @@ try {
   tables.clients.push({ id: "f-1", instagram: "marta.trenzas", nombre: "Marta", email: "marta@correo.com", ubicacion: "espana", created_at: "2026-09-01T10:00:00Z", updated_at: "2026-10-01T10:00:00Z", ultima_solicitud_at: null, ultima_cita_at: "2026-10-05T10:00:00Z", citas_confirmadas: 2, ultimo_servicio: "6 flat twist" });
   const conocida = await (await conocer({ id: "mc-9", ig_username: "@Marta.Trenzas" })).json();
   check("P4. con ficha: nombre, email, ciudad, nº de citas y último servicio (todo texto) y nada más", conocida.conocida === "si" && conocida.nombre === "Marta" && conocida.email === "marta@correo.com" && conocida.pais === "España" && conocida.citas === "2" && conocida.ultimo_servicio === "6 flat twist" && Object.keys(conocida).sort().join() === "citas,conocida,email,nombre,ok,pais,pelo_guardado,saludo,ultimo_servicio");
+  const ultimosCampos = mcApi.campos.at(-1);
+  check("P4b. Kira rellena los campos del contacto por la API de ManyChat (Conocida, Nombre, país…) sin depender del mapeo", ultimosCampos?.subscriber_id === "mc-9" && ultimosCampos.fields.some((f) => f.field_name === "Conocida" && f.field_value === "si") && ultimosCampos.fields.some((f) => f.field_name === "Nombre" && f.field_value === "Marta") && ultimosCampos.fields.some((f) => f.field_name === "pais de cliente"));
+  check("P4c. a una desconocida solo le pone Conocida = no (borra un «si» de otra vez)", mcApi.campos.some((c) => c.fields.length === 1 && c.fields[0].field_name === "Conocida" && c.fields[0].field_value === "no"));
   const parecida = await (await conocer({ ig_username: "marta_trenzas" })).json();
   check("P5. un usuario parecido (con _ en vez de .) NO se confunde con ella", parecida.conocida === "no");
   await escribe("/ficha @marta.trenzas");

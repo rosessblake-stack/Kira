@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { crearFlujoClientas, NO_CONOCIDA } from "../../../../lib/clientas";
 import { makeClientasDeps } from "../../../../lib/composicion";
 import * as db from "../../../../lib/db";
+import { claveManychat, crearClienteManychat } from "../../../../lib/manychat";
 import { leerConsultaClienta } from "../../../../lib/manychat-entrada";
 import { MAX_CUERPO, anotarSeguridad, comprobarClave } from "../../../../lib/manychat-seguridad";
 
@@ -30,9 +31,20 @@ export async function POST(req: Request) {
       await anotarSeguridad("payload_inesperado", { reason: "json_no_valido", en: "conocer" });
       return NextResponse.json({ ok: true, ...NO_CONOCIDA });
     }
-    const { instagram } = leerConsultaClienta(json);
-    if (!instagram) return NextResponse.json({ ok: true, ...NO_CONOCIDA });
-    const r = await crearFlujoClientas(makeClientasDeps()).conocer(instagram);
+    const { instagram, contactoId } = leerConsultaClienta(json);
+    const r = instagram ? await crearFlujoClientas(makeClientasDeps()).conocer(instagram) : NO_CONOCIDA;
+    // Además de responder, Kira rellena los campos del contacto por la API de ManyChat (si el cuerpo trae su id): así el flujo funciona
+    // aunque el «mapeo de la respuesta» no esté guardado. Si no la conoce, solo se pone Conocida = no (borra un «si» de otra vez).
+    const clave = claveManychat();
+    if (contactoId && clave) {
+      const campos: Record<string, string> =
+        r.conocida === "si"
+          ? { Conocida: "si", Saludo: r.saludo, Nombre: r.nombre, email: r.email, "pais de cliente": r.pais, Pelo_Guardado: r.pelo_guardado, Ultimo_Servicio: r.ultimo_servicio, Citas: r.citas }
+          : { Conocida: "no" };
+      await crearClienteManychat(clave)
+        .ponerCampos(contactoId, campos)
+        .catch((e) => db.logEvent("manychat", { kind: "conocer_campos_fallo", level: "warn", summary: e instanceof Error ? e.message : "error" }).catch(() => undefined));
+    }
     return NextResponse.json({ ok: true, ...r }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     await db.logEvent("manychat", { kind: "conocer_fallo", level: "warn", summary: e instanceof Error ? e.message : "error desconocido" }).catch(() => undefined);
