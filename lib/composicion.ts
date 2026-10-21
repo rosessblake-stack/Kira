@@ -82,7 +82,7 @@ export function makeFlowDeps(photos: PhotoPort, cliente: ReturnType<typeof crear
     estancias: leerEstancias,
     fotosDe: async (conversationId) => resumenDeFotos(await fotoStore.listarFotos(conversationId)),
     describirFoto: (conversationId, tipo, texto) => fotoStore.describirUltima(conversationId, tipo, texto, new Date()),
-    enviarFotos: (chatId, conversationId) => photos.reenviar(chatId, conversationId, { silencioso: true }),
+    enviarFotos: (chatId, conversationId) => photos.reenviar(chatId, conversationId, { silencioso: true, recientes: true }),
     guardarRegistro: registroStore.guardarRegistro,
     retirarRegistro: registroStore.retirarRegistro,
     listarPendientes: store.listarPendientes,

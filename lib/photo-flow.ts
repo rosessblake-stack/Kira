@@ -88,7 +88,7 @@ export interface PhotoPort {
   /** conversationId = null → la prueba más reciente. `pie` es el texto que Blake puso a la foto. */
   recibir(chatId: number, media: MediaTelegram, conversationId: string | null, pie: string): Promise<void>;
   /** Vuelve a enviar a Blake las fotos de una conversación (null = la prueba más reciente). */
-  reenviar(chatId: number, conversationId: string | null, opts?: { silencioso?: boolean }): Promise<void>;
+  reenviar(chatId: number, conversationId: string | null, opts?: { silencioso?: boolean; recientes?: boolean }): Promise<void>;
   /**
    * Guarda una foto que ya se descargó (la de una clienta, vía ManyChat): comprueba los bytes, el tope y las repetidas y no escribe a
    * nadie. `ok` también cuando la foto ya estaba guardada.
@@ -246,7 +246,7 @@ export function crearFlujoFotos(deps: PhotoDeps): PhotoPort {
     await avisoDeCaducidad();
   }
 
-  async function reenviar(chatId: number, conversationId: string | null, opts: { silencioso?: boolean } = {}): Promise<void> {
+  async function reenviar(chatId: number, conversationId: string | null, opts: { silencioso?: boolean; recientes?: boolean } = {}): Promise<void> {
     const ahora = deps.now();
     let convId = conversationId;
     if (!convId) {
@@ -257,7 +257,16 @@ export function crearFlujoFotos(deps: PhotoDeps): PhotoPort {
       }
       convId = reciente.id;
     }
-    const fotos = (await deps.fotosDe(convId)).filter((f) => !f.purged_at);
+    let fotos = (await deps.fotosDe(convId)).filter((f) => !f.purged_at);
+    // Solicitud de una clienta que vuelve: solo lo necesario para decidir (la referencia anterior, la nueva y su pelo), no todo su historial.
+    const anterior = new Set<string>();
+    if (opts.recientes) {
+      const refs = fotos.filter((f) => f.kind === "referencia");
+      const pelo = fotos.filter((f) => f.kind === "pelo").slice(-1);
+      const ultimasRefs = refs.slice(-2);
+      if (ultimasRefs.length === 2) anterior.add(ultimasRefs[0].id);
+      fotos = [...ultimasRefs, ...pelo];
+    }
     if (fotos.length === 0) {
       if (!opts.silencioso) await deps.enviar(chatId, "Esa prueba todavía no tiene fotos guardadas.");
       return;
@@ -270,7 +279,7 @@ export function crearFlujoFotos(deps: PhotoDeps): PhotoPort {
         bytes,
         mime: f.content_type,
         ext: EXT_DE_MIME[f.content_type],
-        pie: `📷 ${ETIQUETA_FOTO[f.kind]} — ${f.description ?? "sin describir"}`,
+        pie: `📷 ${anterior.has(f.id) ? "Servicio anterior (referencia)" : ETIQUETA_FOTO[f.kind]} — ${f.description ?? "sin describir"}`,
       });
     }
     if (listas.length === 0) {
