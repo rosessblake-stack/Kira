@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { clasificarConClaude, leerFotosConClaude, type FotoParaLeer } from "./claude";
+import { clasificarConClaude, leerFotosConClaude, type EjemploParaClaude, type FotoParaLeer } from "./claude";
+import { EJEMPLOS_POR_ESTILO_A_CLAUDE, NOMBRE_ESTILO_EJEMPLO, type EjemplosDeps } from "./ejemplos";
+import * as ejemplosStore from "./ejemplos-store";
 import { leerEstancias } from "./estancias-store";
 import { crearAgendaGoogle } from "./google-agenda";
 import * as fotoStore from "./foto-store";
@@ -60,7 +62,7 @@ export function makeFlowDeps(photos: PhotoPort, cliente: ReturnType<typeof crear
     crearConversacion: store.crearConversacion,
     contarMensajesClienteUltimaHora: store.contarMensajesClienteUltimaHora,
     fotosParaLeer: fotosParaLeerDe,
-    leerFotos: leerFotosConClaude,
+    leerFotos: async (fotos) => leerFotosConClaude(fotos, await ejemplosParaClaude()),
     guardarMensaje: store.guardarMensaje,
     actualizarConversacion: store.actualizarConversacion,
     crearReserva: store.crearReserva,
@@ -105,4 +107,52 @@ async function fotosParaLeerDe(conversationId: string): Promise<FotoParaLeer[]> 
     if (ligera) salida.push({ rol, mime: ligera.mime, bytes: ligera.bytes });
   }
   return salida;
+}
+
+
+// ---------------------------------------------------------------------------
+// Ejemplos de estilo etiquetados por Blake (se le enseñan a Claude junto a la foto de la clienta)
+// ---------------------------------------------------------------------------
+
+const CACHE_EJEMPLOS_MS = 5 * 60_000;
+let cacheEjemplos: { hasta: number; lista: EjemploParaClaude[] } | null = null;
+
+export const invalidarCacheEjemplos = () => {
+  cacheEjemplos = null;
+};
+
+/** Los últimos ejemplos de cada estilo, reducidos a 512 px (una imagen pequeña cuesta ~350 tokens). Si falla algo, se lee sin ejemplos. */
+async function ejemplosParaClaude(): Promise<EjemploParaClaude[]> {
+  if (cacheEjemplos && cacheEjemplos.hasta > Date.now()) return cacheEjemplos.lista;
+  try {
+    const lista: EjemploParaClaude[] = [];
+    for (const e of await ejemplosStore.cargarEjemplosParaClaude(EJEMPLOS_POR_ESTILO_A_CLAUDE)) {
+      const ligera = await reducirParaClaude(e.bytes, 512);
+      if (ligera) lista.push({ estilo: NOMBRE_ESTILO_EJEMPLO[e.estilo], mime: ligera.mime, bytes: ligera.bytes });
+    }
+    cacheEjemplos = { hasta: Date.now() + CACHE_EJEMPLOS_MS, lista };
+    return lista;
+  } catch {
+    return [];
+  }
+}
+
+export function makeEjemplosDeps(): EjemplosDeps {
+  return {
+    newId: () => randomUUID(),
+    async descargar(fileId, maxBytes) {
+      try {
+        return { ok: true, bytes: await tg.descargarArchivo(fileId, maxBytes) };
+      } catch (e) {
+        return { ok: false, motivo: e instanceof tg.ArchivoDemasiadoGrande ? "grande" : "error" };
+      }
+    },
+    guardar: ejemplosStore.guardarEjemplo,
+    contarPorEstilo: ejemplosStore.contarEjemplosPorEstilo,
+    listar: ejemplosStore.listarEjemplos,
+    borrar: ejemplosStore.borrarEjemplo,
+    invalidarCache: invalidarCacheEjemplos,
+    enviar: tg.sendMessage,
+    logEvent: ({ source, ...e }) => db.logEvent(source, e),
+  };
 }

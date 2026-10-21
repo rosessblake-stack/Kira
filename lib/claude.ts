@@ -177,9 +177,21 @@ export type FotoParaLeer = { rol: "referencia" | "pelo"; mime: "image/jpeg" | "i
  * Visión: Claude describe las fotos (referencia y pelo) con el esquema de lectura-foto.ts. Igual que con el texto: sin herramientas,
  * la imagen es dato no fiable y la salida se valida después campo a campo.
  */
-export async function leerFotosConClaude(fotos: FotoParaLeer[]): Promise<RespuestaClaude> {
+/** Foto de ejemplo etiquetada por Blake (ya reducida): solo enseña a distinguir estilos, no es de la clienta. */
+export type EjemploParaClaude = { estilo: string; mime: "image/jpeg"; bytes: Uint8Array };
+
+export async function leerFotosConClaude(fotos: FotoParaLeer[], ejemplos: EjemploParaClaude[] = []): Promise<RespuestaClaude> {
   if (!process.env.ANTHROPIC_API_KEY) throw new SinClaveError();
   const contenido: Anthropic.Messages.ContentBlockParam[] = [];
+  if (ejemplos.length) {
+    contenido.push({ type: "text", text: "Ejemplos etiquetados por Blake para que distingas los estilos de trenzas pegadas. NO son de la clienta: no los describas ni los menciones en el JSON." });
+    for (const e of ejemplos) {
+      contenido.push({ type: "text", text: `<ejemplo estilo="${e.estilo}">` });
+      contenido.push({ type: "image", source: { type: "base64", media_type: e.mime, data: Buffer.from(e.bytes).toString("base64") } });
+      contenido.push({ type: "text", text: "</ejemplo>" });
+    }
+    contenido.push({ type: "text", text: "Ahora las fotos de la clienta:" });
+  }
   for (const f of fotos) {
     contenido.push({ type: "text", text: `<foto_${f.rol}>` });
     contenido.push({ type: "image", source: { type: "base64", media_type: f.mime, data: Buffer.from(f.bytes).toString("base64") } });

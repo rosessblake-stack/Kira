@@ -1,4 +1,5 @@
 import { MAX_BYTES_FOTO } from "./fotos";
+import { interpretarPieEjemplo, type EjemplosPort } from "./ejemplos";
 import type { MediaTelegram, PhotoPort } from "./photo-flow";
 import type { ClientePort } from "./cliente-flow";
 import type { ManychatPort } from "./manychat-flow";
@@ -74,6 +75,8 @@ export interface Deps {
   responder: ResponderPort;
   /** Fotos que Blake envía (pelo, trenzas de referencia): se guardan en privado y se adjuntan a la prueba. */
   photos: PhotoPort;
+  /** Fotos de ejemplo con su estilo (cornrows / flat twist / barrel twist) con las que Kira aprende a distinguirlos. */
+  ejemplos?: EjemplosPort;
   /** Viajes de Blake a Miami (de qué fecha a qué fecha): las propuestas avisan si la fecha pedida no cuadra. */
   trips: TripPort;
   /** Lo que de verdad pasa en cada servicio (horas, materiales, precio): /real y /datos. */
@@ -228,6 +231,11 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
       return;
     }
     const pie = (msg.caption ?? "").trim();
+    const ejemplo = interpretarPieEjemplo(pie);
+    if (ejemplo) {
+      if (deps.ejemplos) await deps.ejemplos.recibir(chatId, media, ejemplo.estilo, ejemplo.descripcion);
+      return;
+    }
     const sim = /^\/simular(?:@\w+)?(?:\s+([\s\S]*))?$/i.exec(pie);
     if (sim) {
       await deps.proposals.simular(chatId, (sim[1] ?? "").trim(), (conversationId) => deps.photos.recibir(chatId, media, conversationId, ""));
@@ -240,11 +248,21 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   if (cmd === "/start") {
     await deps.sendMessage(
       chatId,
-      "Kira activa. Te he identificado como administrador.\n\n/simular <mensaje> → simula el mensaje de un cliente (España) y te manda la propuesta\n/simular miami: <mensaje> → igual, pero una clienta de Miami (dólares y hora de Miami)\nFotos → mándame la foto del pelo y la de las trenzas; si quieres, con un pie («pelo: rizado, fino…» o «referencia: boxeadoras largas»)\n/fotos → te devuelvo las fotos de la última prueba\n/viaje miami 3/11 al 20/11 → apunta de qué día a qué día estás en Miami (/viajes los lista, /borrarviaje 1 quita uno)\n/calendario → estado de la conexión con tu Google Calendar\n/manychat → comprueba la conexión con ManyChat y lista tus flujos, etiquetas y campos (solo lectura)\n/gasto → cuánto gasta Claude (últimos 30 días)\n/responder on|off → que Kira conteste a las clientas por Instagram (apagado = modo sombra: tú les escribes)\n/pendientes → te vuelvo a mandar los botones de las reservas que esperan tu señal o decisión (por si se perdieron)\n/clienta vale → contestas como si fueras la clienta de la última prueba aprobada (también /clienta confirmado)\n/bizum 662018425 → el número al que las clientas hacen la señal (/bizum solo lo muestra)\n/vencer → agota el plazo de la última prueba para ver qué pasa cuando no responde\n/real → las últimas citas aprobadas; /real 12 horas 3,5; materiales 9; precio 80 anota lo que de verdad tardó y gastó\n/datos → lo que de verdad pasa en cada tipo de servicio\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
+      "Kira activa. Te he identificado como administrador.\n\n/simular <mensaje> → simula el mensaje de un cliente (España) y te manda la propuesta\n/simular miami: <mensaje> → igual, pero una clienta de Miami (dólares y hora de Miami)\nFotos → mándame la foto del pelo y la de las trenzas; si quieres, con un pie («pelo: rizado, fino…» o «referencia: boxeadoras largas»)\n/fotos → te devuelvo las fotos de la última prueba\nFoto con pie «ejemplo cornrows», «ejemplo flat twist» o «ejemplo barrel twist» → la guardo como ejemplo para que Kira distinga los estilos (/ejemplos los lista, /borrarejemplo N quita uno)\n/viaje miami 3/11 al 20/11 → apunta de qué día a qué día estás en Miami (/viajes los lista, /borrarviaje 1 quita uno)\n/calendario → estado de la conexión con tu Google Calendar\n/manychat → comprueba la conexión con ManyChat y lista tus flujos, etiquetas y campos (solo lectura)\n/gasto → cuánto gasta Claude (últimos 30 días)\n/responder on|off → que Kira conteste a las clientas por Instagram (apagado = modo sombra: tú les escribes)\n/pendientes → te vuelvo a mandar los botones de las reservas que esperan tu señal o decisión (por si se perdieron)\n/clienta vale → contestas como si fueras la clienta de la última prueba aprobada (también /clienta confirmado)\n/bizum 662018425 → el número al que las clientas hacen la señal (/bizum solo lo muestra)\n/vencer → agota el plazo de la última prueba para ver qué pasa cuando no responde\n/real → las últimas citas aprobadas; /real 12 horas 3,5; materiales 9; precio 80 anota lo que de verdad tardó y gastó\n/datos → lo que de verdad pasa en cada tipo de servicio\n/panel → enlace para entrar al panel\n/prueba → mensaje de prueba con botones",
     );
     return;
   }
 
+  if (cmd === "/ejemplos" && deps.ejemplos) {
+    await deps.ejemplos.listar(chatId);
+    return;
+  }
+  if (cmd === "/borrarejemplo" && deps.ejemplos) {
+    const n = /^\/borrarejemplo(?:@\w+)?\s+#?(\d{1,9})\s*$/i.exec(text);
+    if (!n) await deps.sendMessage(chatId, "Dime cuál: /borrarejemplo 3 (los números salen en /ejemplos).");
+    else await deps.ejemplos.borrar(chatId, Number(n[1]));
+    return;
+  }
   if (cmd === "/fotos") {
     await deps.photos.reenviar(chatId, null);
     return;

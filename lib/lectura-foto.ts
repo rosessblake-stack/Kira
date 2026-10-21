@@ -64,6 +64,8 @@ DE LA FOTO DEL PELO:
 - largo_cabello: muy_corto, corto, nuca_hombros, media_espalda, caderas, mas_largo.
 - resumen_pelo: UNA frase en español (máx. 200 caracteres): largo, grosor/textura aparente, si lleva trenzas o extensiones puestas.
 
+Si antes de las fotos de la clienta vienen <ejemplo estilo="…"> (fotos que Blake etiquetó a mano), úsalas SOLO para decidir "estilo_pegadas": compara con ellas (cornrows = trenzas pegadas normales; flat twist = dos mechones enrollados y pegados; barrel twist = twists pegados con forma de barril/cilindro). Los ejemplos no son de la clienta: no los describas.
+
 No describas la cara ni la identidad de la persona. Devuelve únicamente el JSON.`;
 
 export type LecturaFoto = {

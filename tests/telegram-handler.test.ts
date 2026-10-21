@@ -493,6 +493,19 @@ describe("fotos que envía Blake", () => {
     expect(calls.fotos.recibir[0]).toMatchObject({ conversationId: null, pie: "pelo: rizado, fino, a los hombros" });
   });
 
+  it("pie «ejemplo flat twist»: va a los ejemplos de estilo, NO a las fotos de la prueba", async () => {
+    const { calls, deps } = setup();
+    const ej: unknown[] = [];
+    deps.ejemplos = {
+      async recibir(chatId, media, estilo, descripcion) { ej.push({ chatId, fileId: media.fileId, estilo, descripcion }); },
+      async listar() {},
+      async borrar() {},
+    };
+    await handleTelegramRequest(SECRET, foto({ caption: "ejemplo flat twist: seis finos" }), admin(ADMIN), deps);
+    expect(ej).toEqual([{ chatId: ADMIN, fileId: "grande", estilo: "twist", descripcion: "seis finos" }]);
+    expect(calls.fotos.recibir).toHaveLength(0);
+  });
+
   it("pie «/simular …»: crea la prueba y la foto se adjunta a ESA conversación, antes de la propuesta", async () => {
     const { calls, deps } = setup();
     await handleTelegramRequest(SECRET, foto({ caption: "/simular Hola, quiero 6 trenzas" }), admin(ADMIN), deps);

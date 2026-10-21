@@ -5,7 +5,8 @@ import { leerEstancias, guardarEstancias } from "../../../lib/estancias-store";
 import { crearAgendaGoogle } from "../../../lib/google-agenda";
 import { textoEstadoCalendario } from "../../../lib/google-estado";
 import { configGoogle } from "../../../lib/google-oauth";
-import { makeFlowDeps, makePhotoDeps } from "../../../lib/composicion";
+import { makeEjemplosDeps, makeFlowDeps, makePhotoDeps } from "../../../lib/composicion";
+import { crearFlujoEjemplos } from "../../../lib/ejemplos";
 import { crearFlujoFotos } from "../../../lib/photo-flow";
 import { crearFlujoPropuestas } from "../../../lib/proposal-flow";
 import * as db from "../../../lib/db";
@@ -80,6 +81,7 @@ function makeDeps(host: string | null): Deps {
       }
     },
     photos,
+    ejemplos: crearFlujoEjemplos(makeEjemplosDeps()),
     records: crearFlujoRegistro({
       now: () => new Date(),
       listar: registroStore.listarRegistros,
