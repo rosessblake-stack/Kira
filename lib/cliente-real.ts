@@ -55,6 +55,7 @@ export function crearClienteReal(): ClientePort {
     guardarBizum: clienteStore.guardarBizum,
     avanzarFase: clienteStore.avanzarFase,
     reservaActivaDe: clienteStore.reservaActivaDe,
+    propuestaPendienteDe: clienteStore.propuestaPendienteDe,
     reservaDePruebaActiva: clienteStore.reservaDePruebaActiva,
     vencidas: clienteStore.vencidas,
     // La propuesta nueva (tras elegir la clienta una opción) se arma con los mismos flujos que el webhook de Telegram.

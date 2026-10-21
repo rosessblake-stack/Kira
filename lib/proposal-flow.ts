@@ -1,6 +1,7 @@
 import { euros } from "./panel-rules";
 import { fechaLarga, partesEn } from "./agenda";
 import { evaluarHueco, textoChoques, type ResultadoAgenda } from "./agenda-eventos";
+import { botonInstagram } from "./instagram";
 import { DIAS_BUSQUEDA, calcularOpciones, lineaOpcion, type OpcionHueco } from "./opciones";
 import { eventoDeReserva, type AgendaPort } from "./evento";
 import { idDeEvento } from "./google-calendar";
@@ -191,7 +192,7 @@ export interface ProposalPort {
   recibirSolicitud(chatId: number, s: SolicitudManychat, alCrear?: (conversationId: string) => Promise<void>): Promise<string | null>;
   boton(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "ok" | "ed" | "no" | "op" }): Promise<void>;
   /** Vuelve a mandar a Blake la propuesta de una reserva (p. ej. cuando la clienta elige una de las opciones). */
-  reenviarPropuesta(chatId: number, reservaId: string, prefijo?: string): Promise<void>;
+  reenviarPropuesta(chatId: number, reservaId: string, prefijo?: string): Promise<boolean>;
   /** Botones de una cita ya aprobada con reserva provisional en el calendario: señal recibida / cancelar. */
   botonCita(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "pay" | "del" }): Promise<void>;
   /** /pendientes: vuelve a mandar los botones que se hayan perdido (reservas provisionales y propuestas sin botones). */
@@ -207,7 +208,7 @@ export const EDICION_CADUCA_MIN = 30;
 const aprobable = (r: Pick<Reserva, "price_cents" | "starts_at" | "ends_at">) =>
   r.price_cents !== null && Boolean(r.starts_at) && Boolean(r.ends_at);
 
-const teclado = (nonce: string, puedeAprobar: boolean, puedeOfrecer = false) => ({
+const teclado = (nonce: string, puedeAprobar: boolean, puedeOfrecer = false, instagram: string | null = null) => ({
   inline_keyboard: [
     [
       ...(puedeAprobar ? [{ text: "✅ Aprobar", callback_data: `p:${nonce}:ok` }] : []),
@@ -215,6 +216,7 @@ const teclado = (nonce: string, puedeAprobar: boolean, puedeOfrecer = false) => 
       { text: "❌ Rechazar", callback_data: `p:${nonce}:no` },
     ],
     ...(puedeOfrecer ? [[{ text: "📨 Ofrecer opciones a la clienta", callback_data: `p:${nonce}:op` }]] : []),
+    ...(botonInstagram(instagram).length ? [botonInstagram(instagram)] : []),
   ],
 });
 
@@ -394,10 +396,11 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     return Boolean(deps.cliente?.ofrecerOpciones && r.conversation_id && r.starts_at && r.ends_at && !r.client_phase && agenda.estado === "ok" && agenda.hueco.choques.length > 0);
   }
 
-  async function reenviarPropuesta(chatId: number, reservaId: string, prefijo = ""): Promise<void> {
+  async function reenviarPropuesta(chatId: number, reservaId: string, prefijo = ""): Promise<boolean> {
     const r = await deps.leerReserva(reservaId);
-    if (r.status !== "propuesta") return;
+    if (r.status !== "propuesta") return false;
     await enviarPropuesta(chatId, r, prefijo);
+    return true;
   }
 
   async function enviarPropuesta(chatId: number, r: Reserva, prefijo = ""): Promise<void> {
@@ -427,7 +430,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const texto = `${prefijo}${textoPropuesta(prop, spec, { mensajeCliente: spec.mensaje_cliente, esPrueba: actualizada.is_test, perfil, fotos, agenda })}`;
     let id: number | null;
     try {
-      id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada) && prop.faltan.length === 0, puedeOfrecerOpciones(actualizada, agenda)), { plegable: resumenCortoPropuesta(prop, spec, actualizada.is_test) });
+      id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada) && prop.faltan.length === 0, puedeOfrecerOpciones(actualizada, agenda), spec.instagram), { plegable: resumenCortoPropuesta(prop, spec, actualizada.is_test) });
     } catch (e) {
       // El mensaje no llegó: el botón no existe, así que su nonce no puede quedar vivo (si no, /pendientes no vería la propuesta).
       await deps.actualizarReserva(r.id, { proposal_nonce: null }).catch(() => undefined);
@@ -1080,7 +1083,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const envio = await deps.cliente.ofrecerOpciones(r, opciones);
     if (!envio.ok) return devolver(`no he podido escribir a la clienta (${envio.motivo === "ventana_24h" ? "han pasado más de 24 h desde su último mensaje" : envio.motivo === "canal_no_conectado" ? "Kira todavía no escribe por Instagram: modo sombra, escríbele tú" : envio.motivo}).`);
     await responder(b.callbackId, "📨 Opciones enviadas");
-    await editarMensaje(`${r.is_test ? "🧪 PRUEBA · " : ""}📨 OPCIONES ENVIADAS a ${r.client_name ?? "la clienta"}\n\n${opciones.map((o, i) => `${i + 1}) ${lineaOpcion(o, lugar.zonaHoraria)}`).join("\n")}\n\nCuando conteste con un número te llega la propuesta nueva para aprobar.`);
+    await editarMensaje(`${r.is_test ? "🧪 PRUEBA · " : ""}📨 OPCIONES ENVIADAS a ${r.client_name ?? "la clienta"}\n\n${opciones.map((o, i) => `${i + 1}) ${lineaOpcion(o, lugar.zonaHoraria)}`).join("\n")}\n\n${r.is_test ? "Es una prueba: haz de clienta escribiendo /clienta 2 (o solo el número, p. ej. 2). " : ""}Cuando conteste con un número te llega la propuesta nueva para aprobar.`);
     await deps.logEvent({ source: "telegram", kind: "opciones_ofrecidas", summary: `Blake ofreció ${opciones.length} opciones de hueco a la clienta`, detail: { opciones: opciones.length }, ...ids });
   }
 

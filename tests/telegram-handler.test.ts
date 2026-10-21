@@ -66,7 +66,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       return `https://kira.test/panel/entrar?t=${LINK_TOKEN}`;
     },
     proposals: {
-      async reenviarPropuesta() {},
+      async reenviarPropuesta() { return true; },
       async simular(chatId, texto, alCrear) {
         calls.prop.simular.push({ chatId, texto, conAdjunto: Boolean(alCrear) });
         // Como el flujo real: crea la conversación y ejecuta el adjunto enseguida.
@@ -336,6 +336,14 @@ describe("propuestas de cita: comandos y botones", () => {
     await handleTelegramRequest(SECRET, body, admin(ADMIN), deps);
     await handleTelegramRequest(SECRET, body, admin(ADMIN), deps);
     expect(calls.prop.simular).toHaveLength(1);
+  });
+
+  it("el botón «Ver propuesta» (v:) reenvía la propuesta con su id completo", async () => {
+    const { deps } = setup();
+    const visto: string[] = [];
+    deps.proposals.reenviarPropuesta = async (_c: number, id: string) => { visto.push(id); return true; };
+    await handleTelegramRequest(SECRET, cb(`v:${"ab".repeat(16)}`), admin(ADMIN), deps);
+    expect(visto).toEqual(["abababab-abab-abab-abab-abababababab"]);
   });
 
   const NONCE_P = "c".repeat(32);

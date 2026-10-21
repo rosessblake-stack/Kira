@@ -56,6 +56,20 @@ export async function reservaActivaDe(conversationId: string): Promise<Reserva |
   return ((data as Reserva[] | null) ?? [])[0] ?? null;
 }
 
+/** La solicitud de esa conversación que Blake aún no ha decidido (estado propuesta, sin fase de clienta). */
+export async function propuestaPendienteDe(conversationId: string): Promise<Reserva | null> {
+  const { data, error } = await getDb()
+    .from("bookings")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .eq("status", "propuesta")
+    .is("client_phase", null)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  ok("No se pudo consultar la propuesta pendiente", error);
+  return ((data as Reserva[] | null) ?? [])[0] ?? null;
+}
+
 export async function reservaDePruebaActiva(): Promise<Reserva | null> {
   const { data, error } = await getDb()
     .from("bookings")

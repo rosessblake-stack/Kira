@@ -12,6 +12,7 @@ import {
   type Clasificacion,
 } from "./intents";
 import { leerFechaHora } from "./fecha-texto";
+import { enlaceInstagram } from "./instagram";
 import type { OpcionHueco } from "./opciones";
 import { ETIQUETA_FOTO, limpiarDescripcion, type ResumenFoto } from "./fotos";
 import type { LecturaGuardada } from "./lectura-foto";
@@ -379,6 +380,7 @@ export function textoPropuesta(
   l.push(`📍 ${lugar.nombre} · ${lugar.moneda === "USD" ? "dólares · hora de Miami" : "euros · hora de Madrid"}`);
   l.push(`🏠 Dirección: ${spec.direccion ? recorte(limpiarTexto(spec.direccion, 200), 200) : "sin indicar"}`);
   l.push(`👤 Cliente: ${spec.nombre ?? "sin nombre"}${p.emailCliente ? ` (${p.emailCliente})` : ""}${spec.instagram ? ` · ${spec.instagram}` : ""}`);
+  if (enlaceInstagram(spec.instagram)) l.push(`📷 ${enlaceInstagram(spec.instagram)}`);
   l.push(`💬 Dijo: «${recorte(limpiarTexto(ctx.mensajeCliente, 600), 500)}»`);
   l.push("");
   l.push("🧾 Lo que he entendido");

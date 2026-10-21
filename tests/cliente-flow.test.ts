@@ -134,6 +134,7 @@ function mundo(op: Opciones = {}) {
     async reservaActivaDe() {
       return (reserva.status === "pendiente_pago" || reserva.status === "cancelada" || reserva.status === "propuesta") && ["precio_enviado", "pago_pedido", "pago_declarado", "liberada", "opciones_enviadas"].includes(reserva.client_phase ?? "") ? structuredClone(reserva) : null;
     },
+    async propuestaPendienteDe() { return reserva.status === "propuesta" && !reserva.client_phase ? structuredClone(reserva) : null; },
     async reservaDePruebaActiva() {
       return reserva.is_test && (reserva.status === "pendiente_pago" || reserva.status === "cancelada") && ["precio_enviado", "pago_pedido", "pago_declarado", "liberada"].includes(reserva.client_phase ?? "") ? structuredClone(reserva) : null;
     },
@@ -582,6 +583,16 @@ describe("seguridad de lo que escribe la clienta", () => {
     await m.flujo.respuestaClienta("conv-1", "hola, ¿sigues ahí?");
     expect(m.w.paraClienta).toEqual([]);
     expect(m.avisos().at(-1)).toContain("«hola, ¿sigues ahí?»");
+  });
+
+  it("con la propuesta sin decidir, avisa claro y ofrece «Ver propuesta»", async () => {
+    const m = mundo();
+    m.w.reserva.status = "propuesta";
+    m.w.reserva.client_phase = null;
+    m.w.reserva.spec.instagram = "ana_braids";
+    await m.flujo.respuestaClienta("conv-1", "hola?");
+    expect(m.avisos().at(-1)).toContain("SIN decidir");
+    expect(m.w.paraClienta).toEqual([]);
   });
 
   it("cada mensaje entrante renueva la ventana de 24 h", async () => {

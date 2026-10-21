@@ -112,6 +112,7 @@ const CALLBACK_RE = /^t:([0-9a-f]{32}):(ok|ed|no)$/;
 const PROPOSAL_CB_RE = /^p:([0-9a-f]{32}):(ok|ed|no|op)$/;
 /** Botones de una cita con reserva provisional en el calendario: señal recibida / cancelar. */
 /** «💾 Guardar como ejemplo» tras corregir el estilo: id de la reserva (sin guiones) + c/t/b (estilo) o n (no). */
+const VER_CB_RE = /^v:([0-9a-f]{32})$/;
 const EJEMPLO_CB_RE = /^x:([0-9a-f]{32}):([ctbn])$/;
 const CITA_CB_RE = /^c:([0-9a-f]{32}):(pay|del|rev|nop)$/;
 
@@ -398,6 +399,12 @@ async function handleMessage(msg: TgMessage, config: Config, deps: Deps) {
   // Texto libre: solo se atiende si hay una edición abierta (tras pulsar Editar en una propuesta).
   if (text && !text.startsWith("/") && (await deps.proposals.textoLibre(chatId, text))) return;
 
+  // En una prueba, un número suelto (1–4) = la clienta elige esa opción de hueco.
+  if (/^[1-4]$/.test(text.trim())) {
+    await deps.client.respuestaEnPrueba(chatId, text.trim());
+    return;
+  }
+
   await deps.sendMessage(chatId, "No conozco ese comando. Prueba con /simular, /fotos, /viaje, /calendario, /pendientes, /clienta, /bizum, /manychat, /real, /datos, /panel o /prueba.");
 }
 
@@ -427,6 +434,20 @@ async function handleCallback(cq: TgCallback, config: Config, deps: Deps) {
       nonce: propuesta[1],
       accion: propuesta[2] as "ok" | "ed" | "no" | "op",
     });
+    return;
+  }
+
+  const ver = VER_CB_RE.exec(cq.data ?? "");
+  if (ver) {
+    const chat = cq.message?.chat?.id ?? fromId;
+    try {
+      await deps.answerCallback(callbackId, "📋 Abriendo la propuesta");
+    } catch {
+      /* Telegram rechaza responder pasados unos segundos: se ignora */
+    }
+    const h = ver[1];
+    const uuid = `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+    if (!(await deps.proposals.reenviarPropuesta(chat, uuid))) await deps.sendMessage(chat, "Esa solicitud ya está decidida: no hay nada que aprobar.");
     return;
   }
 

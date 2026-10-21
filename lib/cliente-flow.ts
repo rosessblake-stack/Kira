@@ -17,6 +17,7 @@ import { eventoDeReserva } from "./evento";
 import { idDeEvento } from "./google-calendar";
 import { describirFalloGoogle } from "./google-oauth";
 import { MAX_CARACTERES_CLIENTE, detectarInyeccion, limpiarTexto } from "./intents";
+import { botonInstagram } from "./instagram";
 import { interpretarElegida, lineaOpcion, textoOpciones, type OpcionHueco } from "./opciones";
 import { partesEn } from "./agenda";
 import { contextoDe, horarioDeSpec } from "./proposal";
@@ -70,6 +71,8 @@ export interface ClienteExtra {
   avanzarFase(id: string, de: (Fase | null)[], parche: Partial<Omit<Reserva, "id">>): Promise<Reserva | null>;
   /** La reserva con conversación activa (esperando «vale» o «confirmado») de una conversación. */
   reservaActivaDe(conversationId: string): Promise<Reserva | null>;
+  /** La solicitud aún sin decidir por Blake de una conversación (para avisarle si la clienta vuelve a escribir). */
+  propuestaPendienteDe(conversationId: string): Promise<Reserva | null>;
   /** La última reserva de PRUEBA con conversación activa (para /clienta y /vencer). */
   reservaDePruebaActiva(): Promise<Reserva | null>;
   /** Reservas con plazo vencido en una fase activa. */
@@ -307,6 +310,17 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
 
     const r = await deps.reservaActivaDe(conversationId);
     if (!r) {
+      const pendiente = await deps.propuestaPendienteDe(conversationId).catch(() => null);
+      if (pendiente) {
+        // Blake aún no ha decidido su solicitud: el aviso lo dice claro y trae el botón para verla y decidir.
+        const bIg = botonInstagram(pendiente.spec?.instagram);
+        await deps.logEvent({ source: "system", kind: "clienta_escribe_con_propuesta_pendiente", summary: "La clienta escribió con su propuesta sin decidir", ...idsDe(pendiente) });
+        await avisarBlake(
+          `${marca(pendiente)}⏳ ${nombreDe(pendiente)} ha vuelto a escribir y todavía tienes su solicitud SIN decidir (Aprobar / Editar / Rechazar).\n\n«${limpiarTexto(texto, 600)}»\n\nPulsa «Ver propuesta» para decidir.`,
+          { inline_keyboard: [[{ text: "📋 Ver propuesta", callback_data: `v:${pendiente.id.replace(/-/g, "")}` }], ...(bIg.length ? [bIg] : [])] },
+        );
+        return;
+      }
       await avisarBlake(`${prefijo}💬 Ha escrito la clienta (no hay nada pendiente que Kira gestione solo):\n\n«${limpiarTexto(texto, 600)}»\n\nContéstale tú.`);
       return;
     }
@@ -316,6 +330,8 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
       await avisarBlake(`${marca(r)}⏸ Kira está en pausa y ${nombreDe(r)} ha escrito:\n\n«${limpiarTexto(texto, 600)}»\n\nNo he hecho nada.`);
       return;
     }
+
+    const botonesIg = botonInstagram(r.spec?.instagram);
 
     if (r.client_phase === "precio_enviado") {
       if (esAceptacion(texto, true)) return aceptar(r, conv);
@@ -339,6 +355,7 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     await deps.logEvent({ source: "system", kind: "respuesta_clienta_a_blake", summary: "Respuesta de la clienta que Kira no gestiona sola: reenviada a Blake", ...ids });
     await avisarBlake(
       `${marca(r)}💬 ${nombreDe(r)} ha escrito (${r.client_phase === "pago_pedido" ? "esperaba su «confirmado»" : r.client_phase === "pago_declarado" ? "Blake está comprobando su Bizum" : r.client_phase === "liberada" ? "el hueco está liberado; esperaba su «hecho»" : r.client_phase === "opciones_enviadas" ? "esperaba que eligiera una de las opciones de hueco" : "esperaba su «vale»"}):\n\n«${limpiarTexto(texto, 600)}»\n\nNo he contestado nada: respóndele tú.`,
+      botonesIg.length ? { inline_keyboard: [botonesIg] } : undefined,
     );
   }
 
