@@ -8,6 +8,8 @@ import { getDb } from "./db";
 /** Dólares por millón de tokens (entrada, salida). Solo los modelos con precio confirmado. */
 export const PRECIOS: Record<string, { entrada: number; salida: number }> = {
   "claude-opus-5-5": { entrada: 4, salida: 20 },
+  // Hasta 100.000 tokens de entrada por petición (más allá cuesta 0,50/2,50): una lectura de foto va muy por debajo.
+  "claude-haiku-5-5": { entrada: 0.1, salida: 0.5 },
 };
 
 export type FilaLlamada = { uso: "texto" | "fotos"; modelo: string | null; entrada: number; salida: number };

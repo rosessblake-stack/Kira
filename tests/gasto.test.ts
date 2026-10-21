@@ -19,7 +19,7 @@ describe("/gasto", () => {
   });
 
   it("un modelo sin precio conocido: sus tokens se cuentan aparte y no inventan coste", () => {
-    const r = resumirGasto([{ uso: "fotos", modelo: "claude-haiku-5-5", entrada: 1500, salida: 200 }], 0);
+    const r = resumirGasto([{ uso: "fotos", modelo: "claude-modelo-sin-precio", entrada: 1500, salida: 200 }], 0);
     expect(r.costeUsd).toBe(0);
     expect(r.tokensSinPrecio).toBe(1700);
     expect(textoGasto(r, 30)).toContain("modelo del que no conozco el precio");
