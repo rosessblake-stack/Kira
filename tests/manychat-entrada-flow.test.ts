@@ -91,3 +91,16 @@ describe("clienta que vuelve: la foto del pelo de la última vez", () => {
     expect(m.guardadas.find((g) => g.tipo === "pelo")?.bytes).toBe(3);
   });
 });
+
+describe("clienta que vuelve con un enlace viejo (caducado) de su foto del pelo", () => {
+  it("si el enlace no se puede descargar, se usa la foto que Kira ya tenía guardada", async () => {
+    const m = montar({
+      peloAnterior: new Uint8Array([7, 7, 7, 7, 7]),
+      descargas: { [S.fotoPeloUrl!]: { ok: false, motivo: "error" } as ResultadoDescarga },
+    });
+    await m.e.procesar(S);
+    expect(m.guardadas).toContainEqual({ conv: "conv-1", tipo: "pelo", bytes: 5 });
+    expect(m.eventos.map((e) => e.kind)).toContain("foto_descarga_fallo");
+    expect(m.eventos.map((e) => e.kind)).toContain("foto_pelo_reutilizada");
+  });
+});

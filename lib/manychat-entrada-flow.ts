@@ -31,24 +31,29 @@ export interface EntradaPort {
 const msg = (e: unknown) => (e instanceof Error ? e.message : "error desconocido");
 
 export function crearEntradaManychat(deps: EntradaDeps): EntradaPort {
-  async function traerFoto(convId: string, tipo: "pelo" | "referencia", url: string | null, claves?: string[]) {
+  /** true si la foto quedó guardada. */
+  async function traerFoto(convId: string, tipo: "pelo" | "referencia", url: string | null, claves?: string[]): Promise<boolean> {
     if (!url) {
       // Se anotan los NOMBRES de los campos que sí llegaron: así se ve si ManyChat mandó el campo de la foto vacío o con otro nombre.
       await deps.logEvent({ kind: "foto_ausente", level: "warn", summary: `La solicitud no trae foto de ${tipo === "pelo" ? "pelo" : "referencia"}`, detail: { campos_recibidos: claves ?? [] }, conversation_id: convId });
-      return;
+      return false;
     }
     const d = await deps.descargar(url);
     if (!d.ok) {
       // Solo el dominio: la dirección completa puede llevar un permiso temporal.
       await deps.logEvent({ kind: "foto_descarga_fallo", level: "warn", summary: `No se pudo descargar la foto de ${tipo === "pelo" ? "pelo" : "referencia"} (${d.motivo}${d.dominio ? `, ${d.dominio}` : ""})`, detail: { motivo: d.motivo, dominio: d.dominio ?? null }, conversation_id: convId });
-      return;
+      return false;
     }
     await deps.photos.guardarDeClienta(convId, tipo, d.bytes);
+    return true;
   }
 
   /** La foto del pelo: la de esta solicitud o, si no viene y la clienta ya nos la dio hace menos de 60 días, la anterior. */
   async function peloDe(convId: string, s: SolicitudManychat) {
-    if (!s.fotoPeloUrl && s.instagram && deps.fotoPeloAnterior) {
+    // Una clienta que vuelve y se salta la pregunta conserva en ManyChat el enlace VIEJO de su foto (caduca en días): si ese enlace
+    // no se puede descargar, se usa la foto que Kira ya tiene guardada.
+    if (s.fotoPeloUrl && (await traerFoto(convId, "pelo", s.fotoPeloUrl, s.claves))) return;
+    if (s.instagram && deps.fotoPeloAnterior) {
       try {
         const bytes = await deps.fotoPeloAnterior(s.instagram.toLowerCase());
         if (bytes) {
@@ -62,7 +67,7 @@ export function crearEntradaManychat(deps: EntradaDeps): EntradaPort {
         await deps.logEvent({ kind: "foto_pelo_reutilizar_fallo", level: "warn", summary: msg(e), conversation_id: convId });
       }
     }
-    await traerFoto(convId, "pelo", s.fotoPeloUrl, s.claves);
+    if (!s.fotoPeloUrl) await traerFoto(convId, "pelo", null, s.claves);
   }
 
   async function procesar(s: SolicitudManychat): Promise<void> {
