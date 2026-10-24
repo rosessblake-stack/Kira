@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { evaluarHueco, type EventoAgenda } from "../lib/agenda-eventos";
 import { REGLAS_ESPANA, ZONA_MADRID, aUtc } from "../lib/agenda";
-import { calcularOpciones, interpretarElegida, textoOpciones } from "../lib/opciones";
+import { calcularOpciones, interpretarElegida, motivoNoDisponible, textoOpciones } from "../lib/opciones";
 
 const ev = (fecha: string, ini: string, fin: string): EventoAgenda => ({
   id: `${fecha}${ini}`, titulo: "Cita", inicio: aUtc(fecha, ini), fin: aUtc(fecha, fin), dias: null, libre: false, esDeKira: false, esPrueba: false, bookingId: null,
@@ -72,5 +72,24 @@ describe("textoOpciones", () => {
     expect(t).toContain("Primera: jueves 22 de octubre de 15:00 a 18:00");
     expect(t).toContain("Segunda: viernes 23 de octubre de 12:00 a 15:00");
     expect(t).toContain("«quiero la primera» o «quiero la segunda»");
+  });
+});
+
+describe("domingo y lunes (día libre)", () => {
+  it("motivoNoDisponible lo detecta y se ofrecen 3 días distintos a la misma hora, sin domingo ni lunes", () => {
+    const inicio = aUtc("2026-10-25", "12:00"); // domingo
+    const fin = aUtc("2026-10-25", "15:00");
+    const hueco = evaluarHueco(inicio, fin, [], ZONA_MADRID, { horario: REGLAS_ESPANA.horario });
+    expect(motivoNoDisponible(inicio, fin, hueco, ZONA_MADRID, REGLAS_ESPANA)).toBe("dia_libre");
+    const op = calcularOpciones({ inicio, fin, hueco: { ...hueco, alternativas: [] }, eventos: [], zona: ZONA_MADRID, reglas: REGLAS_ESPANA, ahora: AHORA, maxDiasSiguientes: 3 });
+    expect(op.map((o) => o.inicio.slice(0, 10))).toEqual(["2026-10-27", "2026-10-28", "2026-10-29"]);
+    const t = textoOpciones("Ana", inicio, op, ZONA_MADRID, { motivo: "dia_libre" });
+    expect(t).toContain("los domingos y lunes descanso");
+  });
+  it("un martes libre no tiene motivo", () => {
+    const inicio = aUtc("2026-10-27", "12:00");
+    const fin = aUtc("2026-10-27", "15:00");
+    const hueco = evaluarHueco(inicio, fin, [], ZONA_MADRID, { horario: REGLAS_ESPANA.horario });
+    expect(motivoNoDisponible(inicio, fin, hueco, ZONA_MADRID, REGLAS_ESPANA)).toBeNull();
   });
 });

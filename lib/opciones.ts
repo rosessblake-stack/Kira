@@ -75,12 +75,24 @@ export function lineaOpcion(o: OpcionHueco, zona: string): string {
 /** El mensaje que recibe la clienta (plantilla: solo fechas y horas ya calculadas por el código). */
 export type MotivoNoDisponible = "ocupado" | "dia_libre" | "fuera_horario";
 
+/** Por qué no sirve la fecha pedida: día libre de Blake, fuera de horario o hueco ocupado/sin margen. `null` = sirve. */
+export function motivoNoDisponible(inicio: Date, fin: Date, hueco: Hueco, zona: string, reglas: Pick<ReglasAgenda, "diasLibres" | "horario">): MotivoNoDisponible | null {
+  const minutos = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+  const dia = partesEn(inicio, zona);
+  const finLocal = partesEn(fin, zona);
+  const h = reglas.horario;
+  if (reglas.diasLibres?.includes(dia.diaSemana)) return "dia_libre";
+  if (h && (minutos(dia.hora) < h.aperturaMin || finLocal.fecha !== dia.fecha || minutos(finLocal.hora) > h.cierreMin)) return "fuera_horario";
+  const margenCorto = (hueco.anterior && hueco.anterior.margenMin < MARGEN_MIN) || (hueco.siguiente && hueco.siguiente.margenMin < MARGEN_MIN);
+  return hueco.choques.length || margenCorto ? "ocupado" : null;
+}
+
 export function textoOpciones(nombre: string | null, pedida: Date, opciones: OpcionHueco[], zona: string, extra: { motivo?: MotivoNoDisponible; otraFecha?: boolean } = {}): string {
   const saludo = nombre ? `¡Hola, ${nombre}!` : "¡Hola!";
   const duracion = opciones[0] ? duracionLegible(Math.round((Date.parse(opciones[0].fin) - Date.parse(opciones[0].inicio)) / 60_000)) : "";
   return [
     extra.motivo === "dia_libre"
-      ? `${saludo} Ese día (${diaLegible(pedida, zona)}) no hago citas 😔`
+      ? `${saludo} Ese día (${diaLegible(pedida, zona)}) no hago citas: los domingos y lunes descanso 😔`
       : extra.motivo === "fuera_horario"
         ? `${saludo} A esa hora (${diaLegible(pedida, zona)}, ${partesEn(pedida, zona).hora}) no puedo atenderte: mi horario es de 11:00 a 22:00 😔`
         : `${saludo} Justo a esa hora (${diaLegible(pedida, zona)}, ${partesEn(pedida, zona).hora}) ya tengo otra cita 😔`,

@@ -2,7 +2,7 @@ import { euros } from "./panel-rules";
 import { fechaLarga, partesEn } from "./agenda";
 import { evaluarHueco, textoChoques, type ResultadoAgenda } from "./agenda-eventos";
 import { botonInstagram } from "./instagram";
-import { DIAS_BUSQUEDA, calcularOpciones, lineaOpcion, type OpcionHueco } from "./opciones";
+import { DIAS_BUSQUEDA, calcularOpciones, lineaOpcion, motivoNoDisponible, type MotivoNoDisponible, type OpcionHueco } from "./opciones";
 import { eventoDeReserva, type AgendaPort } from "./evento";
 import { idDeEvento } from "./google-calendar";
 import { describirFalloGoogle } from "./google-oauth";
@@ -166,7 +166,7 @@ export interface FlowDeps {
     alCancelarBlake(r: Reserva): Promise<void>;
     alRechazarBlake(r: Reserva): Promise<void>;
     /** «Ofrecer opciones»: le escribe a la clienta los huecos alternativos y espera su número. */
-    ofrecerOpciones?(r: Reserva, opciones: OpcionHueco[]): Promise<{ ok: true } | { ok: false; motivo: string }>;
+    ofrecerOpciones?(r: Reserva, opciones: OpcionHueco[], motivo?: MotivoNoDisponible): Promise<{ ok: true } | { ok: false; motivo: string }>;
   };
   /** Si está, tras corregir el estilo Blake puede guardar la foto de referencia como ejemplo («💾 Guardar como ejemplo»). */
   ofrecerEjemplosDeEstilo?: boolean;
@@ -405,7 +405,7 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
 
   /** «Ofrecer opciones»: solo si la hora choca con otra cita, hay conversación con la clienta y todavía no se ha ofrecido nada. */
   function puedeOfrecerOpciones(r: Reserva, agenda: ResultadoAgenda): boolean {
-    return Boolean(deps.cliente?.ofrecerOpciones && r.conversation_id && r.starts_at && r.ends_at && !r.client_phase && agenda.estado === "ok" && agenda.hueco.choques.length > 0);
+    return Boolean(deps.cliente?.ofrecerOpciones && r.conversation_id && r.starts_at && r.ends_at && !r.client_phase && agenda.estado === "ok" && motivoNoDisponible(new Date(r.starts_at), new Date(r.ends_at), agenda.hueco, contextoDe(r.spec).zonaHoraria, contextoDe(r.spec).reglas) !== null);
   }
 
   async function reenviarPropuesta(chatId: number, reservaId: string, prefijo = ""): Promise<boolean> {
@@ -1142,16 +1142,19 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const inicio = new Date(r.starts_at);
     const fin = new Date(r.ends_at);
     let opciones: OpcionHueco[];
+    let motivo: MotivoNoDisponible | null;
     try {
       const eventos = await deps.agenda.eventosEntre(new Date(inicio.getTime() - DIA_MS), new Date(inicio.getTime() + (DIAS_BUSQUEDA + 2) * DIA_MS));
       const hueco = evaluarHueco(inicio, fin, eventos, lugar.zonaHoraria, { excluirBookingId: r.id, horario: lugar.reglas.horario });
-      opciones = calcularOpciones({ inicio, fin, hueco, eventos, zona: lugar.zonaHoraria, reglas: lugar.reglas, ahora: deps.now(), excluirBookingId: r.id });
+      motivo = motivoNoDisponible(inicio, fin, hueco, lugar.zonaHoraria, lugar.reglas);
+      // Día libre: nada del mismo día; tres días distintos a la misma hora. Si no, los huecos del mismo día + el siguiente día libre.
+      opciones = calcularOpciones({ inicio, fin, hueco: motivo === "dia_libre" ? { ...hueco, alternativas: [] } : hueco, eventos, zona: lugar.zonaHoraria, reglas: lugar.reglas, ahora: deps.now(), excluirBookingId: r.id, maxDiasSiguientes: motivo === "dia_libre" ? 3 : 1 });
     } catch (e) {
       await deps.logEvent({ source: "calendar", kind: "agenda_lectura_fallo", level: "error", summary: describirFalloGoogle(e), ...ids });
       return devolver(`no he podido leer tu calendario (${describirFalloGoogle(e)}).`);
     }
     if (!opciones.length) return devolver("no encuentro huecos libres cerca de esa hora. Cambia la fecha con Editar o escríbele tú.");
-    const envio = await deps.cliente.ofrecerOpciones(r, opciones);
+    const envio = await deps.cliente.ofrecerOpciones(r, opciones, motivo ?? undefined);
     if (!envio.ok) return devolver(`no he podido escribir a la clienta (${envio.motivo === "ventana_24h" ? "han pasado más de 24 h desde su último mensaje" : envio.motivo === "canal_no_conectado" ? "Kira todavía no escribe por Instagram: modo sombra, escríbele tú" : envio.motivo}).`);
     await responder(b.callbackId, "📨 Opciones enviadas");
     await editarMensaje(`${r.is_test ? "🧪 PRUEBA · " : ""}📨 OPCIONES ENVIADAS a ${r.client_name ?? "la clienta"}\n\n${opciones.map((o, i) => `${i + 1}) ${lineaOpcion(o, lugar.zonaHoraria)}`).join("\n")}\n\n${r.is_test ? "Es una prueba: haz de clienta escribiendo /clienta segunda (o solo el número, p. ej. 2). " : ""}Cuando conteste (primera, segunda…) te llega la propuesta nueva para aprobar.`);

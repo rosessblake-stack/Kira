@@ -136,7 +136,7 @@ export interface ClientePort {
   /** Botón «❌ No me ha llegado» (el Bizum no entró): borra el evento, libera el hueco y se lo dice a la clienta. */
   botonNoLlego(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string }): Promise<void>;
   /** Blake pulsó «Ofrecer opciones»: se las escribe a la clienta y pasa a esperar su número (plazo de 20 h). */
-  ofrecerOpciones(r: Reserva, opciones: OpcionHueco[]): Promise<ResultadoEnvio>;
+  ofrecerOpciones(r: Reserva, opciones: OpcionHueco[], motivo?: MotivoNoDisponible): Promise<ResultadoEnvio>;
   /** Botón antiguo «❌ No me ha llegado nada» de una cita ya confirmada (revertir). */
   botonRevertir(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string }): Promise<void>;
   /** El temporizador (cada minuto): cierra los plazos vencidos. */
@@ -283,12 +283,12 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
   // Hora ocupada: Blake ofrece huecos alternativos y la clienta elige con un número
   // -------------------------------------------------------------------------
 
-  async function ofrecerOpciones(r: Reserva, opciones: OpcionHueco[]): Promise<ResultadoEnvio> {
+  async function ofrecerOpciones(r: Reserva, opciones: OpcionHueco[], motivo?: MotivoNoDisponible): Promise<ResultadoEnvio> {
     const ids = idsDe(r);
     if (!r.conversation_id || !r.starts_at || !opciones.length) return { ok: false, motivo: "sin_conversacion" };
     const conv = await deps.leerConversacion(r.conversation_id);
     const lugar = contextoDe(r.spec ?? {});
-    const texto = textoOpciones(r.spec?.nombre ?? null, new Date(r.starts_at), opciones, lugar.zonaHoraria);
+    const texto = textoOpciones(r.spec?.nombre ?? null, new Date(r.starts_at), opciones, lugar.zonaHoraria, { motivo });
     // La fase se fija ANTES de escribir: si ella contesta enseguida, la respuesta ya encuentra sus opciones.
     const plazo = new Date(deps.now().getTime() + PLAZO_PRECIO_HORAS * HORA_MS);
     const ganada = await deps.avanzarFase(r.id, [null], { client_phase: "opciones_enviadas", payment_deadline: plazo.toISOString(), spec: { ...r.spec, opciones_hueco: opciones } });
