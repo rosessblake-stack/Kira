@@ -60,7 +60,9 @@ export function crearClienteReal(): ClientePort {
       if (conv.canal !== "instagram") return;
       const clave = claveManychat();
       if (!clave) return;
-      await crearClienteManychat(clave).quitarEtiqueta(conv.contact_ref, "esperando_kira");
+      const mc = crearClienteManychat(clave);
+      await mc.quitarEtiqueta(conv.contact_ref, "pedir_datos").catch(() => undefined);
+      await mc.quitarEtiqueta(conv.contact_ref, "esperando_kira");
     },
     bizum: clienteStore.leerBizum,
     guardarBizum: clienteStore.guardarBizum,
@@ -76,7 +78,10 @@ export function crearClienteReal(): ClientePort {
       const ns = await leerFlujoDatos();
       const clave = claveManychat();
       if (!ns || !clave) return false;
-      await crearClienteManychat(clave).enviarFlujo(conv.contact_ref, ns);
+      const mc = crearClienteManychat(clave);
+      // La etiqueta permite que el flujo (el de Citas, p. ej.) decida con una condición «Tag is pedir_datos». Si no existe en ManyChat, no pasa nada.
+      await mc.ponerEtiqueta(conv.contact_ref, "pedir_datos").catch(() => undefined);
+      await mc.enviarFlujo(conv.contact_ref, ns);
       await db.logEvent("manychat", { kind: "flujo_datos_lanzado", summary: "Lanzado el flujo que pide nombre y correo a la clienta" });
       return true;
     },

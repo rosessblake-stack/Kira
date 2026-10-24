@@ -7,3 +7,7 @@ Kira lo lanza por la API de ManyChat (`/fb/sending/sendFlow`) cuando Blake pulsa
 3. Copia el identificador (`ns`) del flujo y en Telegram: `/flowdatos <identificador>`. `/flowdatos off` lo apaga (Kira pide el correo por mensaje de texto, como antes).
 
 Kira guarda nombre y correo en la reserva y la ficha, pone «Trenzas [Nombre]» al evento, invita a la clienta y avisa a Blake.
+
+## Sin disparador propio: dos formas de activarlo
+- **Disparador raro:** en «When…» pon una palabra que nadie escribiría (`kiradatoscita2026`, coincidencia exacta). Kira lanza el flujo por API.
+- **Con condición por etiqueta (dentro del flujo de Citas):** Kira pone la etiqueta `pedir_datos` y lanza ese flujo (`/flowdatos <ns del flujo de Citas>`). Al principio del flujo de Citas, **antes** de las demás condiciones: «Tag is pedir_datos» → preguntas nombre y correo → Solicitud externa a `/api/manychat/datos`. Kira quita la etiqueta cuando llegan los datos.

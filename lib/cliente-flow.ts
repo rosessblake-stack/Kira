@@ -842,7 +842,8 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     }
     if (!envio.ok) await avisarBlake(`${marca(r)}ℹ️ No he podido confirmarle la cita a ${nombreDe(r)} por mensaje (${motivoLegible(envio.motivo)}). Díselo tú.`);
     // Sin flujo y sin correo, se sigue esperando su respuesta (la etiqueta se queda) para mandarle la invitación.
-    if (!sinCorreo || !envio.ok || porFlujo) await liberarEspera(conv);
+    // Con el flujo de ManyChat lanzado, las etiquetas se quitan cuando llegan nombre y correo (guardarEmailDeCita), no antes.
+    if (!sinCorreo || !envio.ok) await liberarEspera(conv);
   }
 
   async function alCancelarBlake(r: Reserva): Promise<void> {
