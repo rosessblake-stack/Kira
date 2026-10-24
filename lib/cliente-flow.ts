@@ -12,19 +12,24 @@ import {
   textoSolicitudRechazada,
   textoPagoPedido,
   textoPagoRecibido,
+  textoPedirFecha,
+  textoFechaPasada,
+  textoPedirEmail,
+  textoEmailRecibido,
   textoRevertida,
   ventanaAbierta,
 } from "./clienta";
-import { fechaLarga } from "./agenda";
+import { aUtc, fechaLarga } from "./agenda";
+import { leerFechaHora } from "./fecha-texto";
 import { evaluarHueco, textoChoques } from "./agenda-eventos";
 import { eventoDeReserva } from "./evento";
 import { idDeEvento } from "./google-calendar";
 import { describirFalloGoogle } from "./google-oauth";
 import { MAX_CARACTERES_CLIENTE, detectarInyeccion, limpiarTexto } from "./intents";
 import { botonInstagram } from "./instagram";
-import { interpretarElegida, lineaOpcion, textoOpciones, type OpcionHueco } from "./opciones";
+import { DIAS_BUSQUEDA, calcularOpciones, interpretarElegida, lineaOpcion, textoOpciones, type MotivoNoDisponible, type OpcionHueco } from "./opciones";
 import { partesEn } from "./agenda";
-import { contextoDe, horarioDeSpec } from "./proposal";
+import { contextoDe, esSinFecha, horarioDeSpec } from "./proposal";
 import type { FlowDeps, Reserva } from "./proposal-flow";
 import { dinero } from "./ubicacion";
 
@@ -63,6 +68,10 @@ export interface ClienteExtra {
   /** Chat privado de Blake (donde le llegan los avisos). */
   adminChatId: number | null;
   leerConversacion(id: string): Promise<ConversacionCanal | null>;
+  /** Tiempo 2: los botones «Señal recibida / Cancelar cita» de la reserva que Kira acaba de crear sola. Opcional. */
+  botonesCita?(r: Reserva, aviso: string): Promise<void>;
+  /** La última cita pagada de la conversación a la que aún le falta el correo (se le pide al confirmar). Opcional. */
+  citaSinEmailDe?(conversationId: string): Promise<Reserva | null>;
   /** Ya no se espera su respuesta (cita confirmada, cancelada o cerrada): quita la etiqueta que la mantiene en «esperando a Kira». Opcional. */
   liberarEspera?(conv: ConversacionCanal): Promise<void>;
   /** Escribe a la clienta por su canal. En las pruebas es un mensaje a Blake; Instagram aún no está conectado. */
@@ -141,6 +150,9 @@ const HORA_MS = 3_600_000;
 const MIN_MS = 60_000;
 const REINTENTO_BORRADO_MIN = 10;
 const ACUSE_CADA_HORAS = 6;
+const MARGEN_MIN = 60;
+const DIA_MS = 86_400_000;
+const EMAIL_EN_TEXTO = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 
 /** Los dos botones de Blake cuando la clienta dice que ya hizo el Bizum: «pay» es el de siempre («Señal recibida»). */
 const tecladoPago = (nonce: string) => ({
@@ -251,7 +263,9 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     const envio = await enviarAClienta(conv, texto, r);
     if (!envio.ok) {
       await avisarBlake(
-        `${marca(r)}⚠️ He reservado el hueco (amarillo) pero NO he podido escribir a ${nombreDe(r)}: ${motivoLegible(envio.motivo)}.\n\nEscríbele tú con el precio y, cuando pague, pulsa «Señal recibida». Este hueco no caduca solo.`,
+        esSinFecha(r.spec)
+          ? `${marca(r)}⚠️ NO he podido escribir a ${nombreDe(r)} con el precio: ${motivoLegible(envio.motivo)}.\n\nEscríbele tú. La solicitud sigue pendiente: puedes recuperarla con /pendientes.`
+          : `${marca(r)}⚠️ He reservado el hueco (amarillo) pero NO he podido escribir a ${nombreDe(r)}: ${motivoLegible(envio.motivo)}.\n\nEscríbele tú con el precio y, cuando pague, pulsa «Señal recibida». Este hueco no caduca solo.`,
       );
       return;
     }
@@ -291,6 +305,12 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     const ids = idsDe(r);
     const o = r.spec?.opciones_hueco?.[n - 1];
     if (!o) return;
+    if (esSinFecha(r.spec)) {
+      // Precio primero (Tiempo 2): elegir un hueco = reservarlo y pedir el Bizum, sin otra propuesta a Blake.
+      const hecho = await reservarHueco(r, conv, new Date(o.inicio), new Date(o.fin));
+      if (!hecho) await avisarBlake(`${marca(r)}⚠️ ${nombreDe(r)} eligió la opción ${n} pero no he podido reservarla sola. Escríbele tú.`);
+      return;
+    }
     const lugar = contextoDe(r.spec ?? {});
     const inicio = new Date(o.inicio);
     const p = partesEn(inicio, lugar.zonaHoraria);
@@ -316,6 +336,140 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
   }
 
   // -------------------------------------------------------------------------
+  // Tiempo 2: precio primero, fecha después (la clienta dice el día; Kira mira el calendario)
+  // -------------------------------------------------------------------------
+
+  /**
+   * La clienta dijo un día y una hora. Devuelve true si Kira ya gestionó el mensaje; false = que lo reciba Blake (no se pudo decidir sola).
+   * Hueco libre → reserva amarilla + Bizum. Ocupado, día libre de Blake o fuera de horario → opciones (con «o dime otro día»).
+   */
+  async function fechaElegida(r: Reserva, conv: ConversacionCanal, f: { fecha: string; hora: string }): Promise<boolean> {
+    const ids = idsDe(r);
+    const lugar = contextoDe(r.spec ?? {});
+    const dur = r.duration_minutes;
+    if (!deps.agenda || !dur || !r.client_phase) return false;
+    const inicio = aUtc(f.fecha, f.hora, lugar.zonaHoraria);
+    const fin = new Date(inicio.getTime() + dur * MIN_MS);
+    if (inicio.getTime() <= deps.now().getTime()) {
+      await enviarAClienta(conv, textoFechaPasada(), r);
+      return true;
+    }
+    let eventos;
+    try {
+      eventos = await deps.agenda.eventosEntre(new Date(inicio.getTime() - DIA_MS), new Date(inicio.getTime() + (DIAS_BUSQUEDA + 2) * DIA_MS));
+    } catch (e) {
+      await deps.logEvent({ source: "calendar", kind: "agenda_lectura_fallo", level: "error", summary: describirFalloGoogle(e), ...ids });
+      return false;
+    }
+    const hueco = evaluarHueco(inicio, fin, eventos, lugar.zonaHoraria, { excluirBookingId: r.id, horario: lugar.reglas.horario });
+    const dia = partesEn(inicio, lugar.zonaHoraria);
+    const minutos = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+    const horario = lugar.reglas.horario;
+    const finLocal = partesEn(fin, lugar.zonaHoraria);
+    const fueraHorario = Boolean(horario) && (minutos(dia.hora) < horario!.aperturaMin || finLocal.fecha !== dia.fecha || minutos(finLocal.hora) > horario!.cierreMin);
+    const diaLibre = Boolean(lugar.reglas.diasLibres?.includes(dia.diaSemana));
+    const margenCorto = (hueco.anterior && hueco.anterior.margenMin < MARGEN_MIN) || (hueco.siguiente && hueco.siguiente.margenMin < MARGEN_MIN);
+    const motivo: MotivoNoDisponible | null = diaLibre ? "dia_libre" : fueraHorario ? "fuera_horario" : hueco.choques.length || margenCorto ? "ocupado" : null;
+
+    if (motivo === null) return reservarHueco(r, conv, inicio, fin);
+
+    const opciones = calcularOpciones({ inicio, fin, hueco, eventos, zona: lugar.zonaHoraria, reglas: lugar.reglas, ahora: deps.now(), excluirBookingId: r.id, maxDiasSiguientes: 3 });
+    if (!opciones.length) return false;
+    const faseAntes = r.client_phase as Fase;
+    const plazo = new Date(deps.now().getTime() + PLAZO_PRECIO_HORAS * HORA_MS);
+    const ganada = await deps.avanzarFase(r.id, [faseAntes], { client_phase: "opciones_enviadas", payment_deadline: plazo.toISOString(), spec: { ...r.spec, opciones_hueco: opciones } });
+    if (!ganada) return true; // otra ejecución ya la gestionó
+    const envio = await enviarAClienta(conv, textoOpciones(r.spec?.nombre ?? null, inicio, opciones, lugar.zonaHoraria, { motivo, otraFecha: true }), ganada);
+    if (!envio.ok) {
+      await deps.avanzarFase(r.id, ["opciones_enviadas"], { client_phase: faseAntes, payment_deadline: r.payment_deadline, spec: r.spec }).catch(() => undefined);
+      return false;
+    }
+    await deps.logEvent({ source: "system", kind: "opciones_automaticas", summary: `La clienta pidió ${fechaLarga(inicio, lugar.zonaHoraria)}: no disponible (${motivo}); se le ofrecieron ${opciones.length} opciones`, detail: { motivo, opciones: opciones.length }, ...ids });
+    await avisarBlake(`${marca(r)}📅 ${nombreDe(r)} pidió ${fechaLarga(inicio, lugar.zonaHoraria)} y ${motivo === "dia_libre" ? "es uno de tus días libres" : motivo === "fuera_horario" ? "queda fuera de tu horario" : "no está libre"}. Le he ofrecido ${opciones.length} ${opciones.length === 1 ? "opción" : "opciones"}; si elige una, reservo el hueco yo. No tienes que hacer nada.`);
+    return true;
+  }
+
+  /** El hueco está libre: se reserva en la base de datos y en el calendario (amarillo) y se le pide el Bizum. Devuelve false si no se pudo. */
+  async function reservarHueco(r: Reserva, conv: ConversacionCanal, inicio: Date, fin: Date): Promise<boolean> {
+    const ids = idsDe(r);
+    const lugar = contextoDe(r.spec ?? {});
+    if (lugar.ubicacion !== "espana" || !deps.agenda) return false; // Miami: sin Stripe todavía, lo lleva Blake
+    const bizum = await deps.bizum().catch(() => null);
+    if (!bizum) return false;
+    const faseAntes = r.client_phase as Fase;
+    const eventoId = `${idDeEvento(r.id)}${deps.newNonce().slice(0, 6)}`;
+    const p = partesEn(inicio, lugar.zonaHoraria);
+    let ganada: Reserva | null;
+    try {
+      ganada = await deps.avanzarFase(r.id, [faseAntes], {
+        client_phase: "pago_pedido",
+        status: "pendiente_pago",
+        starts_at: inicio.toISOString(),
+        ends_at: fin.toISOString(),
+        calendar_event_id: eventoId,
+        payment_deadline: new Date(deps.now().getTime() + PLAZO_PAGO_MIN * MIN_MS).toISOString(),
+        spec: { ...r.spec, fecha: p.fecha, hora: p.hora, opciones_hueco: undefined },
+      });
+    } catch (e) {
+      // La base de datos no deja reservar encima de otra cita: no se reserva nada.
+      await deps.logEvent({ source: "system", kind: "reserva_hueco_rechazada", level: "warn", summary: msg(e), ...ids });
+      return false;
+    }
+    if (!ganada) return true; // otra ejecución ya la gestionó
+    try {
+      await deps.agenda.crearProvisional({ ...eventoDeReserva(ganada), id: eventoId });
+    } catch (e) {
+      await deps.logEvent({ source: "calendar", kind: "evento_provisional_fallo", level: "error", summary: describirFalloGoogle(e), ...ids });
+      await deps.agenda.borrar(eventoId, r.id).catch(() => undefined);
+      await deps.avanzarFase(r.id, ["pago_pedido"], { client_phase: faseAntes, status: "propuesta", starts_at: null, ends_at: null, calendar_event_id: null, payment_deadline: r.payment_deadline, spec: r.spec }).catch(() => undefined);
+      return false;
+    }
+    await deps.logEvent({ source: "calendar", kind: "evento_provisional_creado", summary: "Evento provisional (amarillo) creado al elegir la clienta su día", ...ids });
+    const texto = textoPagoPedido(ganada, bizum);
+    const envio = await enviarAClienta(conv, texto, ganada);
+    if (!envio.ok) await avisarBlake(`${marca(r)}⚠️ ${nombreDe(r)} eligió ${fechaLarga(inicio, lugar.zonaHoraria)} y he reservado su hueco, pero NO he podido pedirle el Bizum: ${motivoLegible(envio.motivo)}.\n\nEscríbele tú:\n«${texto}»`);
+    const aviso = `📅 ${nombreDe(r)} ha elegido ${fechaLarga(inicio, lugar.zonaHoraria)}. Estaba libre: he reservado el hueco en amarillo y ${envio.ok ? "le he pedido el Bizum" : "NO le he podido pedir el Bizum"} (${PLAZO_PAGO_MIN} min). Cuando te llegue la señal, pulsa «Señal recibida».`;
+    if (deps.botonesCita) {
+      await deps.botonesCita(ganada, aviso).catch(async (e) => {
+        await deps.logEvent({ source: "system", kind: "botones_cita_fallo", level: "error", summary: msg(e), ...ids }).catch(() => undefined);
+        await avisarBlake(`${marca(r)}${aviso}\n\n(No he podido mandarte sus botones: escribe /pendientes.)`);
+      });
+    } else await avisarBlake(`${marca(r)}${aviso}`);
+    return true;
+  }
+
+  /** Tras el precio sin fecha: «vale» → pide el día; un día y una hora → mira el calendario. false = que lo lea Blake. */
+  async function tratarFecha(r: Reserva, conv: ConversacionCanal, texto: string): Promise<boolean> {
+    const lugar = contextoDe(r.spec ?? {});
+    if (lugar.ubicacion !== "espana") return false;
+    if (r.client_phase === "precio_enviado" && esAceptacion(texto, true)) {
+      await enviarAClienta(conv, textoPedirFecha(), r);
+      return true;
+    }
+    const f = leerFechaHora(texto, deps.now(), lugar.zonaHoraria);
+    return f ? fechaElegida(r, conv, f) : false;
+  }
+
+  /** Cita confirmada sin correo: la clienta lo escribe y se le manda la invitación del calendario. */
+  async function guardarEmailDeCita(cita: Reserva, conv: ConversacionCanal, email: string): Promise<void> {
+    const ids = idsDe(cita);
+    const limpio = email.toLowerCase();
+    await deps.actualizarReserva(cita.id, { client_email: limpio, spec: { ...cita.spec, email: limpio } });
+    let invitado = false;
+    if (deps.agenda && cita.calendar_event_id) {
+      try {
+        ({ invitado } = await deps.agenda.pasarAPagada(cita.calendar_event_id, cita.id, { email: limpio, esPrueba: cita.is_test }));
+      } catch (e) {
+        await deps.logEvent({ source: "calendar", kind: "invitacion_fallo", level: "error", summary: describirFalloGoogle(e), ...ids });
+      }
+    }
+    await deps.logEvent({ source: "system", kind: "email_recibido_tras_confirmar", summary: `La clienta dio su correo tras confirmar${invitado ? " y se le invitó" : ""}`, ...ids });
+    await enviarAClienta(conv, textoEmailRecibido(invitado, limpio), cita);
+    await avisarBlake(`${marca(cita)}📧 ${nombreDe(cita)} te ha dado su correo (${limpio})${invitado ? " y le he mandado la invitación del calendario" : ". No he podido invitarla: añádelo tú al evento"}.`);
+    await liberarEspera(conv);
+  }
+
+  // -------------------------------------------------------------------------
   // Lo que escribe la clienta
   // -------------------------------------------------------------------------
 
@@ -338,6 +492,10 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
 
     const r = await deps.reservaActivaDe(conversationId);
     if (!r) {
+      // Cita confirmada a la que se le pidió el correo: si lo escribe, se guarda y se le invita.
+      const cita = deps.citaSinEmailDe ? await deps.citaSinEmailDe(conversationId).catch(() => null) : null;
+      const correo = cita ? EMAIL_EN_TEXTO.exec(texto)?.[0] : null;
+      if (cita && correo) return guardarEmailDeCita(cita, conv, correo);
       const pendiente = await deps.propuestaPendienteDe(conversationId).catch(() => null);
       if (pendiente) {
         // Blake aún no ha decidido su solicitud: el aviso lo dice claro y trae el botón para verla y decidir.
@@ -364,7 +522,9 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     const botonesIg = botonInstagram(r.spec?.instagram);
 
     if (r.client_phase === "precio_enviado") {
-      if (esAceptacion(texto, true)) return aceptar(r, conv);
+      if (esSinFecha(r.spec)) {
+        if (await tratarFecha(r, conv, texto)) return;
+      } else if (esAceptacion(texto, true)) return aceptar(r, conv);
     } else if (r.client_phase === "pago_pedido") {
       if (esConfirmado(texto)) return declararPago(r, conv);
       if (esAceptacion(texto, false)) {
@@ -381,6 +541,8 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     } else if (r.client_phase === "opciones_enviadas") {
       const n = interpretarElegida(texto, r.spec?.opciones_hueco?.length ?? 0);
       if (n !== null) return elegirOpcion(r, conv, n);
+      // Si ninguna le encaja y dice otro día y hora (solo con el precio primero), se vuelve a mirar el calendario.
+      if (esSinFecha(r.spec) && (await tratarFecha(r, conv, texto))) return;
     }
     await deps.logEvent({ source: "system", kind: "respuesta_clienta_a_blake", summary: "Respuesta de la clienta que Kira no gestiona sola: reenviada a Blake", ...ids });
     // Mientras habla con Blake, el reloj de 20 h no debe cerrarle la solicitud: se reinicia con cada mensaje suyo.
@@ -630,9 +792,11 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     await deps.avanzarFase(r.id, [null, "precio_enviado", "pago_pedido", "pago_declarado", "liberada"], { client_phase: "confirmada", payment_deadline: null }).catch(() => undefined);
     if (!r.conversation_id) return;
     const conv = await deps.leerConversacion(r.conversation_id).catch(() => null);
-    const envio = await enviarAClienta(conv, textoConfirmada(r, invitado), r);
+    const sinCorreo = !r.client_email;
+    const envio = await enviarAClienta(conv, sinCorreo ? `${textoConfirmada(r, invitado)}\n\n${textoPedirEmail()}` : textoConfirmada(r, invitado), r);
     if (!envio.ok) await avisarBlake(`${marca(r)}ℹ️ No he podido confirmarle la cita a ${nombreDe(r)} por mensaje (${motivoLegible(envio.motivo)}). Díselo tú.`);
-    await liberarEspera(conv);
+    // Sin correo, se sigue esperando su respuesta (la etiqueta se queda) para mandarle la invitación.
+    if (!sinCorreo || !envio.ok) await liberarEspera(conv);
   }
 
   async function alCancelarBlake(r: Reserva): Promise<void> {
@@ -689,6 +853,16 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
       await cerrarConversacion(r);
       await deps.logEvent({ source: "system", kind: "opciones_sin_respuesta", level: "warn", summary: `La clienta no eligió ninguna opción en ${PLAZO_PRECIO_HORAS} h: se cierra`, ...ids });
       await avisarBlake(`${marca(r)}⌛ ${nombreDe(r)} no eligió ninguno de los huecos que le ofreciste en ${PLAZO_PRECIO_HORAS} h: he cerrado la solicitud.`);
+      return true;
+    }
+    if (r.status === "propuesta" && fase === "precio_enviado") {
+      // Aprobada sin fecha y sin respuesta de la clienta: no hay evento que borrar. Se cierra en silencio.
+      const cerrada = await deps.avanzarFase(r.id, [fase], { client_phase: "cerrada", status: "expirada", payment_deadline: null });
+      if (!cerrada) return false;
+      await cerrarConversacion(r);
+      await deps.retirarRegistro(r.id).catch(() => undefined);
+      await deps.logEvent({ source: "system", kind: "reserva_expirada", level: "warn", summary: `La clienta no dijo ningún día en ${PLAZO_PRECIO_HORAS} h tras el precio: se cierra`, detail: { fase }, ...ids });
+      await avisarBlake(`${marca(r)}⌛ ${nombreDe(r)} no dijo ningún día en ${PLAZO_PRECIO_HORAS} h tras el precio: he cerrado la solicitud.`);
       return true;
     }
     if (r.status !== "pendiente_pago") {

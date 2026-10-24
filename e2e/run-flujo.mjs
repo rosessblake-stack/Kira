@@ -1491,6 +1491,70 @@ try {
   check("O18. la clave de la API de ManyChat no queda en los registros", !/clave-falsa-manychat/.test(volcadoO));
   }
 
+  // ============================================================================ Q. PRECIO PRIMERO, FECHA DESPUÉS (Tiempo 2)
+  console.log("\n=== Q. Precio primero, fecha después: sin fecha en el formulario, la clienta la dice tras el precio ===");
+  await escribe("/responder on");
+  const respuestaIg = (cuerpo) => fetch(`${BASE}/api/manychat/respuesta`, { method: "POST", headers: { "content-type": "application/json", "x-kira-secret": "mc-secreto-falso" }, body: JSON.stringify(cuerpo) });
+  const D_MIE_Q = proximoDia(3, 23);
+  const D_DOM_Q = proximoDia(0, 23);
+  const sinFecha = (o) => formulario({ Fecha_texto: "", email: "", Referencia_Diseño: `${FOTOS}/ref.jpg?oh=TOKENSECRETO123`, ...o });
+  const nQ = tg.enviados.length;
+  const enviosQ0 = mcApi.envios.length;
+  await mc(sinFecha({ id: "mc-4001", Nombre: "Eva", ig_username: "eva.ig" }));
+  await esperarHasta(() => tg.enviados.slice(nQ).some((m) => m.text.includes("SOLICITUD DE INSTAGRAM")));
+  const propEva = tg.enviados.slice(nQ).find((m) => m.text.includes("SOLICITUD DE INSTAGRAM"));
+  const convEva = tables.conversations.find((c) => c.contact_ref === "mc-4001");
+  const resEva = () => reservas().find((x) => x.conversation_id === convEva.id);
+  check("Q1. una solicitud sin fecha llega con precio, SIN «falta fecha» y con botón Aprobar", Boolean(propEva) && botones(propEva).includes("✅ Aprobar") && propEva.text.includes("la dirá la clienta después del precio") && !propEva.text.includes("Falta: fecha"), propEva?.text);
+  await pulsa(dato(propEva, "Aprobar"), propEva.message_id);
+  await esperarHasta(() => mcApi.envios.length > enviosQ0);
+  const precioEva = mcApi.envios[enviosQ0]?.cuerpo.data.content.messages[0].text ?? "";
+  check("Q2. al Aprobar, la clienta recibe el precio y «dime qué día y a qué hora» (sin fecha ni Bizum); no hay evento en el calendario", precioEva.includes("€") && precioEva.includes("dime qué día y a qué hora") && !precioEva.includes("Tu cita sería") && resEva().status === "propuesta" && resEva().client_phase === "precio_enviado" && !resEva().calendar_event_id && !resEva().starts_at, JSON.stringify({ precioEva, s: resEva().status, f: resEva().client_phase, ev: resEva().calendar_event_id, st: resEva().starts_at }));
+
+  await respuestaIg({ id: "mc-4001", texto: "vale" });
+  await esperarHasta(() => mcApi.envios.length >= enviosQ0 + 2);
+  check("Q3. un «vale» a secas no reserva nada: le pide el día", (mcApi.envios[enviosQ0 + 1]?.cuerpo.data.content.messages[0].text ?? "").includes("¿Qué día y a qué hora") && !resEva().starts_at);
+
+  const nQ2 = tg.enviados.length;
+  await respuestaIg({ id: "mc-4001", texto: `el ${textoFecha(D_MIE_Q)} a las 18:00` });
+  await esperarHasta(() => resEva().client_phase === "pago_pedido" && mcApi.envios.length >= enviosQ0 + 3);
+  const evEva = g.eventos.get(`kira${resEva().id.replace(/-/g, "")}`) ?? [...g.eventos.values()].find((e) => e?.id === resEva().calendar_event_id);
+  check("Q4. un día libre: Kira reserva el hueco en amarillo en el calendario y le pide el Bizum, sin pedirle nada a Blake", resEva().status === "pendiente_pago" && resEva().starts_at?.startsWith(D_MIE_Q) && Boolean(resEva().calendar_event_id) && (mcApi.envios[enviosQ0 + 2]?.cuerpo.data.content.messages[0].text ?? "").includes("Bizum de 20 € al 662018425"), JSON.stringify({ s: resEva().status, st: resEva().starts_at, ev: resEva().calendar_event_id, n: mcApi.envios.length }));
+  const avisoEva = tg.enviados.slice(nQ2).find((m) => botones(m).includes("💜 Señal recibida"));
+  check("Q5. Blake recibe el aviso con «Estaba libre» y los botones «Señal recibida / Cancelar cita»", Boolean(avisoEva) && avisoEva.text.includes("Estaba libre") && botones(avisoEva).includes("🗑 Cancelar cita"));
+
+  const nQ3 = tg.enviados.length;
+  await mc(sinFecha({ id: "mc-4002", Nombre: "Fran", ig_username: "fran.ig" }));
+  await esperarHasta(() => tg.enviados.slice(nQ3).some((m) => m.text.includes("SOLICITUD DE INSTAGRAM")));
+  const propFran = tg.enviados.slice(nQ3).find((m) => m.text.includes("SOLICITUD DE INSTAGRAM"));
+  const convFran = tables.conversations.find((c) => c.contact_ref === "mc-4002");
+  const resFran = () => reservas().find((x) => x.conversation_id === convFran.id);
+  const enviosF0 = mcApi.envios.length;
+  await pulsa(dato(propFran, "Aprobar"), propFran.message_id);
+  await esperarHasta(() => mcApi.envios.length > enviosF0);
+  await respuestaIg({ id: "mc-4002", texto: `el domingo ${textoFecha(D_DOM_Q)} a las 12:00` });
+  await esperarHasta(() => resFran().client_phase === "opciones_enviadas");
+  const textoOpcF = mcApi.envios.at(-1)?.cuerpo.data.content.messages[0].text ?? "";
+  check("Q6. un domingo (día libre de Blake): no reserva; le ofrece otros huecos y le deja decir otro día", resFran().client_phase === "opciones_enviadas" && !resFran().calendar_event_id && textoOpcF.includes("no hago citas") && textoOpcF.includes("Primera:") && textoOpcF.includes("dime otro día y hora"), textoOpcF);
+  const enviosF1 = mcApi.envios.length;
+  await respuestaIg({ id: "mc-4002", texto: "quiero la primera" });
+  await esperarHasta(() => resFran().client_phase === "pago_pedido" && mcApi.envios.length > enviosF1);
+  check("Q7. «quiero la primera» → reserva ese hueco y le pide el Bizum (Blake no tiene que aprobar otra propuesta)", resFran().status === "pendiente_pago" && Boolean(resFran().calendar_event_id) && (mcApi.envios.at(-1)?.cuerpo.data.content.messages[0].text ?? "").includes("Bizum de 20 €"));
+
+  const nQ4 = tg.enviados.length;
+  const enviosE0 = mcApi.envios.length;
+  await respuestaIg({ id: "mc-4001", texto: "confirmado" });
+  await esperarHasta(() => tg.enviados.slice(nQ4).some((m) => botones(m).includes("✅ Sí, me ha llegado")));
+  const avisoPagoEva = tg.enviados.slice(nQ4).find((m) => botones(m).includes("✅ Sí, me ha llegado"));
+  await pulsa(dato(avisoPagoEva, "Sí, me ha llegado"), avisoPagoEva.message_id);
+  await esperarHasta(() => resEva().status === "pagada" && mcApi.envios.length >= enviosE0 + 2);
+  const textoConfEva = mcApi.envios.at(-1)?.cuerpo.data.content.messages[0].text ?? "";
+  check("Q8. tras tu «Sí, me ha llegado»: ¡Confirmado! y, como no tiene correo, se lo pide para la invitación", resEva().status === "pagada" && textoConfEva.includes("¡Confirmado!") && textoConfEva.includes("¿me pasas tu correo?"), textoConfEva);
+  await respuestaIg({ id: "mc-4001", texto: "mi correo es eva.q@correo.com" });
+  await esperarHasta(() => resEva().client_email === "eva.q@correo.com");
+  check("Q9. cuando escribe su correo se guarda en la cita y se le agradece (invitación al calendario)", resEva().client_email === "eva.q@correo.com" && (mcApi.envios.at(-1)?.cuerpo.data.content.messages[0].text ?? "").includes("eva.q@correo.com"));
+  await escribe("/responder off");
+
   // ============================================================================ P. CLIENTAS QUE VUELVEN (ficha + «¿la conoces?»)
   console.log("\n=== P. Clientas que vuelven: ficha, /api/manychat/conocer y comandos /ficha y /borrarficha ===");
   const conocer = (cuerpo, cabeceras = { "x-kira-secret": "mc-secreto-falso" }) =>

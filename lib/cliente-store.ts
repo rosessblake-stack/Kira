@@ -8,7 +8,7 @@ import type { Reserva } from "./proposal-flow";
 const FASES_ACTIVAS: Fase[] = ["precio_enviado", "pago_pedido", "pago_declarado", "liberada", "opciones_enviadas"];
 /** Fases con plazo propio que cierra el temporizador (en «pago_declarado» decide Blake). */
 const FASES_CON_PLAZO: Fase[] = ["precio_enviado", "pago_pedido", "liberada", "opciones_enviadas"];
-/** «propuesta» solo vale para «opciones_enviadas» (la clienta aún no tiene la cita aprobada). */
+/** «propuesta» vale para «opciones_enviadas» y para una solicitud aprobada SIN fecha (Tiempo 2: precio enviado, esperando el día que diga la clienta) (la clienta aún no tiene la cita aprobada). */
 const ESTADOS_VIVOS = ["pendiente_pago", "cancelada", "propuesta"];
 const CLAVE_BIZUM = "bizum_numero";
 
@@ -112,4 +112,19 @@ export async function conversacionDeInstagram(contactoId: string): Promise<strin
   const { data, error } = await getDb().from("conversations").select("id").eq("channel", "instagram").eq("contact_ref", contactoId).maybeSingle();
   ok("No se pudo buscar la conversación", error);
   return (data as { id: string } | null)?.id ?? null;
+}
+
+/** La última cita pagada de esa conversación a la que aún le falta el correo (para pedírselo tras confirmar). */
+export async function citaSinEmailDe(conversationId: string): Promise<Reserva | null> {
+  const { data, error } = await getDb()
+    .from("bookings")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .eq("status", "pagada")
+    .is("client_email", null)
+    .gte("created_at", new Date(Date.now() - 14 * 86_400_000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1);
+  ok("No se pudo consultar la cita sin correo", error);
+  return ((data as Reserva[] | null) ?? [])[0] ?? null;
 }

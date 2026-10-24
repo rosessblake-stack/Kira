@@ -154,3 +154,23 @@ export function textoSolicitudRechazada(): string {
 export function textoMiamiPago(): string {
   return "¡Genial! 😊 Te escribo enseguida para decirte cómo reservar el hueco.";
 }
+
+/** Tras el precio, sin fecha todavía: «vale» a secas no basta, hay que saber el día. */
+export function textoPedirFecha(): string {
+  return "¡Genial! 😊 ¿Qué día y a qué hora te vendría bien? Lo miro en mi agenda.";
+}
+
+/** La clienta dijo una fecha que ya pasó. */
+export function textoFechaPasada(): string {
+  return "Esa fecha ya ha pasado 😅 ¿Qué día y a qué hora te vendría bien?";
+}
+
+/** Cita confirmada y aún sin su correo: se lo pide para mandarle la invitación del calendario. */
+export function textoPedirEmail(): string {
+  return "Para mandarte la invitación al calendario, ¿me pasas tu correo? 😊";
+}
+
+/** Recibido su correo: se le manda la invitación. */
+export function textoEmailRecibido(invitado: boolean, email: string): string {
+  return invitado ? `¡Gracias! Te he enviado la invitación a ${email} 😊` : `¡Gracias! Apuntado: ${email} 😊`;
+}

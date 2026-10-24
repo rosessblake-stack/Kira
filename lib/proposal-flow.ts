@@ -34,6 +34,7 @@ import {
 } from "./pricing";
 import {
   AYUDA_EDICION,
+  esSinFecha,
   aplicarCambios,
   componerPropuesta,
   etiquetaCambio,
@@ -196,6 +197,8 @@ export interface ProposalPort {
   boton(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "ok" | "ed" | "no" | "op" }): Promise<void>;
   /** Vuelve a mandar a Blake la propuesta de una reserva (p. ej. cuando la clienta elige una de las opciones). */
   reenviarPropuesta(chatId: number, reservaId: string, prefijo?: string): Promise<boolean>;
+  /** Los botones «Señal recibida / Cancelar cita» de una reserva provisional que Kira acaba de crear sola (Tiempo 2). */
+  ofrecerBotonesDeCita(chatId: number, reservaId: string, aviso: string): Promise<boolean>;
   /** Botones de una cita ya aprobada con reserva provisional en el calendario: señal recibida / cancelar. */
   botonCita(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string; accion: "pay" | "del" }): Promise<void>;
   /** /pendientes: vuelve a mandar los botones que se hayan perdido (reservas provisionales y propuestas sin botones). */
@@ -208,8 +211,8 @@ export interface ProposalPort {
 /** Una edición abierta caduca a los 30 min; /cancelar recupera la propuesta en cualquier momento. */
 export const EDICION_CADUCA_MIN = 30;
 
-const aprobable = (r: Pick<Reserva, "price_cents" | "starts_at" | "ends_at">, ahora: Date) =>
-  r.price_cents !== null && Boolean(r.starts_at) && Boolean(r.ends_at) && !fechaPasada(r.starts_at, ahora);
+const aprobable = (r: Pick<Reserva, "price_cents" | "starts_at" | "ends_at" | "spec">, ahora: Date) =>
+  r.price_cents !== null && ((esSinFecha(r.spec) && !r.starts_at) || (Boolean(r.starts_at) && Boolean(r.ends_at) && !fechaPasada(r.starts_at, ahora)));
 
 /** Una cita en una hora que ya pasó no se puede aprobar (casi siempre es un año o un día mal leídos). */
 // Los e2e (KIRA_E2E=1) usan fechas fijas que con el tiempo quedan atrás: allí no se aplica. Nunca se pone en Vercel.
@@ -407,6 +410,8 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
   async function reenviarPropuesta(chatId: number, reservaId: string, prefijo = ""): Promise<boolean> {
     const r = await deps.leerReserva(reservaId);
     if (r.status !== "propuesta") return false;
+    // Aprobada sin fecha (el precio ya está en manos de la clienta): no se vuelve a ofrecer Aprobar (mandaría el precio otra vez).
+    if (r.client_phase === "precio_enviado") return false;
     await enviarPropuesta(chatId, r, prefijo);
     return true;
   }
@@ -697,6 +702,8 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     const spec: SpecGuardada = {
       ...specDesdeClasificacion(c, texto, basica ? "basica" : origen.lector === "formulario" ? "formulario" : "claude", ubicacion),
       ...(real ? { origen: "instagram" as const } : {}),
+      // Una solicitud real sin fecha: precio primero, la fecha la dice la clienta después (Tiempo 2).
+      ...(real && !c.fecha && !c.hora ? { sin_fecha: true } : {}),
       ...(origen.lectura ? { lectura_foto: origen.lectura } : {}),
     };
     const perfil = await deps.perfil(ubicacion);
@@ -793,6 +800,14 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       }
       return false;
     }
+  }
+
+  async function ofrecerBotonesDeCita(chatId: number, reservaId: string, aviso: string): Promise<boolean> {
+    const r = await deps.leerReserva(reservaId);
+    if (r.status !== "pendiente_pago") return false;
+    const nonce = deps.newNonce();
+    const fresca = await deps.actualizarReserva(r.id, { proposal_nonce: nonce });
+    return ofrecerBotonesCita(chatId, fresca, nonce, aviso, { conversation_id: r.conversation_id, booking_id: r.id });
   }
 
   /** Vuelve a mandar la propuesta; si no se puede, un texto simple con la salida (/pendientes). */
@@ -902,6 +917,43 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     } else {
       await deps.logEvent({ source: "system", kind: "respuesta_lista_sin_enviar", summary: "Respuesta aprobada pero sin enviar: el canal de Instagram no está conectado", ...ids });
     }
+  }
+
+  /**
+   * Aprobar una solicitud SIN fecha (Tiempo 2): no se toca el calendario. La clienta recibe el precio y «¿qué día y hora te vendría bien?»;
+   * cuando lo dice, Kira mira el calendario (lib/cliente-flow.ts): hueco libre → amarillo + Bizum; ocupado → opciones.
+   */
+  async function aprobarSinFecha(
+    b: { callbackId: string; chatId: number; fromId: number },
+    r: Reserva,
+    ids: { conversation_id: string | null; booking_id: string },
+    editarMensaje: (t: string) => Promise<void>,
+  ): Promise<void> {
+    const marca = r.is_test ? "🧪 PRUEBA · " : "";
+    if (r.client_phase) {
+      await responder(b.callbackId, "Ya procesado");
+      return;
+    }
+    if (!deps.cliente || !r.conversation_id || !(await calendarioActivo())) {
+      await responder(b.callbackId, "No se ha enviado");
+      await enviarPropuesta(b.chatId, await deps.leerReserva(r.id), "⚠️ No he aprobado nada: sin fecha necesito el calendario conectado y la conversación con la clienta. Ponle fecha con Editar (por ejemplo «fecha 25/11 17:00») o escríbele tú.\n\n");
+      return;
+    }
+    // La reserva sigue en «propuesta» (la base de datos exige fecha para «aprobada»/«pendiente_pago»): lo que la distingue es su fase de clienta.
+    await deps.actualizarReserva(r.id, { approved_by_telegram_user: b.fromId, approved_at: deps.now().toISOString(), proposal_nonce: null });
+    const conv = r.conversation_id;
+    await mejorEsfuerzo("estado de la conversación", ids, () => deps.actualizarConversacion(conv, { status: "esperando_cliente" }));
+    try {
+      await deps.guardarRegistro({ ...r, status: "aprobada" });
+    } catch (e) {
+      await deps.logEvent({ source: "system", kind: "registro_servicio_fallo", level: "error", summary: msg(e), ...ids });
+    }
+    await responder(b.callbackId, "✅ Aprobada · precio enviado");
+    await editarMensaje(`${marca}✅ APROBADA (sin fecha)\n\n${resumenDecision(r)}\n\nLe mando el precio a la clienta. Cuando diga el día y la hora, miro tu calendario: si está libre reservo el hueco en amarillo y le pido el Bizum; si no, le ofrezco otros huecos. Tú solo recibes un aviso y, al final, los botones de «Señal recibida».`);
+    await deps.logEvent({ source: "telegram", kind: "propuesta_aprobada", summary: "Propuesta aprobada por Blake (sin fecha: precio primero)", detail: { precio_centimos: r.price_cents }, ...ids });
+    await mejorEsfuerzo("guardar la ficha de la clienta", ids, () => deps.fichas?.alAprobar(r) ?? Promise.resolve());
+    const cliente = deps.cliente;
+    await mejorEsfuerzo("enviar el precio a la clienta", ids, () => cliente.alAprobar(r));
   }
 
   const textoProvisional = (r: Reserva, aviso = "") => {
@@ -1137,6 +1189,11 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       return;
     }
 
+    if (b.accion === "ok" && esSinFecha(r.spec)) {
+      await aprobarSinFecha(b, r, ids, editarMensaje);
+      return;
+    }
+
     if (b.accion === "ok" && (await calendarioActivo())) {
       await aprobarConCalendario(b, r, ids, editarMensaje);
       return;
@@ -1262,5 +1319,5 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
     return true;
   }
 
-  return { simular, recibirSolicitud, boton, botonCita, reenviarPropuesta, pendientes, textoLibre, cancelarEdicion };
+  return { simular, recibirSolicitud, boton, botonCita, reenviarPropuesta, ofrecerBotonesDeCita, pendientes, textoLibre, cancelarEdicion };
 }

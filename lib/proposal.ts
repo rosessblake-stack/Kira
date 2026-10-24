@@ -57,6 +57,8 @@ export type SpecGuardada = {
   clasificador?: "claude" | "basica" | "formulario";
   /** De dónde viene: solicitud real del formulario de Instagram (ManyChat). Sin dato = prueba de Telegram. */
   origen?: "instagram";
+  /** Solicitud sin fecha (Tiempo 2, 24-oct): primero el precio; la clienta dice después el día y Kira mira el calendario. */
+  sin_fecha?: boolean;
   /** Lo que Claude vio en las fotos de la clienta (solo describe; los datos que rellenó llevan su aviso). */
   lectura_foto?: LecturaGuardada;
   /** Cómo describe Blake el peinado («referencia …» en Editar): va al evento del calendario para saber qué hacer. */
@@ -238,8 +240,10 @@ export function componerPropuesta(
     else if (precio.origen === "sin_calcular") faltan.push(...precio.faltan.map((f) => `precio: falta ${f}`));
     else faltan.push("precio");
   }
-  if (!spec.fecha) faltan.push("fecha");
-  if (!spec.hora) faltan.push("hora");
+  // Sin fecha a propósito: la clienta la dirá después del precio; entonces Kira mira el calendario (no se pide aquí).
+  const sinFecha = esSinFecha(spec);
+  if (!sinFecha && !spec.fecha) faltan.push("fecha");
+  if (!sinFecha && !spec.hora) faltan.push("hora");
   // Si el precio no se puede calcular por falta de datos, la duración falta por el mismo motivo: no se repite.
   if (!duracionMinutos && precio.origen !== "sin_calcular") faltan.push("duración (horas)");
 
@@ -248,7 +252,9 @@ export function componerPropuesta(
     avisos.push("Lectura básica por reglas: este mensaje NO lo ha leído Claude (modo de prueba, aún sin clave). Revisa lo que he entendido.");
   }
   if (confianzaBaja(spec)) avisos.push("Kira no está segura de lo que pide (confianza baja): revisa el mensaje original.");
-  if (agenda.estado === "no_conectado") {
+  if (sinFecha) {
+    avisos.push("Sin fecha todavía: aprobando, la clienta recibe el precio y dice el día; Kira mira tu calendario y le pide el Bizum o le ofrece otros huecos.");
+  } else if (agenda.estado === "no_conectado") {
     avisos.push("Disponibilidad NO comprobada: el calendario todavía no está conectado. Mira tu agenda antes de aprobar.");
   } else if (agenda.estado === "error") {
     // Con el calendario conectado pero sin poder mirarlo, no se aprueba: nunca se da por libre un hueco sin comprobarlo.
@@ -259,10 +265,10 @@ export function componerPropuesta(
     for (const c of textoChoques(agenda.hueco, lugar.zonaHoraria)) faltan.push(c);
     avisos.push(...avisosDeHueco(agenda.hueco, lugar.zonaHoraria));
   }
-  if (agenda.estado === "sin_horario" && ctx.agenda !== undefined) {
+  if (!sinFecha && agenda.estado === "sin_horario" && ctx.agenda !== undefined) {
     avisos.push("Todavía no he mirado tu agenda: falta la fecha, la hora o la duración. La miro en cuanto estén.");
   }
-  avisos.push(...avisosDeHorario(inicio, fin, ctx.ahora, lugar.reglas));
+  if (!sinFecha) avisos.push(...avisosDeHorario(inicio, fin, ctx.ahora, lugar.reglas));
   // Dónde está Blake ese día (sus viajes a Miami): blando, la propuesta avisa y decide él.
   const avisoViaje = ctx.estancias ? avisoDeEstancia(lugar.ubicacion, spec.fecha, ctx.estancias) : null;
   if (avisoViaje) avisos.push(avisoViaje);
@@ -297,7 +303,7 @@ export function componerPropuesta(
     if (!ctx.fotos.some((f) => f.tipo === "pelo")) avisos.push("Falta la foto del pelo de la clienta.");
     if (!ctx.fotos.some((f) => f.tipo === "referencia")) avisos.push("Falta la foto de las trenzas de referencia.");
   }
-  if (!spec.email) avisos.push("No tengo su email: hará falta para la reserva y el recibo.");
+  if (!spec.email) avisos.push(sinFecha ? "No tengo su email: se lo pido cuando confirmes la señal." : "No tengo su email: hará falta para la reserva y el recibo.");
   if (!spec.nombre) avisos.push("No dice su nombre.");
   if (spec.senal_centimos < SENAL_MIN_CENTIMOS || spec.senal_centimos > SENAL_MAX_CENTIMOS) {
     avisos.push(`La señal (${dinero(spec.senal_centimos, lugar.moneda)}) está fuera del rango habitual de 10–20 ${lugar.moneda === "USD" ? "$" : "€"}.`);
@@ -324,6 +330,9 @@ export function componerPropuesta(
   };
 }
 
+/** ¿Es una solicitud a la que aún no se le ha puesto fecha (la clienta la dirá tras el precio)? */
+export const esSinFecha = (s: Pick<SpecGuardada, "sin_fecha" | "fecha" | "hora">) => Boolean(s.sin_fecha) && !s.fecha && !s.hora;
+
 const confianzaBaja = (s: SpecGuardada) => s.confianza === "baja";
 
 /**
@@ -340,6 +349,16 @@ function componerBorrador(
   zona: string,
 ): string {
   if (spec.respuesta_manual) return spec.respuesta_manual;
+  if (esSinFecha(spec) && precio !== null) {
+    // Precio primero: la fecha la dice ella después (Tiempo 2).
+    const saludoSF = spec.nombre ? `¡Hola, ${spec.nombre}!` : "¡Hola!";
+    return [
+      `${saludoSF} Gracias por escribirme 😊`,
+      `Para ${describirServicioNatural(spec)}, el precio es de ${dinero(precio, moneda)}${duracion ? ` y dura aproximadamente ${duracionLegible(duracion)}` : ""}.`,
+      `Para reservar el hueco se deja una señal de ${dinero(spec.senal_centimos, moneda)}, que se descuenta del total el día de la cita.`,
+      "Si te encaja, dime qué día y a qué hora te vendría bien y lo miro 😊",
+    ].join("\n\n");
+  }
   if (precio === null || !inicio) {
     return `Borrador pendiente: faltan datos. ${faltan.join(" · ") || "fecha"}. Completa la propuesta con Editar.`;
   }
@@ -391,7 +410,9 @@ export function textoPropuesta(
   l.push(`• Servicio: ${p.descripcion}`);
   if (spec.servicio.largo_cabello) l.push(`• Pelo de la clienta: ${LARGO_CABELLO[spec.servicio.largo_cabello]}`);
   if (spec.servicio.largo_extensiones) l.push(`• Largo de las trenzas: ${LARGO_EXTENSIONES[spec.servicio.largo_extensiones]}`);
-  if (p.inicio) {
+  if (esSinFecha(spec)) {
+    l.push("• Fecha: la dirá la clienta después del precio");
+  } else if (p.inicio) {
     l.push(`• Fecha pedida: ${fechaLarga(p.inicio, lugar.zonaHoraria)}${p.fin ? ` → ${partesEn(p.fin, lugar.zonaHoraria).hora}` : ""}${p.duracionMinutos ? ` (${duracionLegible(p.duracionMinutos)})` : ""}`);
   } else {
     l.push("• Fecha pedida: sin concretar");

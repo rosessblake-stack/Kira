@@ -27,6 +27,8 @@ export function calcularOpciones(p: {
   reglas: Pick<ReglasAgenda, "diasLibres" | "horario">;
   ahora: Date;
   excluirBookingId?: string | null;
+  /** Cuántos «misma hora otro día» se buscan (por defecto 1; con la fecha elegida por la clienta, 3). */
+  maxDiasSiguientes?: number;
 }): OpcionHueco[] {
   const salida: OpcionHueco[] = [];
   const desdeAhora = (d: Date) => d.getTime() > p.ahora.getTime();
@@ -35,6 +37,8 @@ export function calcularOpciones(p: {
   }
   const dur = p.fin.getTime() - p.inicio.getTime();
   const pedido = partesEn(p.inicio, p.zona);
+  const maxDias = p.maxDiasSiguientes ?? 1;
+  let otrosDias = 0;
   for (let n = 1; n <= DIAS_BUSQUEDA; n++) {
     const fecha = partesEn(new Date(aUtc(pedido.fecha, "12:00", p.zona).getTime() + n * DIA_MS), p.zona);
     if (p.reglas.diasLibres?.includes(fecha.diaSemana)) continue;
@@ -45,7 +49,7 @@ export function calcularOpciones(p: {
     if (h.choques.length) continue;
     if ((h.anterior && h.anterior.margenMin < MARGEN_MIN) || (h.siguiente && h.siguiente.margenMin < MARGEN_MIN)) continue;
     salida.push({ inicio: s.toISOString(), fin: f.toISOString() });
-    break;
+    if (++otrosDias >= maxDias) break;
   }
   return salida.slice(0, MAX_OPCIONES);
 }
@@ -69,14 +73,20 @@ export function lineaOpcion(o: OpcionHueco, zona: string): string {
 }
 
 /** El mensaje que recibe la clienta (plantilla: solo fechas y horas ya calculadas por el código). */
-export function textoOpciones(nombre: string | null, pedida: Date, opciones: OpcionHueco[], zona: string): string {
+export type MotivoNoDisponible = "ocupado" | "dia_libre" | "fuera_horario";
+
+export function textoOpciones(nombre: string | null, pedida: Date, opciones: OpcionHueco[], zona: string, extra: { motivo?: MotivoNoDisponible; otraFecha?: boolean } = {}): string {
   const saludo = nombre ? `¡Hola, ${nombre}!` : "¡Hola!";
   const duracion = opciones[0] ? duracionLegible(Math.round((Date.parse(opciones[0].fin) - Date.parse(opciones[0].inicio)) / 60_000)) : "";
   return [
-    `${saludo} Justo a esa hora (${diaLegible(pedida, zona)}, ${partesEn(pedida, zona).hora}) ya tengo otra cita 😔`,
+    extra.motivo === "dia_libre"
+      ? `${saludo} Ese día (${diaLegible(pedida, zona)}) no hago citas 😔`
+      : extra.motivo === "fuera_horario"
+        ? `${saludo} A esa hora (${diaLegible(pedida, zona)}, ${partesEn(pedida, zona).hora}) no puedo atenderte: mi horario es de 11:00 a 22:00 😔`
+        : `${saludo} Justo a esa hora (${diaLegible(pedida, zona)}, ${partesEn(pedida, zona).hora}) ya tengo otra cita 😔`,
     `Estas son las opciones que tengo${duracion ? ` para tu servicio (${duracion})` : ""}:`,
     opciones.map((o, i) => `${ETIQUETAS[i]}: ${lineaOpcion(o, zona)}`).join("\n"),
-    `Dime cuál prefieres escribiendo, por ejemplo, «quiero la ${PALABRAS[0]}»${opciones.length > 1 ? ` o «quiero la ${PALABRAS[1]}»` : ""}, y te reservo el hueco 😊`,
+    `Dime cuál prefieres escribiendo, por ejemplo, «quiero la ${PALABRAS[0]}»${opciones.length > 1 ? ` o «quiero la ${PALABRAS[1]}»` : ""}, y te reservo el hueco 😊${extra.otraFecha ? " Y si ninguna te encaja, dime otro día y hora." : ""}`,
   ].join("\n\n");
 }
 

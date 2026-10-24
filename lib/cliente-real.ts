@@ -64,6 +64,14 @@ export function crearClienteReal(): ClientePort {
     avanzarFase: clienteStore.avanzarFase,
     reservaActivaDe: clienteStore.reservaActivaDe,
     propuestaPendienteDe: clienteStore.propuestaPendienteDe,
+    citaSinEmailDe: clienteStore.citaSinEmailDe,
+    async botonesCita(r, aviso) {
+      if (adminChatId === null) throw new Error("sin_chat_de_blake");
+      const { makeFlowDeps, makePhotoDeps } = await import("./composicion");
+      const { crearFlujoFotos } = await import("./photo-flow");
+      const { crearFlujoPropuestas } = await import("./proposal-flow");
+      await crearFlujoPropuestas(makeFlowDeps(crearFlujoFotos(makePhotoDeps()), crearClienteReal())).ofrecerBotonesDeCita(adminChatId, r.id, aviso);
+    },
     reservaDePruebaActiva: clienteStore.reservaDePruebaActiva,
     vencidas: clienteStore.vencidas,
     // La propuesta nueva (tras elegir la clienta una opción) se arma con los mismos flujos que el webhook de Telegram.

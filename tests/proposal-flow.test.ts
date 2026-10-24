@@ -2122,12 +2122,29 @@ describe("ahorro de tokens: el formulario de Instagram se lee por código, sin C
     expect(m.reserva().starts_at).toBe("2026-10-23T15:00:00.000Z");
   });
 
-  it("sin fecha escrita no se gasta Claude: la propuesta sale pidiendo la fecha", async () => {
-    const m = mundo({ ...vision });
+  it("sin fecha escrita no se gasta Claude: la propuesta sale SIN fecha (precio primero) y se puede aprobar", async () => {
+    const m = mundo({ ...vision, calendario: {}, cliente: {} });
     await m.flujo.recibirSolicitud(CHAT, sol({ fechaTexto: null }));
     expect(m.w.llamadasClaude).toBe(0);
     expect(m.reserva().starts_at).toBeNull();
-    expect(m.ultimo().texto).toContain("Falta: fecha");
+    expect(m.reserva().spec.sin_fecha).toBe(true);
+    expect(m.ultimo().texto).not.toContain("Falta: fecha");
+    expect(m.ultimo().texto).toContain("la dirá la clienta después del precio");
+    expect((m.ultimo().markup.inline_keyboard as { text: string }[][]).flat().map((b) => b.text)).toContain("✅ Aprobar");
+    // El borrador es el precio con «dime qué día»: no habla de una fecha.
+    expect(m.reserva().reply_draft).toContain("dime qué día y a qué hora");
+    expect(m.reserva().reply_draft).not.toContain("Tu cita sería");
+  });
+
+  it("Aprobar sin fecha: no toca el calendario, la reserva sigue en «propuesta» (sin fecha no puede ser «aprobada») y le manda el precio a la clienta", async () => {
+    const m = mundo({ ...vision, calendario: {}, cliente: {} });
+    await m.flujo.recibirSolicitud(CHAT, sol({ fechaTexto: null }));
+    await m.boton(m.nonceDe(), "ok", m.ultimo().id);
+    expect(m.reserva().status).toBe("propuesta");
+    expect(m.w.cal.creados).toHaveLength(0);
+    expect(m.w.clienteLlamadas).toHaveLength(1);
+    expect(m.w.clienteLlamadas[0]).toMatchObject({ k: "aprobar", id: "res-1", status: "propuesta" });
+    expect(m.w.editados.at(-1)!.texto).toContain("APROBADA (sin fecha)");
   });
 
   it("funciona aunque Claude no tenga clave: la propuesta sale y avisa de que no se leyeron las fotos", async () => {

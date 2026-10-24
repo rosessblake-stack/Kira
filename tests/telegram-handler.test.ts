@@ -67,6 +67,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
     },
     proposals: {
       async reenviarPropuesta() { return true; },
+      async ofrecerBotonesDeCita() { return true; },
       async simular(chatId, texto, alCrear) {
         calls.prop.simular.push({ chatId, texto, conAdjunto: Boolean(alCrear) });
         // Como el flujo real: crea la conversación y ejecuta el adjunto enseguida.

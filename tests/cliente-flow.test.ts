@@ -64,6 +64,7 @@ function mundo(op: Opciones = {}) {
     eventosAgenda: op.agenda ?? ([] as import("../lib/agenda-eventos").EventoAgenda[]),
     registrosRetirados: [] as string[],
     nuevas: [] as string[],
+    botonesCita: [] as string[],
     marcados: 0,
     conversacionEstado: "" as string,
     pausada: op.pausada ?? false,
@@ -128,6 +129,9 @@ function mundo(op: Opciones = {}) {
     async avanzarFase(_id, de, parche) {
       if (!de.includes((reserva.client_phase ?? null) as Fase | null)) return null;
       if (w.fallaReservarHueco && parche.status === "pendiente_pago") throw new Error('conflicting key value violates exclusion constraint "bookings_no_overlap"');
+      // La base de datos (bookings_check1) exige fecha para «aprobada», «pendiente_pago» y «pagada».
+      const despues = { ...reserva, ...parche };
+      if (["aprobada", "pendiente_pago", "pagada"].includes(despues.status) && (!despues.starts_at || !despues.ends_at)) throw new Error("violates check constraint bookings_check1");
       Object.assign(reserva, parche);
       return structuredClone(reserva);
     },
@@ -139,6 +143,8 @@ function mundo(op: Opciones = {}) {
       return reserva.is_test && (reserva.status === "pendiente_pago" || reserva.status === "cancelada") && ["precio_enviado", "pago_pedido", "pago_declarado", "liberada"].includes(reserva.client_phase ?? "") ? structuredClone(reserva) : null;
     },
     async nuevaPropuesta(_r, prefijo) { w.nuevas.push(prefijo); },
+    async botonesCita(_r, aviso) { w.botonesCita.push(aviso); },
+    async citaSinEmailDe() { return reserva.status === "pagada" && !reserva.client_email ? structuredClone(reserva) : null; },
     async vencidas(ahora) {
       return ["precio_enviado", "pago_pedido", "liberada", "opciones_enviadas"].includes(reserva.client_phase ?? "") && reserva.payment_deadline && Date.parse(reserva.payment_deadline) <= ahora.getTime() ? [structuredClone(reserva)] : [];
     },
@@ -728,5 +734,127 @@ describe("hora ocupada: opciones de hueco que la clienta elige con un número", 
     expect(m.w.borrados).toHaveLength(0);
     expect(m.w.paraClienta).toHaveLength(1); // solo las opciones: nada más a la clienta
     expect(m.avisos().at(-1)).toContain("no eligió ninguno de los huecos");
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Tiempo 2: precio primero, fecha después
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Aprobada SIN fecha: la clienta ya tiene el precio y solo falta que diga el día. */
+async function conPrecioSinFecha(op: Opciones = {}) {
+  const m = mundo({ ...op, sinEvento: true });
+  Object.assign(m.w.reserva, { status: "propuesta", starts_at: null, ends_at: null });
+  m.w.reserva.spec.sin_fecha = true;
+  await m.flujo.alAprobar(structuredClone(m.w.reserva));
+  return m;
+}
+
+describe("precio primero, fecha después", () => {
+  it("«vale» a secas no basta: le pide el día y no toca el calendario ni el Bizum", async () => {
+    const m = await conPrecioSinFecha();
+    await m.flujo.respuestaClienta("conv-1", "vale");
+    expect(m.w.paraClienta.at(-1)).toContain("¿Qué día y a qué hora");
+    expect(m.w.reserva.client_phase).toBe("precio_enviado");
+    expect(m.w.creados).toEqual([]);
+  });
+
+  it("un día libre de la agenda → reserva el hueco en amarillo, pide el Bizum y le da a Blake sus botones", async () => {
+    const m = await conPrecioSinFecha();
+    await m.flujo.respuestaClienta("conv-1", "el 28 de octubre a las 17:00");
+    expect(m.w.reserva).toMatchObject({ status: "pendiente_pago", client_phase: "pago_pedido" });
+    expect(m.w.reserva.starts_at).toBe("2026-10-28T16:00:00.000Z"); // 17:00 en Madrid (aún horario de verano)
+    expect(m.w.reserva.ends_at).toBe("2026-10-28T18:30:00.000Z");
+    expect(m.w.creados).toHaveLength(1);
+    expect(m.w.reserva.calendar_event_id).toBe(m.w.creados[0]);
+    expect(m.w.paraClienta.at(-1)).toContain("Bizum de 20 € al 662018425");
+    expect(m.w.botonesCita).toHaveLength(1);
+    expect(m.w.botonesCita[0]).toContain("Estaba libre");
+    expect(Date.parse(m.w.reserva.payment_deadline!)).toBe(Date.parse(T0) + PLAZO_PAGO_MIN * 60_000);
+  });
+
+  it("un día libre de Blake (domingo) → no reserva: le ofrece otros huecos y a Blake solo le avisa", async () => {
+    const m = await conPrecioSinFecha();
+    await m.flujo.respuestaClienta("conv-1", "el 25 de octubre a las 12:00");
+    expect(m.w.creados).toEqual([]);
+    expect(m.w.reserva.client_phase).toBe("opciones_enviadas");
+    expect((m.w.reserva.spec.opciones_hueco ?? []).length).toBeGreaterThanOrEqual(1);
+    expect(m.w.paraClienta.at(-1)).toContain("no hago citas");
+    expect(m.w.paraClienta.at(-1)).toContain("dime otro día y hora");
+    expect(m.avisos().at(-1)).toContain("es uno de tus días libres");
+    for (const o of m.w.reserva.spec.opciones_hueco ?? []) expect([0, 1]).not.toContain(new Date(o.inicio).getUTCDay());
+  });
+
+  it("una hora ocupada → le ofrece opciones", async () => {
+    const m = await conPrecioSinFecha({
+      agenda: [{ id: "x", titulo: "Trenzas Lux", inicio: new Date("2026-10-28T15:00:00Z"), fin: new Date("2026-10-28T18:00:00Z"), dias: null, libre: false, esDeKira: false, esPrueba: false } as any],
+    });
+    await m.flujo.respuestaClienta("conv-1", "el 28 de octubre a las 17:00");
+    expect(m.w.creados).toEqual([]);
+    expect(m.w.reserva.client_phase).toBe("opciones_enviadas");
+    expect(m.w.paraClienta.at(-1)).toContain("ya tengo otra cita");
+  });
+
+  it("elige una opción → reserva ese hueco y le pide el Bizum (sin otra propuesta a Blake)", async () => {
+    const m = await conPrecioSinFecha();
+    await m.flujo.respuestaClienta("conv-1", "el 25 de octubre a las 12:00");
+    const opcion = m.w.reserva.spec.opciones_hueco![0];
+    await m.flujo.respuestaClienta("conv-1", "quiero la primera");
+    expect(m.w.reserva).toMatchObject({ status: "pendiente_pago", client_phase: "pago_pedido", starts_at: opcion.inicio, ends_at: opcion.fin });
+    expect(m.w.creados).toHaveLength(1);
+    expect(m.w.nuevas).toEqual([]);
+    expect(m.w.paraClienta.at(-1)).toContain("Bizum de 20 €");
+  });
+
+  it("ninguna le encaja y dice otro día → se vuelve a mirar el calendario", async () => {
+    const m = await conPrecioSinFecha();
+    await m.flujo.respuestaClienta("conv-1", "el 25 de octubre a las 12:00");
+    await m.flujo.respuestaClienta("conv-1", "mejor el 29 de octubre a las 18:00");
+    expect(m.w.reserva).toMatchObject({ status: "pendiente_pago", client_phase: "pago_pedido" });
+    expect(m.w.reserva.starts_at).toBe("2026-10-29T17:00:00.000Z");
+  });
+
+  it("una hora de hoy que ya pasó → se la pide otra vez", async () => {
+    const m = await conPrecioSinFecha();
+    await m.flujo.respuestaClienta("conv-1", "hoy 20 de octubre a las 9:00"); // en el test son las 12:00 en Madrid
+    expect(m.w.creados).toEqual([]);
+    expect(m.w.reserva.client_phase).toBe("precio_enviado");
+    expect(m.w.paraClienta.at(-1)).toMatch(/ya ha pasado|ya pas/);
+  });
+
+  it("si la base de datos no deja reservar el hueco, no crea nada y se lo pasa a Blake", async () => {
+    const m = await conPrecioSinFecha({ fallaReservarHueco: true });
+    await m.flujo.respuestaClienta("conv-1", "el 28 de octubre a las 17:00");
+    expect(m.w.creados).toEqual([]);
+    expect(m.w.reserva.client_phase).toBe("precio_enviado");
+    expect(m.avisos().at(-1)).toContain("ha escrito");
+  });
+
+  it("si Google falla al crear el evento, deshace la reserva y se lo pasa a Blake", async () => {
+    const m = await conPrecioSinFecha({ fallaCrear: true });
+    await m.flujo.respuestaClienta("conv-1", "el 28 de octubre a las 17:00");
+    expect(m.w.reserva).toMatchObject({ status: "propuesta", client_phase: "precio_enviado", starts_at: null, calendar_event_id: null });
+    expect(m.avisos().at(-1)).toContain("ha escrito");
+  });
+
+  it("sin respuesta en 20 h se cierra en silencio y Blake lo sabe", async () => {
+    const m = await conPrecioSinFecha();
+    m.w.avanza(PLAZO_PRECIO_HORAS * 60 + 1);
+    expect(await m.flujo.procesarVencidas()).toEqual({ cerradas: 1 });
+    expect(m.w.reserva).toMatchObject({ status: "expirada", client_phase: "cerrada" });
+    expect(m.avisos().at(-1)).toContain("no dijo ningún día");
+  });
+
+  it("tras confirmar la cita sin correo, se lo pide; cuando lo escribe, se guarda y se le invita", async () => {
+    const m = await conPrecioSinFecha({ email: null });
+    await m.flujo.respuestaClienta("conv-1", "el 28 de octubre a las 17:00");
+    await m.flujo.alConfirmarBlake({ ...structuredClone(m.w.reserva), status: "pagada" }, false);
+    expect(m.w.paraClienta.at(-1)).toContain("¿me pasas tu correo?");
+    Object.assign(m.w.reserva, { status: "pagada", client_phase: "confirmada", is_test: false });
+    await m.flujo.respuestaClienta("conv-1", "es ana.perez@correo.com");
+    expect(m.w.reserva.client_email).toBe("ana.perez@correo.com");
+    expect(m.w.pagados.at(-1)).toMatchObject({ email: "ana.perez@correo.com" });
+    expect(m.w.paraClienta.at(-1)).toContain("ana.perez@correo.com");
   });
 });

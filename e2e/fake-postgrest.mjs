@@ -85,6 +85,10 @@ function defaults(table, row) {
 
 /** Restricciones de la base de datos real que la app debe respetar (se prueban igual que en producción). */
 function restricciones(table, row) {
+  // bookings_check1 de la base de datos real: «aprobada», «pendiente_pago» y «pagada» exigen fecha de inicio y de fin.
+  if (table === "bookings" && ["aprobada", "pendiente_pago", "pagada"].includes(row.status) && (!row.starts_at || !row.ends_at)) {
+    throw Object.assign(new Error('new row for relation "bookings" violates check constraint "bookings_check1"'), { code: "23514" });
+  }
   if (table === "attachments" && (row.kind === "referencia") !== (row.expires_at === null || row.expires_at === undefined)) {
     throw Object.assign(new Error('new row for relation "attachments" violates check constraint "attachments_retencion_check"'), { code: "23514" });
   }
