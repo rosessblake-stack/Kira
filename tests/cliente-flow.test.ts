@@ -144,6 +144,7 @@ function mundo(op: Opciones = {}) {
       return (reserva.status === "pendiente_pago" || reserva.status === "cancelada" || reserva.status === "propuesta") && ["precio_enviado", "pago_pedido", "pago_declarado", "liberada", "opciones_enviadas"].includes(reserva.client_phase ?? "") ? structuredClone(reserva) : null;
     },
     async propuestaPendienteDe() { return reserva.status === "propuesta" && !reserva.client_phase ? structuredClone(reserva) : null; },
+    async reservaConOpcionesActiva() { return reserva.status === "propuesta" && reserva.client_phase === "opciones_enviadas" ? structuredClone(reserva) : null; },
     async reservaDePruebaActiva() {
       return reserva.is_test && (reserva.status === "pendiente_pago" || reserva.status === "cancelada") && ["precio_enviado", "pago_pedido", "pago_declarado", "liberada"].includes(reserva.client_phase ?? "") ? structuredClone(reserva) : null;
     },
@@ -692,6 +693,25 @@ describe("hora ocupada: opciones de hueco que la clienta elige con un número", 
     const { m, r } = await conOpciones({ ultimoMensaje: viejo });
     expect(r).toEqual({ ok: false, motivo: "ventana_24h" });
     expect(m.w.reserva.client_phase).toBeNull();
+  });
+
+  it("/elegir segunda: Blake elige por la clienta (aunque ManyChat no trajera su respuesta) y pasa lo mismo", async () => {
+    const { m } = await conOpciones();
+    await m.flujo.elegirPorClienta(7, "segunda");
+    expect(m.w.reserva.starts_at).toBe(OPCIONES[1].inicio);
+    expect(m.w.reserva.client_phase).toBeNull();
+    expect(m.w.nuevas).toHaveLength(1);
+  });
+
+  it("/elegir sin texto, con una palabra que no es una opción o sin opciones pendientes: lo explica y no toca nada", async () => {
+    const { m } = await conOpciones();
+    await m.flujo.elegirPorClienta(7, "");
+    await m.flujo.elegirPorClienta(7, "quizá");
+    await m.flujo.elegirPorClienta(7, "cuarta");
+    expect(m.w.reserva.client_phase).toBe("opciones_enviadas");
+    const sin = mundo({});
+    await sin.flujo.elegirPorClienta(7, "primera");
+    expect(sin.avisos().at(-1)).toContain("No hay ninguna clienta con opciones");
   });
 
   it("la clienta contesta «2»: la reserva pasa a ese hueco, vuelve a fase vacía y Blake recibe la propuesta nueva", async () => {

@@ -95,6 +95,7 @@ export interface ClienteExtra {
   /** La solicitud aún sin decidir por Blake de una conversación (para avisarle si la clienta vuelve a escribir). */
   propuestaPendienteDe(conversationId: string): Promise<Reserva | null>;
   /** La última reserva de PRUEBA con conversación activa (para /clienta y /vencer). */
+  reservaConOpcionesActiva?(): Promise<Reserva | null>;
   reservaDePruebaActiva(): Promise<Reserva | null>;
   /** Reservas con plazo vencido en una fase activa. */
   vencidas(ahora: Date, limite: number): Promise<Reserva[]>;
@@ -141,6 +142,8 @@ export interface ClientePort {
   respuestaClienta(conversationId: string, texto: string): Promise<void>;
   /** /clienta <texto>: Blake escribe como si fuera la clienta de la última prueba. */
   respuestaEnPrueba(chatId: number, texto: string): Promise<void>;
+  /** /elegir segunda: Blake elige por la clienta, en una solicitud real o de prueba, cuando ManyChat no le ha hecho llegar su respuesta. */
+  elegirPorClienta(chatId: number, texto: string): Promise<void>;
   /** Botón «❌ No me ha llegado» (el Bizum no entró): borra el evento, libera el hueco y se lo dice a la clienta. */
   botonNoLlego(b: { callbackId: string; chatId: number; messageId: number | null; fromId: number; nonce: string }): Promise<void>;
   /** Blake pulsó «Ofrecer opciones»: se las escribe a la clienta y pasa a esperar su número (plazo de 20 h). */
@@ -588,6 +591,21 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     await respuestaClienta(r.conversation_id, texto);
   }
 
+  async function elegirPorClienta(chatId: number, texto: string): Promise<void> {
+    const r = deps.reservaConOpcionesActiva ? await deps.reservaConOpcionesActiva().catch(() => null) : null;
+    if (!texto.trim() || !r || !r.conversation_id) {
+      await deps.enviar(chatId, !texto.trim() && r ? "Escribe qué opción elige la clienta. Por ejemplo: /elegir segunda" : "No hay ninguna clienta con opciones de hueco esperando respuesta.");
+      return;
+    }
+    const n = interpretarElegida(texto, r.spec?.opciones_hueco?.length ?? 0);
+    if (n === null) {
+      await deps.enviar(chatId, "No entiendo cuál. Escribe /elegir primera, /elegir segunda…");
+      return;
+    }
+    await deps.logEvent({ source: "telegram", kind: "opcion_elegida_por_blake", summary: `Blake eligió por la clienta la opción ${n}`, ...idsDe(r) });
+    await respuestaClienta(r.conversation_id, texto);
+  }
+
   // -------------------------------------------------------------------------
   // «vale» → Bizum
   // -------------------------------------------------------------------------
@@ -997,5 +1015,5 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     await deps.enviar(chatId, `Guardado: las clientas harán el Bizum al ${nuevo}.`);
   }
 
-  return { alAprobar, alConfirmarBlake, alCancelarBlake, alRechazarBlake, datosDeCita, avisarRechazada, ofrecerOpciones, respuestaClienta, respuestaEnPrueba, botonNoLlego, botonRevertir, procesarVencidas, vencerYa, bizum };
+  return { alAprobar, alConfirmarBlake, alCancelarBlake, alRechazarBlake, datosDeCita, avisarRechazada, ofrecerOpciones, respuestaClienta, respuestaEnPrueba, elegirPorClienta, botonNoLlego, botonRevertir, procesarVencidas, vencerYa, bizum };
 }

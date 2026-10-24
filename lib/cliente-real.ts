@@ -92,6 +92,7 @@ export function crearClienteReal(): ClientePort {
       await crearFlujoPropuestas(makeFlowDeps(crearFlujoFotos(makePhotoDeps()), crearClienteReal())).ofrecerBotonesDeCita(adminChatId, r.id, aviso);
     },
     reservaDePruebaActiva: clienteStore.reservaDePruebaActiva,
+    reservaConOpcionesActiva: clienteStore.reservaConOpcionesActiva,
     vencidas: clienteStore.vencidas,
     // La propuesta nueva (tras elegir la clienta una opción) se arma con los mismos flujos que el webhook de Telegram.
     async nuevaPropuesta(r, prefijo) {

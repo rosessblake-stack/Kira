@@ -70,6 +70,13 @@ export async function propuestaPendienteDe(conversationId: string): Promise<Rese
   return ((data as Reserva[] | null) ?? [])[0] ?? null;
 }
 
+/** La última solicitud (real o de prueba) a la que se le han ofrecido opciones de hueco y espera su elección. */
+export async function reservaConOpcionesActiva(): Promise<Reserva | null> {
+  const { data, error } = await getDb().from("bookings").select("*").eq("status", "propuesta").eq("client_phase", "opciones_enviadas").order("created_at", { ascending: false }).limit(1);
+  ok("No se pudo consultar las opciones pendientes", error);
+  return ((data as Reserva[] | null) ?? [])[0] ?? null;
+}
+
 export async function reservaDePruebaActiva(): Promise<Reserva | null> {
   const { data, error } = await getDb()
     .from("bookings")

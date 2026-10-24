@@ -93,6 +93,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       async alCancelarBlake() {},
       async alRechazarBlake() {},
       async datosDeCita() { return true; },
+      async elegirPorClienta() {},
       async avisarRechazada() {},
       async respuestaClienta() {},
       async respuestaEnPrueba(chatId, texto) { calls.client.push({ k: "clienta", chatId, texto }); },
