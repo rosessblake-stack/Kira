@@ -53,7 +53,9 @@ describe("fecha y hora del texto libre, sin Claude", () => {
     expect(fh("mañana a las 10 de la noche")).toBe("2026-10-21 22:00");
     expect(fh("mañana a las 22")).toBe("2026-10-21 22:00");
     expect(fh("mañana a las 18")).toBe("2026-10-21 18:00");
-    expect(fh("mañana a las 8")).toBe("2026-10-21 20:00");
+    expect(fh("mañana a las 8")).toBe("2026-10-21 08:00");
+    expect(fh("mañana a las 11")).toBe("2026-10-21 11:00");
+    expect(fh("mañana a las 7")).toBe("2026-10-21 19:00");
   });
 
   it("«a las 5» sin más se toma como la tarde (el salón abre a las 11) y avisa", () => {
