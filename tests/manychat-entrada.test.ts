@@ -173,3 +173,14 @@ describe("botones de estilo y número de trenzas", () => {
     expect(n.ok && n.solicitud.numeroTrenzas).toBeNull();
   });
 });
+
+describe("nombre escrito a mano en ManyChat", () => {
+  it("«First Name» literal no es un nombre: se ignora", () => {
+    for (const n of ["First Name", "first_name", "{{first_name}}", "Nombre"]) {
+      const r = leerSolicitud({ id: "123", ig_username: "ana", nombre: n });
+      expect(r.ok && r.solicitud.nombre, n).toBeNull();
+    }
+    const ok = leerSolicitud({ id: "123", ig_username: "ana", nombre: "Elizabeth" });
+    expect(ok.ok && ok.solicitud.nombre).toBe("Elizabeth");
+  });
+});

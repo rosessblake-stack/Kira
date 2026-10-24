@@ -96,14 +96,14 @@ export function normalizarBizum(texto: string): string | null {
 }
 
 /** Tras el «vale»: cómo reservar el hueco por Bizum (España). */
-export function textoPagoPedido(r: Reserva, bizum: string, plazoMin = PLAZO_PAGO_MIN): string {
+export function textoPagoPedido(r: Reserva, bizum: string, _plazoMin = PLAZO_PAGO_MIN): string {
   const lugar = contextoDe(r.spec ?? {});
   const cuando = r.starts_at ? ` para el ${fechaLarga(new Date(r.starts_at), lugar.zonaHoraria)}` : "";
   const senal = dinero(r.deposit_cents, lugar.moneda);
+  // Sin repetir lo de «se descuenta del total» (ya se dijo con el precio) ni el plazo: quien quiere la cita la hace (decisión de Blake, 24-oct).
   return [
     `¡Perfecto! 😊 Para reservar tu hueco${cuando}, haz un Bizum de ${senal} al ${bizum}.`,
-    `Esos ${senal} se descuentan del total el día de la cita y el resto lo pagas en efectivo.`,
-    `Cuando lo hayas hecho, escríbeme «confirmado» y te envío la cita al correo. Tienes unos ${plazoMin} minutos; pasado ese tiempo libero el hueco.`,
+    "Cuando lo hayas hecho, escríbeme «confirmado» y te envío la cita al correo.",
   ].join("\n\n");
 }
 

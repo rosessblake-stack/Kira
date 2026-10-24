@@ -165,7 +165,9 @@ export function leerSolicitud(raw: unknown): ResultadoEntrada {
 
   const igRaw = texto(primero(m, ["igusername", "instagram", "instagramusername", "username"]), 60)?.replace(/^@/, "") ?? null;
   const emailRaw = texto(primero(m, ["email"]), 120);
-  const nombre = texto(primero(m, ["nombre", "firstname", "name"]), 60);
+  const nombreBruto = texto(primero(m, ["nombre", "firstname", "name"]), 60);
+  // Si en ManyChat se escribió a mano «First Name» (en vez de insertar la variable), no es un nombre: se ignora.
+  const nombre = nombreBruto && !/^\{?\{?\s*(first[\s_]?name|nombre|name)\s*\}?\}?$/i.test(nombreBruto) ? nombreBruto : null;
   const pais = ubicacionDe(primero(m, ["paisdecliente", "pais", "country", "ubicacion"]));
 
   const base = {

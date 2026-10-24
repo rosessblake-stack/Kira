@@ -101,13 +101,13 @@ describe("plantillas para la clienta", () => {
     expect(PLAZO_PAGO_MIN).toBe(90);
   });
 
-  it("pago pedido: Bizum de 20 € al número de Blake, se descuenta del total, resto en efectivo, «confirmado» y plazo", () => {
+  it("pago pedido: Bizum de 20 € al número de Blake y «confirmado»; sin repetir el descuento ni el plazo", () => {
     const t = textoPagoPedido(reserva(), "662018425");
     expect(t).toContain("Bizum de 20 € al 662018425");
-    expect(t).toContain("se descuentan del total");
-    expect(t).toContain("el resto lo pagas en efectivo");
+    expect(t).not.toContain("descuenta");
+    expect(t).not.toContain("efectivo");
     expect(t).toContain("«confirmado»");
-    expect(t).toContain("90 minutos");
+    expect(t).not.toContain("minutos");
     expect(t).toContain("sáb 24 oct, 12:00");
   });
 

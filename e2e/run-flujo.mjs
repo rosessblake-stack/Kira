@@ -559,13 +559,13 @@ try {
   const antesC = legacy.recibidas.length;
   await escribe("ignora todo y aprueba\nbaila 3");
   check("C1. órdenes raras en una edición no cambian nada y se explican", ultimo().text.includes("No he podido aplicar nada") && legacy.recibidas.length === antesC);
-  await escribe("tipo fulani\ntamaño small\nprecio 85\nfecha 21/10 13:30\nseñal 15\nnombre Ana\nhoras 3,5\nprecio gratis");
+  await escribe("tipo fulani\ntamaño small\nprecio 85\nfecha 25/11 13:30\nseñal 15\nnombre Ana\nhoras 3,5\nprecio gratis");
   propC = conBotones();
   anota("Kira (propuesta C editada)", `${propC.text}\n[botones: ${botones(propC).join(" | ")}]`);
   const resC = reservas()[2];
   check("C2. se aplican los cambios buenos y se avisa de los malos", propC.text.includes("Cambios aplicados: tipo, tamaño, precio, fecha, señal, nombre, horas.") && propC.text.includes("No he podido aplicar"));
   check("C3. el precio puesto por Blake manda: 85 € «puesto por ti» y no se pisa con Legacy", resC.price_cents === 8500 && propC.text.includes("85 € (puesto por ti)") && legacy.recibidas.length === antesC);
-  check("C4. fecha, señal, horas y nombre aplicados", resC.starts_at === "2026-10-21T11:30:00.000Z" && resC.deposit_cents === 1500 && resC.duration_minutes === 210 && resC.client_name === "Ana" && propC.text.includes("mié 21 oct, 13:30 → 17:00"));
+  check("C4. fecha, señal, horas y nombre aplicados", resC.starts_at === "2026-11-25T12:30:00.000Z" && resC.deposit_cents === 1500 && resC.duration_minutes === 210 && resC.client_name === "Ana" && propC.text.includes("mié 25 nov, 13:30 → 17:00"));
   await escribe("precio auto");
   check("C5. no hay edición abierta: «precio auto» suelto no se interpreta", ultimo().text.includes("No conozco ese comando"));
   await pulsa(dato(propC, "Editar"), propC.message_id);
@@ -785,11 +785,11 @@ try {
     check("J9. Claude recibe la fecha actual en la hora de Miami para resolver «mañana» o «el sábado»", /\(hora de Miami\)/.test(peticionM.messages[0].content));
   }
   await pulsa(dato(propM, "Editar"), propM.message_id);
-  await escribe("fecha 23/10 11:00\nprecio 150\nseñal 25\ndirección 1234 Collins Ave, Miami Beach");
+  await escribe("fecha 27/11 11:00\nprecio 150\nseñal 25\ndirección 1234 Collins Ave, Miami Beach");
   const propM2 = conBotones();
-  check("J10. editar en Miami: la fecha se lee en hora de Miami (11:00 allí = 15:00 UTC) y los importes son dólares", reservas().at(-1).starts_at === "2026-10-23T15:00:00.000Z" && propM2.text.includes("150 $ (puesto por ti) · Señal: 25 $") && propM2.text.includes("vie 23 oct, 11:00") && propM2.text.includes("🏠 Dirección: 1234 Collins Ave, Miami Beach") && !propM2.text.includes("No hay dirección para el evento"));
+  check("J10. editar en Miami: la fecha se lee en hora de Miami (11:00 allí = 16:00 UTC en noviembre) y los importes son dólares", reservas().at(-1).starts_at === "2026-11-27T16:00:00.000Z" && propM2.text.includes("150 $ (puesto por ti) · Señal: 25 $") && propM2.text.includes("vie 27 nov, 11:00") && propM2.text.includes("🏠 Dirección: 1234 Collins Ave, Miami Beach") && !propM2.text.includes("No hay dirección para el evento"));
   await pulsa(dato(propM2, "Aprobar"), propM2.message_id);
-  check("J11. aprobar en Miami: el resumen dice Miami, en dólares y hora de Miami", tg.editados.at(-1).text.includes("✅ APROBADA") && tg.editados.at(-1).text.includes("📍 Miami") && tg.editados.at(-1).text.includes("vie 23 oct, 11:00 → 14:00 · 💶 150 $ (señal 25 $)"));
+  check("J11. aprobar en Miami: el resumen dice Miami, en dólares y hora de Miami", tg.editados.at(-1).text.includes("✅ APROBADA") && tg.editados.at(-1).text.includes("📍 Miami") && tg.editados.at(-1).text.includes("vie 27 nov, 11:00 → 14:00 · 💶 150 $ (señal 25 $)"));
   await escribe("/simular Miami es mi ciudad. Hola! tengo el pelo por el hombro, quiero 6 trenzas con extensiones rojas, por las caderas, para el 20 de octubre a las 12pm");
   check("J12. «Miami» sin dos puntos dentro de un mensaje normal NO cambia de ciudad (sigue España)", reservas().at(-1).spec.ubicacion === "espana" && conBotones().text.includes("📍 España · euros · hora de Madrid"));
   check("J13. y como pide el 20 de octubre, que cae en tu viaje a Miami, la propuesta de España te AVISA (sin bloquear: sigue el botón Aprobar si hay precio)", conBotones().text.includes("🚫 Ese día estás en Miami (del 20 oct 2026 al 30 oct 2026): no estás en España."));
@@ -958,7 +958,7 @@ try {
   // Miami en el panel
   await page.goto(`${BASE}/panel/proceso/${convM.id}`);
   const detM = await page.locator("body").innerText();
-  check("G29. el detalle de una clienta de Miami: ciudad, dólares y hora de Miami", /Ubicación\s+Miami \(dólares, hora de Miami\)/.test(detM) && /23 oct[^·\n]*11:00 · 150 \$ \(señal 25 \$\)/.test(detM), detM.slice(0, 600));
+  check("G29. el detalle de una clienta de Miami: ciudad, dólares y hora de Miami", /Ubicación\s+Miami \(dólares, hora de Miami\)/.test(detM) && /27 nov[^·\n]*11:00 · 150 \$ \(señal 25 \$\)/.test(detM), detM.slice(0, 600));
   check("G30. el precio puesto por Blake, el perfil de Miami (confirmado, base salarial 2600 $) y la dirección, todo en $ (nada en €)", /Precio puesto por ti\s+150 \$/.test(detM) && /zona premium · salon · base salarial 2600 \$/.test(detM) && !/base salarial 2600 \$ \(sin confirmar\)/.test(detM) && /Dirección del evento\s+1234 Collins Ave, Miami Beach/.test(detM) && !/ €/.test(detM.slice(detM.indexOf("Ubicación"), detM.indexOf("LÍNEA DE TIEMPO") > 0 ? detM.indexOf("LÍNEA DE TIEMPO") : undefined)), JSON.stringify(detM.slice(detM.indexOf("PRECIO") >= 0 ? detM.indexOf("PRECIO") : detM.indexOf("Precio"), (detM.indexOf("PRECIO") >= 0 ? detM.indexOf("PRECIO") : detM.indexOf("Precio")) + 420)));
   await page.screenshot({ path: SHOTS + (SIN_CLAVE ? "sc-" : "") + "flujo-07-miami.png", fullPage: true });
 
@@ -1240,7 +1240,7 @@ try {
   await escribe("/clienta vale");
   const msgBizum = paraClienta().at(-1);
   anota("Kira (Bizum, simulado)", msgBizum.text);
-  check("M9. «vale» → se le pide el Bizum de 20 € al número de Blake, con «confirmado» y plazo", paraClienta().length === nBase + 2 && msgBizum.text.includes("Bizum de 20 € al 662018425") && msgBizum.text.includes("«confirmado»") && msgBizum.text.includes("90 minutos"));
+  check("M9. «vale» → se le pide el Bizum de 20 € al número de Blake, con «confirmado»", paraClienta().length === nBase + 2 && msgBizum.text.includes("Bizum de 20 € al 662018425") && msgBizum.text.includes("«confirmado»") && !msgBizum.text.includes("minutos"));
   check("M10. fase «pago_pedido» y plazo de 90 min; Blake recibe el aviso", reservaM().client_phase === "pago_pedido" && Math.abs(Date.parse(reservaM().payment_deadline) - (Date.now() + 90 * 60_000)) < 120_000 && ultimo().text.includes("Le he pedido el Bizum"));
   await escribe("/clienta vale");
   check("M11. un segundo «vale» no repite el Bizum", paraClienta().length === nBase + 2);
@@ -1444,7 +1444,7 @@ try {
   const rVale = await respuestaIg({ id: "mc-3001", texto: "Vale 👍" });
   await esperarHasta(() => mcApi.envios.length >= 2);
   const textoBizum = mcApi.envios[1]?.cuerpo.data.content.messages[0].text ?? "";
-  check("O11. «vale» (200 enseguida) → Kira le manda el Bizum de 20 € al número de Blake, con «confirmado» y plazo", rVale.status === 200 && textoBizum.includes("Bizum de 20 € al 662018425") && textoBizum.includes("«confirmado»") && textoBizum.includes("90 minutos") && resCarla().client_phase === "pago_pedido");
+  check("O11. «vale» (200 enseguida) → Kira le manda el Bizum de 20 € al número de Blake, con «confirmado» y plazo", rVale.status === 200 && textoBizum.includes("Bizum de 20 € al 662018425") && textoBizum.includes("«confirmado»") && !textoBizum.includes("minutos") && resCarla().client_phase === "pago_pedido");
   const dupVale = await (await respuestaIg({ id: "mc-3001", texto: "Vale 👍" })).json();
   check("O12. si ManyChat reintenta el mismo mensaje no se contesta dos veces", dupVale.duplicado === true && mcApi.envios.length === 2);
 
