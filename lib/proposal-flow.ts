@@ -441,10 +441,13 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
       proposal_nonce: nonce,
       edit_requested_at: null,
     });
-    const texto = `${prefijo}${textoPropuesta(prop, spec, { mensajeCliente: spec.mensaje_cliente, esPrueba: actualizada.is_test, perfil, fotos, agenda })}${fechaPasada(actualizada.starts_at, deps.now()) ? AVISO_PASADA : ""}`;
+    const ofrecer = puedeOfrecerOpciones(actualizada, agenda);
+    // Domingo/lunes o fuera de horario: no se reserva ese hueco (decisión de Blake); solo se pueden ofrecer otras opciones.
+    const noReservable = ofrecer && actualizada.starts_at !== null && actualizada.ends_at !== null && agenda.estado === "ok" && ["dia_libre", "fuera_horario"].includes(motivoNoDisponible(new Date(actualizada.starts_at), new Date(actualizada.ends_at), agenda.hueco, contextoDe(actualizada.spec).zonaHoraria, contextoDe(actualizada.spec).reglas) ?? "");
+    const texto = `${prefijo}${textoPropuesta(prop, spec, { mensajeCliente: spec.mensaje_cliente, esPrueba: actualizada.is_test, perfil, fotos, agenda })}${fechaPasada(actualizada.starts_at, deps.now()) ? AVISO_PASADA : ""}${noReservable ? "\n\n🚫 Esa fecha/hora no la trabajas (domingo, lunes o fuera de horario). Pulsa «Ofrecer opciones» para proponerle otras a la clienta, o cambia la fecha con Editar." : ""}`;
     let id: number | null;
     try {
-      id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada, deps.now()) && prop.faltan.length === 0, puedeOfrecerOpciones(actualizada, agenda), spec.instagram), { plegable: resumenCortoPropuesta(prop, spec, actualizada.is_test) });
+      id = await deps.enviar(chatId, texto.slice(0, 4000), teclado(nonce, aprobable(actualizada, deps.now()) && prop.faltan.length === 0 && !noReservable, ofrecer, spec.instagram), { plegable: resumenCortoPropuesta(prop, spec, actualizada.is_test) });
     } catch (e) {
       // El mensaje no llegó: el botón no existe, así que su nonce no puede quedar vivo (si no, /pendientes no vería la propuesta).
       await deps.actualizarReserva(r.id, { proposal_nonce: null }).catch(() => undefined);

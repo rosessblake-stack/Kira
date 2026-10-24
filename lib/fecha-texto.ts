@@ -84,8 +84,9 @@ function leerHoras(t: string): { horas: Hora[]; resto: string } | null {
     if (h < 1 || h > 23) return null;
     if (tarde && h < 12) return { h: h + 12, m: mm, explicita: true };
     if (manana || h >= 11) return { h, m: mm, explicita: h >= 13 || manana || tarde };
-    // 1–10 sin más: el salón abre a las 11, así que se toma como tarde (y se avisa).
-    h += 12;
+    // 1–8 sin más: nadie pide a esa hora de la mañana, se toma como tarde (y se avisa).
+    // 9–10 sin más: se respeta tal cual (las 10 son las 10 de la mañana, fuera del horario del salón: se ofrecerán otras horas).
+    if (h <= 8) h += 12;
     return { h, m: mm, explicita: false, aviso: `Hora: «a las ${m[1]}» se ha tomado como ${dosCifras(h)}:${dosCifras(mm)}.` };
   })) return null;
   return { horas, resto };

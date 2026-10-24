@@ -48,6 +48,14 @@ describe("fecha y hora del texto libre, sin Claude", () => {
     expect(fh("jueves 30 de octubre a las 12")).toBeNull(); // el 30 es viernes
   });
 
+  it("«a las 10» sin más son las 10 de la mañana (no las 22); «de la noche» sí son las 22", () => {
+    expect(fh("mañana a las 10")).toBe("2026-10-21 10:00");
+    expect(fh("mañana a las 10 de la noche")).toBe("2026-10-21 22:00");
+    expect(fh("mañana a las 22")).toBe("2026-10-21 22:00");
+    expect(fh("mañana a las 18")).toBe("2026-10-21 18:00");
+    expect(fh("mañana a las 8")).toBe("2026-10-21 20:00");
+  });
+
   it("«a las 5» sin más se toma como la tarde (el salón abre a las 11) y avisa", () => {
     const r = lee("el 30 de octubre a las 5")!;
     expect(r.hora).toBe("17:00");
