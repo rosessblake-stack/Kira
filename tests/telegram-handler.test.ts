@@ -102,6 +102,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
     },
     manychat: { async estado(chatId) { calls.client.push({ k: "manychat", chatId }); } },
     gasto: { async resumen(chatId) { calls.client.push({ k: "gasto", chatId }); } },
+    fecha: { async manejar(chatId, argumento) { calls.client.push({ k: "fecha", chatId, texto: argumento }); } },
     limite: { async manejar(chatId, argumento) { calls.client.push({ k: "limite", chatId, texto: argumento }); } },
     responder: { async manejar(chatId, argumento) { calls.client.push({ k: "responder", chatId, texto: argumento }); } },
     async calendarioEstado() { return "📅 Calendario de prueba"; },
@@ -778,5 +779,13 @@ describe("/limite", () => {
     const { calls, deps } = setup();
     await handleTelegramRequest(SECRET, msg("/limite off"), admin(ADMIN), deps);
     expect(calls.client).toContainEqual({ k: "limite", chatId: ADMIN, texto: "off" });
+  });
+});
+
+describe("/fecha", () => {
+  it("lo manda al flujo con el argumento", async () => {
+    const { calls, deps } = setup();
+    await handleTelegramRequest(SECRET, msg("/fecha despues"), admin(ADMIN), deps);
+    expect(calls.client).toContainEqual({ k: "fecha", chatId: ADMIN, texto: "despues" });
   });
 });

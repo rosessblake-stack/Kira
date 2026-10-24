@@ -1553,6 +1553,16 @@ try {
   await respuestaIg({ id: "mc-4001", texto: "mi correo es eva.q@correo.com" });
   await esperarHasta(() => resEva().client_email === "eva.q@correo.com");
   check("Q9. cuando escribe su correo se guarda en la cita y se le agradece (invitación al calendario)", resEva().client_email === "eva.q@correo.com" && (mcApi.envios.at(-1)?.cuerpo.data.content.messages[0].text ?? "").includes("eva.q@correo.com"));
+  await escribe("/fecha");
+  check("Q10. /fecha dice que por defecto se usa la fecha del formulario", ultimo().text.includes("DEL FORMULARIO"));
+  await escribe("/fecha despues");
+  check("Q11. /fecha despues lo guarda", ultimo().text.includes("DESPUÉS DEL PRECIO") && tables.app_settings.some((x) => x.key === "fecha_despues_del_precio" && x.value === true));
+  const nQ5 = tg.enviados.length;
+  await mc(formulario({ id: "mc-4003", Nombre: "Gala", ig_username: "gala.ig", email: "", Fecha_texto: "Mañana 12:00" }));
+  await esperarHasta(() => tg.enviados.slice(nQ5).some((m) => m.text.includes("SOLICITUD DE INSTAGRAM")));
+  const propGala = tg.enviados.slice(nQ5).find((m) => m.text.includes("SOLICITUD DE INSTAGRAM"));
+  check("Q12. con «fecha después», la fecha vieja que conserva el contacto de ManyChat se ignora: la solicitud sale sin fecha", Boolean(propGala) && propGala.text.includes("la dirá la clienta después del precio") && !propGala.text.includes("Mañana 12:00"), propGala?.text);
+  await escribe("/fecha formulario");
   await escribe("/responder off");
 
   // ============================================================================ P. CLIENTAS QUE VUELVEN (ficha + «¿la conoces?»)

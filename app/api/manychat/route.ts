@@ -8,7 +8,8 @@ import { descargarBytes } from "../../../lib/foto-store";
 import * as db from "../../../lib/db";
 import { descargarImagenSegura } from "../../../lib/descarga-segura";
 import { crearEntradaManychat } from "../../../lib/manychat-entrada-flow";
-import { clavesRecibidas, leerSolicitud } from "../../../lib/manychat-entrada";
+import { clavesRecibidas, componerMensaje, leerSolicitud } from "../../../lib/manychat-entrada";
+import { leerFechaDespues } from "../../../lib/fecha-modo";
 import { crearFlujoFotos } from "../../../lib/photo-flow";
 import { crearFlujoPropuestas } from "../../../lib/proposal-flow";
 import { MAX_CUERPO, anotarSeguridad, comprobarClave } from "../../../lib/manychat-seguridad";
@@ -44,7 +45,12 @@ export async function POST(req: Request) {
     await anotarSeguridad("payload_inesperado", { reason: leida.motivo, claves: clavesRecibidas(json) });
     return NextResponse.json({ ok: false }, { status: 400 });
   }
-  const s = leida.solicitud;
+  let s = leida.solicitud;
+  // Fecha después del precio: se ignora la que traiga ManyChat (el contacto la conserva de otras veces).
+  if (s.fechaTexto && (await leerFechaDespues())) {
+    const sinFecha = { ...s, fechaTexto: null };
+    s = { ...sinFecha, texto: componerMensaje(sinFecha) };
+  }
 
   // Idempotencia: ManyChat reintenta si tarda. Mismo contacto + mismos datos en la misma hora = la misma solicitud.
   const huella = createHash("sha256").update(cuerpo).digest("hex").slice(0, 32);
