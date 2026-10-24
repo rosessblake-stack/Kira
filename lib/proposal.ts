@@ -355,7 +355,6 @@ function componerBorrador(
     return [
       `${saludoSF} Gracias por escribirme 😊`,
       `Para ${describirServicioNatural(spec)}, el precio es de ${dinero(precio, moneda)}${duracion ? ` y dura aproximadamente ${duracionLegible(duracion)}` : ""}.`,
-      `Para reservar el hueco se deja una señal de ${dinero(spec.senal_centimos, moneda)}, que se descuenta del total el día de la cita.`,
       "Si te encaja, dime qué día y a qué hora te vendría bien y lo miro 😊",
     ].join("\n\n");
   }

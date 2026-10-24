@@ -100,7 +100,14 @@ export function textoPagoPedido(r: Reserva, bizum: string, _plazoMin = PLAZO_PAG
   const lugar = contextoDe(r.spec ?? {});
   const cuando = r.starts_at ? ` para el ${fechaLarga(new Date(r.starts_at), lugar.zonaHoraria)}` : "";
   const senal = dinero(r.deposit_cents, lugar.moneda);
-  // Sin repetir lo de «se descuenta del total» (ya se dijo con el precio) ni el plazo: quien quiere la cita la hace (decisión de Blake, 24-oct).
+  // Sin repetir el plazo (decisión de Blake, 24-oct). Con el precio primero (sin_fecha), la señal aún no se ha explicado: se dice aquí, una vez.
+  if (r.spec?.sin_fecha) {
+    return [
+      `¡Perfecto! 😊 Esa hora la tienes${cuando ? `:${cuando.replace(" para", "")}` : ""}.`,
+      `Para reservarla, haz un Bizum de ${senal} al ${bizum} (esos ${senal} se descuentan del total el día de la cita).`,
+      "Cuando lo hayas hecho, escríbeme «confirmado» y te confirmo la cita 😊",
+    ].join("\n\n");
+  }
   return [
     `¡Perfecto! 😊 Para reservar tu hueco${cuando}, haz un Bizum de ${senal} al ${bizum}.`,
     "Cuando lo hayas hecho, escríbeme «confirmado» y te envío la cita al correo.",
