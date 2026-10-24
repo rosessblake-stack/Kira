@@ -123,6 +123,8 @@ export interface ClientePort {
   alAprobar(r: Reserva): Promise<void>;
   /** Blake pulsó «Señal recibida»: se lo confirma a la clienta y cierra el seguimiento. */
   alConfirmarBlake(r: Reserva, invitado: boolean): Promise<void>;
+  /** Blake rechazó la solicitud: se quita la etiqueta «esperando_kira» para que la clienta pueda volver a empezar. */
+  alRechazarBlake(r: Reserva): Promise<void>;
   /** Botón «📨 Avisar a la clienta» tras rechazar una solicitud. */
   avisarRechazada(chatId: number, reservaId: string): Promise<void>;
   /** Blake canceló la cita: se cierra el seguimiento. */
@@ -811,6 +813,11 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     if (!envio.ok) await avisarBlake(`${marca(r)}ℹ️ No he podido avisar a ${nombreDe(r)} de que cancelaste su cita (${motivoLegible(envio.motivo)}). Díselo tú.`);
   }
 
+  async function alRechazarBlake(r: Reserva): Promise<void> {
+    if (!r.conversation_id) return;
+    await liberarEspera(await deps.leerConversacion(r.conversation_id).catch(() => null));
+  }
+
   /** Botón «📨 Avisar a la clienta» tras Rechazar una solicitud: una plantilla fija, una sola vez. */
   async function avisarRechazada(chatId: number, reservaId: string): Promise<void> {
     let r: Reserva;
@@ -835,6 +842,7 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     }
     const conv = await deps.leerConversacion(r.conversation_id).catch(() => null);
     const envio = await enviarAClienta(conv, textoSolicitudRechazada(), r);
+    await liberarEspera(conv); // el aviso vuelve a poner la etiqueta: se quita para que pueda empezar de cero
     await deps.enviar(chatId, envio.ok ? `${marca(r)}📨 Le he avisado a ${nombreDe(r)}.` : `${marca(r)}No he podido avisar a ${nombreDe(r)} (${motivoLegible(envio.motivo)}). Escríbele tú.`);
     if (!envio.ok) await deps.avanzarFase(r.id, [null], { spec: { ...(r.spec ?? {}), rechazo_avisado: false } } as Partial<Reserva>).catch(() => undefined);
   }
@@ -963,5 +971,5 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     await deps.enviar(chatId, `Guardado: las clientas harán el Bizum al ${nuevo}.`);
   }
 
-  return { alAprobar, alConfirmarBlake, alCancelarBlake, avisarRechazada, ofrecerOpciones, respuestaClienta, respuestaEnPrueba, botonNoLlego, botonRevertir, procesarVencidas, vencerYa, bizum };
+  return { alAprobar, alConfirmarBlake, alCancelarBlake, alRechazarBlake, avisarRechazada, ofrecerOpciones, respuestaClienta, respuestaEnPrueba, botonNoLlego, botonRevertir, procesarVencidas, vencerYa, bizum };
 }

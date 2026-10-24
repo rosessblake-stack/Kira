@@ -175,6 +175,7 @@ function mundo(op: Opciones = {}) {
             if (op.cliente?.fallaAprobar) throw new Error("fallo al escribir a la clienta");
           },
           async alConfirmarBlake(r, invitado) { w.clienteLlamadas.push({ k: "confirmar", id: r.id, status: r.status, invitado, botonesAntes: 0 }); },
+          async alRechazarBlake() {},
           async alCancelarBlake(r) { w.clienteLlamadas.push({ k: "cancelar", id: r.id, status: r.status, botonesAntes: 0 }); },
           async ofrecerOpciones(r, opciones) {
             if (op.cliente?.fallaOpciones) return { ok: false as const, motivo: op.cliente.fallaOpciones };

@@ -91,6 +91,7 @@ function setup(opts: { issued?: string[]; seen?: string[]; edicion?: boolean } =
       async alAprobar() {},
       async alConfirmarBlake() {},
       async alCancelarBlake() {},
+      async alRechazarBlake() {},
       async avisarRechazada() {},
       async respuestaClienta() {},
       async respuestaEnPrueba(chatId, texto) { calls.client.push({ k: "clienta", chatId, texto }); },

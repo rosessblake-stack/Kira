@@ -164,6 +164,7 @@ export interface FlowDeps {
     alAprobar(r: Reserva): Promise<void>;
     alConfirmarBlake(r: Reserva, invitado: boolean): Promise<void>;
     alCancelarBlake(r: Reserva): Promise<void>;
+    alRechazarBlake(r: Reserva): Promise<void>;
     /** «Ofrecer opciones»: le escribe a la clienta los huecos alternativos y espera su número. */
     ofrecerOpciones?(r: Reserva, opciones: OpcionHueco[]): Promise<{ ok: true } | { ok: false; motivo: string }>;
   };
@@ -1232,6 +1233,11 @@ export function crearFlujoPropuestas(deps: FlowDeps): ProposalPort {
           .catch(() => undefined);
       }
       await deps.logEvent({ source: "telegram", kind: "propuesta_rechazada", summary: "Propuesta rechazada por Blake", ...ids });
+      // Que la clienta pueda volver a empezar desde cero (se le quita la etiqueta «esperando_kira»).
+      if (deps.cliente) {
+        const cliente = deps.cliente;
+        await mejorEsfuerzo("liberar a la clienta", ids, () => cliente.alRechazarBlake(r));
+      }
       return;
     }
 
