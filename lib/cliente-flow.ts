@@ -27,7 +27,7 @@ import { idDeEvento } from "./google-calendar";
 import { describirFalloGoogle } from "./google-oauth";
 import { MAX_CARACTERES_CLIENTE, detectarInyeccion, limpiarTexto } from "./intents";
 import { botonInstagram } from "./instagram";
-import { DIAS_BUSQUEDA, calcularOpciones, interpretarElegida, lineaOpcion, textoOpciones, type MotivoNoDisponible, type OpcionHueco } from "./opciones";
+import { DIAS_BUSQUEDA, calcularOpciones, interpretarElegida, lineaOpcion, motivoNoDisponible, textoOpciones, type MotivoNoDisponible, type OpcionHueco } from "./opciones";
 import { partesEn } from "./agenda";
 import { contextoDe, esSinFecha, horarioDeSpec } from "./proposal";
 import type { FlowDeps, Reserva } from "./proposal-flow";
@@ -365,13 +365,7 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     }
     const hueco = evaluarHueco(inicio, fin, eventos, lugar.zonaHoraria, { excluirBookingId: r.id, horario: lugar.reglas.horario });
     const dia = partesEn(inicio, lugar.zonaHoraria);
-    const minutos = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
-    const horario = lugar.reglas.horario;
-    const finLocal = partesEn(fin, lugar.zonaHoraria);
-    const fueraHorario = Boolean(horario) && (minutos(dia.hora) < horario!.aperturaMin || finLocal.fecha !== dia.fecha || minutos(finLocal.hora) > horario!.cierreMin);
-    const diaLibre = Boolean(lugar.reglas.diasLibres?.includes(dia.diaSemana));
-    const margenCorto = (hueco.anterior && hueco.anterior.margenMin < MARGEN_MIN) || (hueco.siguiente && hueco.siguiente.margenMin < MARGEN_MIN);
-    const motivo: MotivoNoDisponible | null = diaLibre ? "dia_libre" : fueraHorario ? "fuera_horario" : hueco.choques.length || margenCorto ? "ocupado" : null;
+    const motivo: MotivoNoDisponible | null = motivoNoDisponible(inicio, fin, hueco, lugar.zonaHoraria, lugar.reglas);
 
     if (motivo === null) return reservarHueco(r, conv, inicio, fin);
 

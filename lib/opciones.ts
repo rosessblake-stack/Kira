@@ -82,7 +82,10 @@ export function motivoNoDisponible(inicio: Date, fin: Date, hueco: Hueco, zona: 
   const finLocal = partesEn(fin, zona);
   const h = reglas.horario;
   if (reglas.diasLibres?.includes(dia.diaSemana)) return "dia_libre";
-  if (h && (minutos(dia.hora) < h.aperturaMin || finLocal.fecha !== dia.fecha || minutos(finLocal.hora) > h.cierreMin)) return "fuera_horario";
+  // Servicio de más de 6 h: se puede empezar desde las 8:00 (regla de Blake).
+  const largo = (fin.getTime() - inicio.getTime()) / 60_000 > (h?.servicioLargoMin ?? Infinity);
+  const abre = h && largo ? Math.min(h.aperturaMin, h.inicioTempranoMin) : h?.aperturaMin ?? 0;
+  if (h && (minutos(dia.hora) < abre || finLocal.fecha !== dia.fecha || minutos(finLocal.hora) > h.cierreMin)) return "fuera_horario";
   const margenCorto = (hueco.anterior && hueco.anterior.margenMin < MARGEN_MIN) || (hueco.siguiente && hueco.siguiente.margenMin < MARGEN_MIN);
   return hueco.choques.length || margenCorto ? "ocupado" : null;
 }

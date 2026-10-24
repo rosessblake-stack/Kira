@@ -93,3 +93,17 @@ describe("domingo y lunes (día libre)", () => {
     expect(motivoNoDisponible(inicio, fin, hueco, ZONA_MADRID, REGLAS_ESPANA)).toBeNull();
   });
 });
+
+describe("servicios largos (más de 6 h) desde las 8:00", () => {
+  const reglas = REGLAS_ESPANA;
+  const mot = (ini: string, fin: string) => {
+    const i = aUtc("2026-10-27", ini);
+    const f = aUtc("2026-10-27", fin);
+    return motivoNoDisponible(i, f, evaluarHueco(i, f, [], ZONA_MADRID, { horario: reglas.horario }), ZONA_MADRID, reglas);
+  };
+  it("a las 9 un servicio de 7 h sirve; uno de 3 h no", () => {
+    expect(mot("09:00", "16:00")).toBeNull();
+    expect(mot("09:00", "12:00")).toBe("fuera_horario");
+    expect(mot("07:00", "14:00")).toBe("fuera_horario");
+  });
+});

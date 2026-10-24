@@ -114,7 +114,7 @@ export type Hueco = {
 export type OpcionesHueco = {
   margenMin?: number;
   /** Horario del día (para proponer alternativas); sin él, 11:00–22:00. */
-  horario?: { aperturaMin: number; cierreMin: number } | null;
+  horario?: { aperturaMin: number; cierreMin: number; inicioTempranoMin?: number; servicioLargoMin?: number } | null;
   /** La reserva que se está comprobando: su propio evento no cuenta como choque. */
   excluirBookingId?: string | null;
 };
@@ -153,13 +153,14 @@ function huecosAlternativos(
   fin: Date,
   eventos: { inicio: Date; fin: Date }[],
   zona: string,
-  horario: { aperturaMin: number; cierreMin: number } | null,
+  horario: { aperturaMin: number; cierreMin: number; inicioTempranoMin?: number; servicioLargoMin?: number } | null,
   margenMin: number,
 ): { inicio: Date; fin: Date }[] {
   const duracion = fin.getTime() - inicio.getTime();
   const durMin = Math.round(duracion / 60_000);
   const dia = partesEn(inicio, zona).fecha;
-  const abre = horario?.aperturaMin ?? 11 * 60;
+  // Servicio de más de 6 h: puede empezar desde las 8:00.
+  const abre = horario ? (horario.servicioLargoMin !== undefined && horario.inicioTempranoMin !== undefined && durMin > horario.servicioLargoMin ? Math.min(horario.aperturaMin, horario.inicioTempranoMin) : horario.aperturaMin) : 11 * 60;
   const cierra = horario?.cierreMin ?? 22 * 60;
   const margen = margenMin * 60_000;
   const libres: { inicio: Date; fin: Date }[] = [];
