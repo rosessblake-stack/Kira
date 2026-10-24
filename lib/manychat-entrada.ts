@@ -225,3 +225,19 @@ export function leerConsultaClienta(raw: unknown): { instagram: string | null; c
   const id = primero(m, ["id", "subscriberid", "contactid"]);
   return { instagram: ig && INSTAGRAM_RE.test(ig) ? ig : null, contactoId: id && ID_RE.test(id) ? id : null };
 }
+
+const EMAIL_VALIDO = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+
+/** Lo que devuelve el flujo «¿cómo te apunto y a qué correo?»: id del contacto, nombre (opcional) y correo (obligatorio y válido). */
+export function leerDatosCita(raw: unknown): { ok: true; contactoId: string; nombre: string | null; email: string } | { ok: false; motivo: string } {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, motivo: "cuerpo_no_es_objeto" };
+  const m = aplanar(raw);
+  const id = primero(m, ["id", "subscriberid", "contactid"]);
+  if (!id || !ID_RE.test(id)) return { ok: false, motivo: "sin_id_de_contacto" };
+  const email = texto_(primero(m, ["email", "correo", "mail"]), 120)?.trim().toLowerCase() ?? "";
+  if (!EMAIL_VALIDO.test(email)) return { ok: false, motivo: "correo_no_valido" };
+  const nombre = (texto_(primero(m, ["nombre", "name", "firstname"]), 60) ?? "").trim();
+  // Un nombre que sea literalmente la variable sin sustituir ("First Name", "{{first_name}}") o contenga enlaces/@ no vale.
+  const valido = nombre && !/first\s*name|\{\{|https?:|@/i.test(nombre) && /^[\p{L}][\p{L}\p{M}' .-]{0,59}$/u.test(nombre);
+  return { ok: true, contactoId: id, nombre: valido ? nombre : null, email };
+}

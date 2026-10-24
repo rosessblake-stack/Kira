@@ -102,6 +102,11 @@ export function crearClienteManychat(clave: string, fetchImpl: FetchManychat = f
         cuerpo: { subscriber_id: contactoId, data: { version: "v2", content: { type: "instagram", messages: [{ type: "text", text: limpio }] } } },
       });
     },
+    /** Lanza un flujo de ManyChat para ese contacto (por ejemplo, el que pide nombre y correo). `flowNs` es el identificador del flujo. */
+    async enviarFlujo(contactoId: string, flowNs: string): Promise<void> {
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(contactoId) || !/^[A-Za-z0-9_:.-]{5,100}$/.test(flowNs)) throw new ManychatError("Datos del flujo no válidos");
+      await pedir("/fb/sending/sendFlow", { cuerpo: { subscriber_id: contactoId, flow_ns: flowNs } });
+    },
     /** Quita una etiqueta del contacto (la inversa de ponerEtiqueta). */
     async quitarEtiqueta(contactoId: string, etiqueta: string): Promise<void> {
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(contactoId) || !/^[\w\- ]{1,60}$/.test(etiqueta)) throw new ManychatError("Datos de etiqueta no válidos");

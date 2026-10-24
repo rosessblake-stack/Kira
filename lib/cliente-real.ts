@@ -8,6 +8,9 @@ import * as registroStore from "./registro-store";
 import { claveManychat, crearClienteManychat } from "./manychat";
 import { crearEnvioInstagram, leerResponde } from "./responder";
 import { isPaused } from "./settings";
+import { clientasStore } from "./clientas-store";
+import { datosDeReserva } from "./clientas";
+import { leerFlujoDatos } from "./flujo-datos";
 import * as tg from "./telegram";
 
 /** La conversación con la clienta, conectada a lo real (Telegram, Google Calendar, Supabase). Una sola instancia por petición. */
@@ -65,6 +68,22 @@ export function crearClienteReal(): ClientePort {
     reservaActivaDe: clienteStore.reservaActivaDe,
     propuestaPendienteDe: clienteStore.propuestaPendienteDe,
     citaSinEmailDe: clienteStore.citaSinEmailDe,
+    async flujoDatosActivo(conv) {
+      return conv.canal === "instagram" && Boolean(claveManychat()) && Boolean(await leerFlujoDatos());
+    },
+    async pedirDatosCita(conv) {
+      if (conv.canal !== "instagram") return false;
+      const ns = await leerFlujoDatos();
+      const clave = claveManychat();
+      if (!ns || !clave) return false;
+      await crearClienteManychat(clave).enviarFlujo(conv.contact_ref, ns);
+      await db.logEvent("manychat", { kind: "flujo_datos_lanzado", summary: "Lanzado el flujo que pide nombre y correo a la clienta" });
+      return true;
+    },
+    async actualizarFicha(r) {
+      const d = datosDeReserva(r);
+      if (d) await clientasStore.guardarSolicitud(d, new Date());
+    },
     async botonesCita(r, aviso) {
       if (adminChatId === null) throw new Error("sin_chat_de_blake");
       const { makeFlowDeps, makePhotoDeps } = await import("./composicion");

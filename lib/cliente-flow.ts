@@ -22,7 +22,7 @@ import {
 import { aUtc, fechaLarga } from "./agenda";
 import { leerFechaHora } from "./fecha-texto";
 import { evaluarHueco, textoChoques } from "./agenda-eventos";
-import { eventoDeReserva } from "./evento";
+import { eventoDeReserva, tituloDeEvento } from "./evento";
 import { idDeEvento } from "./google-calendar";
 import { describirFalloGoogle } from "./google-oauth";
 import { MAX_CARACTERES_CLIENTE, detectarInyeccion, limpiarTexto } from "./intents";
@@ -72,6 +72,12 @@ export interface ClienteExtra {
   botonesCita?(r: Reserva, aviso: string): Promise<void>;
   /** La última cita pagada de la conversación a la que aún le falta el correo (se le pide al confirmar). Opcional. */
   citaSinEmailDe?(conversationId: string): Promise<Reserva | null>;
+  /** Lanza el flujo de ManyChat que pide nombre y correo. false = no está configurado o falló (se pide el correo por mensaje). */
+  pedirDatosCita?(conv: ConversacionCanal): Promise<boolean>;
+  /** ¿Hay un flujo de ManyChat configurado para pedir nombre y correo a esta clienta? */
+  flujoDatosActivo?(conv: ConversacionCanal): Promise<boolean>;
+  /** Guarda en la ficha de la clienta lo que se sabe de esta cita (nombre y correo nuevos). */
+  actualizarFicha?(r: Reserva): Promise<void>;
   /** Ya no se espera su respuesta (cita confirmada, cancelada o cerrada): quita la etiqueta que la mantiene en «esperando a Kira». Opcional. */
   liberarEspera?(conv: ConversacionCanal): Promise<void>;
   /** Escribe a la clienta por su canal. En las pruebas es un mensaje a Blake; Instagram aún no está conectado. */
@@ -125,6 +131,8 @@ export interface ClientePort {
   alConfirmarBlake(r: Reserva, invitado: boolean): Promise<void>;
   /** Blake rechazó la solicitud: se quita la etiqueta «esperando_kira» para que la clienta pueda volver a empezar. */
   alRechazarBlake(r: Reserva): Promise<void>;
+  /** Lo que la clienta contesta en el flujo de ManyChat «¿cómo te apunto y a qué correo?»: devuelve false si no hay cita pagada a la que faltara el correo. */
+  datosDeCita(conversationId: string, d: { nombre: string | null; email: string }): Promise<boolean>;
   /** Botón «📨 Avisar a la clienta» tras rechazar una solicitud. */
   avisarRechazada(chatId: number, reservaId: string): Promise<void>;
   /** Blake canceló la cita: se cierra el seguimiento. */
@@ -447,22 +455,36 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
   }
 
   /** Cita confirmada sin correo: la clienta lo escribe y se le manda la invitación del calendario. */
-  async function guardarEmailDeCita(cita: Reserva, conv: ConversacionCanal, email: string): Promise<void> {
+  async function guardarEmailDeCita(cita: Reserva, conv: ConversacionCanal, email: string, nombre?: string | null): Promise<void> {
     const ids = idsDe(cita);
     const limpio = email.toLowerCase();
-    await deps.actualizarReserva(cita.id, { client_email: limpio, spec: { ...cita.spec, email: limpio } });
+    const nombreLimpio = nombre ? limpiarTexto(nombre, 60) : "";
+    const actualizada = await deps.actualizarReserva(cita.id, {
+      client_email: limpio,
+      ...(nombreLimpio ? { client_name: nombreLimpio } : {}),
+      spec: { ...cita.spec, email: limpio, ...(nombreLimpio ? { nombre: nombreLimpio } : {}) },
+    });
+    if (deps.actualizarFicha) await deps.actualizarFicha(actualizada ?? cita).catch(() => undefined);
     let invitado = false;
     if (deps.agenda && cita.calendar_event_id) {
       try {
-        ({ invitado } = await deps.agenda.pasarAPagada(cita.calendar_event_id, cita.id, { email: limpio, esPrueba: cita.is_test }));
+        ({ invitado } = await deps.agenda.pasarAPagada(cita.calendar_event_id, cita.id, { email: limpio, esPrueba: cita.is_test, ...(nombreLimpio ? { titulo: tituloDeEvento(cita.spec, nombreLimpio, cita.is_test) } : {}) }));
       } catch (e) {
         await deps.logEvent({ source: "calendar", kind: "invitacion_fallo", level: "error", summary: describirFalloGoogle(e), ...ids });
       }
     }
     await deps.logEvent({ source: "system", kind: "email_recibido_tras_confirmar", summary: `La clienta dio su correo tras confirmar${invitado ? " y se le invitó" : ""}`, ...ids });
     await enviarAClienta(conv, textoEmailRecibido(invitado, limpio), cita);
-    await avisarBlake(`${marca(cita)}📧 ${nombreDe(cita)} te ha dado su correo (${limpio})${invitado ? " y le he mandado la invitación del calendario" : ". No he podido invitarla: añádelo tú al evento"}.`);
+    await avisarBlake(`${marca(cita)}📧 ${nombreLimpio || nombreDe(cita)} te ha dado su correo (${limpio})${invitado ? " y le he mandado la invitación del calendario" : ". No he podido invitarla: añádelo tú al evento"}.`);
     await liberarEspera(conv);
+  }
+
+  async function datosDeCita(conversationId: string, d: { nombre: string | null; email: string }): Promise<boolean> {
+    const conv = await deps.leerConversacion(conversationId);
+    const cita = conv && deps.citaSinEmailDe ? await deps.citaSinEmailDe(conversationId).catch(() => null) : null;
+    if (!conv || !cita) return false;
+    await guardarEmailDeCita(cita, conv, d.email, d.nombre);
+    return true;
   }
 
   // -------------------------------------------------------------------------
@@ -789,10 +811,20 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     if (!r.conversation_id) return;
     const conv = await deps.leerConversacion(r.conversation_id).catch(() => null);
     const sinCorreo = !r.client_email;
-    const envio = await enviarAClienta(conv, sinCorreo ? `${textoConfirmada(r, invitado)}\n\n${textoPedirEmail()}` : textoConfirmada(r, invitado), r);
+    // Sin correo: si hay flujo de ManyChat para nombre y correo, lo lanza él (fiable y con el correo validado); si no, se pide por mensaje.
+    let porFlujo = false;
+    const intentaFlujo = sinCorreo && Boolean(conv) && Boolean(deps.pedirDatosCita) && Boolean(conv && deps.flujoDatosActivo && (await deps.flujoDatosActivo(conv).catch(() => false)));
+    const envio = await enviarAClienta(conv, sinCorreo && !intentaFlujo ? `${textoConfirmada(r, invitado)}\n\n${textoPedirEmail()}` : textoConfirmada(r, invitado), r);
+    if (envio.ok && intentaFlujo && conv && deps.pedirDatosCita) {
+      porFlujo = await deps.pedirDatosCita(conv).catch(async (e) => {
+        await deps.logEvent({ source: "manychat", kind: "flujo_datos_fallo", level: "warn", summary: msg(e), ...idsDe(r) }).catch(() => undefined);
+        return false;
+      });
+      if (!porFlujo) await enviarAClienta(conv, textoPedirEmail(), r);
+    }
     if (!envio.ok) await avisarBlake(`${marca(r)}ℹ️ No he podido confirmarle la cita a ${nombreDe(r)} por mensaje (${motivoLegible(envio.motivo)}). Díselo tú.`);
-    // Sin correo, se sigue esperando su respuesta (la etiqueta se queda) para mandarle la invitación.
-    if (!sinCorreo || !envio.ok) await liberarEspera(conv);
+    // Sin flujo y sin correo, se sigue esperando su respuesta (la etiqueta se queda) para mandarle la invitación.
+    if (!sinCorreo || !envio.ok || porFlujo) await liberarEspera(conv);
   }
 
   async function alCancelarBlake(r: Reserva): Promise<void> {
@@ -965,5 +997,5 @@ export function crearFlujoCliente(deps: ClienteDeps): ClientePort {
     await deps.enviar(chatId, `Guardado: las clientas harán el Bizum al ${nuevo}.`);
   }
 
-  return { alAprobar, alConfirmarBlake, alCancelarBlake, alRechazarBlake, avisarRechazada, ofrecerOpciones, respuestaClienta, respuestaEnPrueba, botonNoLlego, botonRevertir, procesarVencidas, vencerYa, bizum };
+  return { alAprobar, alConfirmarBlake, alCancelarBlake, alRechazarBlake, datosDeCita, avisarRechazada, ofrecerOpciones, respuestaClienta, respuestaEnPrueba, botonNoLlego, botonRevertir, procesarVencidas, vencerYa, bizum };
 }

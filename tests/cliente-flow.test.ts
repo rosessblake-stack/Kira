@@ -15,6 +15,7 @@ type Opciones = {
   pausada?: boolean;
   ultimoMensaje?: string | null;
   fallaPagar?: boolean;
+  flujoDatos?: boolean;
   fallaBorrar?: boolean;
   borradoresAntes?: boolean;
   draft?: string | null;
@@ -56,7 +57,9 @@ function mundo(op: Opciones = {}) {
     mensajes: [] as { dir: string; cuerpo: string; marcado: boolean }[],
     eventos: [] as { kind: string; level?: string }[],
     seguridad: [] as { kind: string }[],
-    pagados: [] as { id: string; email: string | null; esPrueba: boolean }[],
+    pagados: [] as { id: string; email: string | null; esPrueba: boolean; titulo?: string }[],
+    flujosLanzados: 0,
+    fichas: [] as string[],
     borrados: [] as { id: string; avisar: boolean }[],
     creados: [] as string[],
     fallaCrear: op.fallaCrear ?? false,
@@ -86,7 +89,7 @@ function mundo(op: Opciones = {}) {
       },
       async pasarAPagada(id, _b, o) {
         if (w.fallaPagar) throw new GoogleError("Google no responde");
-        w.pagados.push({ id, email: o.email, esPrueba: o.esPrueba });
+        w.pagados.push({ id, email: o.email, esPrueba: o.esPrueba, titulo: o.titulo });
         return { invitado: Boolean(o.email) && !o.esPrueba };
       },
       async borrar(id, _b, o) {
@@ -95,6 +98,8 @@ function mundo(op: Opciones = {}) {
         return "borrado";
       },
     },
+    ...(op.flujoDatos ? { async flujoDatosActivo() { return true; }, async pedirDatosCita() { w.flujosLanzados++; return true; } } : {}),
+    async actualizarFicha(r) { w.fichas.push(`${r.client_name}|${r.client_email}`); },
     async estaPausada() { return w.pausada; },
     async leerReserva() { return structuredClone(reserva); },
     async actualizarReserva(_id, patch) { Object.assign(reserva, patch); return structuredClone(reserva); },
@@ -856,5 +861,25 @@ describe("precio primero, fecha después", () => {
     expect(m.w.reserva.client_email).toBe("ana.perez@correo.com");
     expect(m.w.pagados.at(-1)).toMatchObject({ email: "ana.perez@correo.com" });
     expect(m.w.paraClienta.at(-1)).toContain("ana.perez@correo.com");
+  });
+
+  it("con el flujo de ManyChat configurado: no pide el correo por texto, lo lanza; al llegar nombre y correo guarda todo, rotula el evento y actualiza la ficha", async () => {
+    const m = await conPrecioSinFecha({ email: null, flujoDatos: true });
+    await m.flujo.respuestaClienta("conv-1", "el 28 de octubre a las 17:00");
+    await m.flujo.alConfirmarBlake({ ...structuredClone(m.w.reserva), status: "pagada" }, false);
+    expect(m.w.flujosLanzados).toBe(1);
+    expect(m.w.paraClienta.at(-1)).not.toContain("¿me pasas tu correo?");
+    Object.assign(m.w.reserva, { status: "pagada", client_phase: "confirmada", is_test: false });
+    expect(await m.flujo.datosDeCita("conv-1", { nombre: "Ana María", email: "Ana.Perez@Correo.com" })).toBe(true);
+    expect(m.w.reserva).toMatchObject({ client_email: "ana.perez@correo.com", client_name: "Ana María" });
+    expect(m.w.reserva.spec?.nombre).toBe("Ana María");
+    expect(m.w.pagados.at(-1)).toMatchObject({ email: "ana.perez@correo.com", titulo: "Trenzas Ana María" });
+    expect(m.w.fichas.at(-1)).toBe("Ana María|ana.perez@correo.com");
+    expect(m.avisos().at(-1)).toContain("Ana María te ha dado su correo");
+  });
+
+  it("nombre y correo sin cita pagada a la que faltara el correo: no hace nada y lo dice", async () => {
+    const m = await conPrecioSinFecha({ email: null });
+    expect(await m.flujo.datosDeCita("conv-1", { nombre: "Ana", email: "ana@correo.com" })).toBe(false);
   });
 });

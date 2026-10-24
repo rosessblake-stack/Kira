@@ -177,11 +177,12 @@ export class ClienteCalendario {
   }
 
   /** Reserva pagada: pasa a morado y, si se pide, se añade el email de la clienta (Google le envía la invitación). */
-  async pasarAPagada(id: string, bookingId: string, o: { email: string | null; invitar: boolean }): Promise<void> {
+  async pasarAPagada(id: string, bookingId: string, o: { email: string | null; invitar: boolean; titulo?: string }): Promise<void> {
     const m = await this.leerMarca(id);
     if (!m.existe || m.cancelado) throw new GoogleError("El evento ya no existe en tu calendario");
     if (m.bookingId !== bookingId) throw new GoogleError("Ese evento no es de Kira: no se toca");
     const cuerpo: Record<string, unknown> = { colorId: COLOR_MORADO };
+    if (o.titulo) cuerpo.summary = o.titulo;
     if (o.invitar && o.email) cuerpo.attendees = [{ email: o.email }];
     const { status, json } = await this.llamar("PATCH", this.url(`/events/${encodeURIComponent(id)}`, { sendUpdates: o.invitar && o.email ? "all" : "none" }), cuerpo);
     if (status !== 200) throw this.fallo("actualizar el evento", status, json);

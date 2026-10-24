@@ -77,7 +77,7 @@ export function crearAgendaGoogle(d: DepsAgendaGoogle = depsReales()): AgendaPor
       // conectada (Blake): así se puede ver todo el recorrido sin mandar nada a nadie más.
       const propia = Boolean(o.email && con.email && o.email.toLowerCase() === con.email.toLowerCase());
       const invitar = Boolean(o.email) && (!o.esPrueba || propia);
-      await cli.pasarAPagada(eventId, bookingId, { email: o.email, invitar });
+      await cli.pasarAPagada(eventId, bookingId, { email: o.email, invitar, titulo: o.titulo });
       return { invitado: invitar };
     },
 

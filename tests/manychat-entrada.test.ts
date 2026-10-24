@@ -184,3 +184,17 @@ describe("nombre escrito a mano en ManyChat", () => {
     expect(ok.ok && ok.solicitud.nombre).toBe("Elizabeth");
   });
 });
+
+import { leerDatosCita } from "../lib/manychat-entrada";
+
+describe("leerDatosCita (flujo «¿cómo te apunto y a qué correo?»)", () => {
+  it("acepta nombre y correo válidos", () => {
+    expect(leerDatosCita({ id: "123456", nombre: "Ana María", email: " Ana@Correo.com " })).toEqual({ ok: true, contactoId: "123456", nombre: "Ana María", email: "ana@correo.com" });
+  });
+  it("sin correo válido no vale; un nombre raro se descarta pero el correo se guarda", () => {
+    expect(leerDatosCita({ id: "123456", nombre: "Ana", email: "no es correo" })).toMatchObject({ ok: false, motivo: "correo_no_valido" });
+    expect(leerDatosCita({ id: "123456", nombre: "First Name", email: "a@b.es" })).toMatchObject({ ok: true, nombre: null });
+    expect(leerDatosCita({ id: "123456", nombre: "http://x.com", email: "a@b.es" })).toMatchObject({ ok: true, nombre: null });
+    expect(leerDatosCita({ nombre: "Ana", email: "a@b.es" })).toMatchObject({ ok: false });
+  });
+});

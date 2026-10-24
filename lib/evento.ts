@@ -22,7 +22,7 @@ export interface AgendaPort {
   eventosEntre(desde: Date, hasta: Date): Promise<EventoAgenda[]>;
   crearProvisional(e: NuevoEvento): Promise<void>;
   /** Pasa a morado y, si corresponde, invita a la clienta. `invitado` dice si Google le envió la invitación. */
-  pasarAPagada(eventId: string, bookingId: string, o: { email: string | null; esPrueba: boolean }): Promise<{ invitado: boolean }>;
+  pasarAPagada(eventId: string, bookingId: string, o: { email: string | null; esPrueba: boolean; titulo?: string }): Promise<{ invitado: boolean }>;
   /** `avisarInvitados`: si la clienta ya estaba invitada, Google le envía la cancelación (por defecto, no se avisa a nadie). */
   borrar(eventId: string, bookingId: string, o?: { avisarInvitados?: boolean }): Promise<"borrado" | "ya_no_existe">;
 }
